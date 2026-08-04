@@ -60,3 +60,27 @@ configuracion sensible queda fuera de Git.
 Antes de publicar, guarda una copia segura de `nocknock-upload.jks`, su alias y
 sus contrasenas. Si se pierde la clave de subida, no se podran firmar nuevas
 versiones con ella sin iniciar el proceso de reemplazo de clave en Google Play.
+
+## Publicacion automatica en Google Play
+
+Cada push a la rama `release` (incluido un merge) ejecuta
+`.github/workflows/release-google-play.yml`. El workflow analiza y prueba la
+app, genera un AAB firmado y lo publica como version completada en **Pruebas
+internas** de Google Play. Tambien se puede ejecutar manualmente desde GitHub
+Actions.
+
+El `versionName` se toma de `pubspec.yaml`. El `versionCode` se calcula con el
+numero y el intento de la ejecucion de GitHub Actions, por lo que cada entrega
+puede subirse a Play sin reutilizar el codigo de una version anterior.
+
+Configura estos secretos en el repositorio de GitHub antes del primer merge a
+`release`:
+
+- `ANDROID_KEYSTORE_BASE64`: contenido del keystore de subida codificado en
+  base64.
+- `ANDROID_KEYSTORE_PASSWORD`: contrasena del keystore.
+- `ANDROID_KEY_ALIAS`: alias de la clave; por defecto,
+  `nocknock-upload`.
+- `ANDROID_KEY_PASSWORD`: contrasena de la clave.
+- `PLAY_SERVICE_ACCOUNT_JSON`: JSON completo de una cuenta de servicio con
+  permiso para publicar NockNock en Play Console.

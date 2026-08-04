@@ -195,7 +195,7 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey('custom-board-background'))),
-      const Size(320, 640),
+      tester.view.physicalSize / tester.view.devicePixelRatio,
     );
   });
 

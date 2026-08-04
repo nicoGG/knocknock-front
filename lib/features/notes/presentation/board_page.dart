@@ -2190,22 +2190,26 @@ class _BoardMetaChip extends StatelessWidget {
         children: [
           Icon(icon, size: 15, color: color.withValues(alpha: 0.82)),
           const SizedBox(width: 6),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: ScaleTransition(
-                scale: Tween(begin: 0.92, end: 1.0).animate(animation),
-                child: child,
+          Flexible(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween(begin: 0.92, end: 1.0).animate(animation),
+                  child: child,
+                ),
               ),
-            ),
-            child: Text(
-              label,
-              key: ValueKey(label),
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.68),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+              child: Text(
+                label,
+                key: ValueKey(label),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colorScheme.onSurface.withValues(alpha: 0.68),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
