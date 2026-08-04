@@ -1,0 +1,6 @@
+# Copia este archivo como android/key.properties y reemplaza los valores.
+# La ruta de storeFile es relativa a la carpeta android/.
+storeFile=app/nocknock-upload.jks
+storePassword=REEMPLAZAR_CON_PASSWORD_SEGURO
+keyAlias=nocknock-upload
+keyPassword=REEMPLAZAR_CON_PASSWORD_SEGURO

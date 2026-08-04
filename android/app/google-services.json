@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "987041813192",
+    "project_id": "nocknock-d8fe9",
+    "storage_bucket": "nocknock-d8fe9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:987041813192:android:f98fa6ef38ceedbf7c0bfd",
+        "android_client_info": {
+          "package_name": "cl.nocknock.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "987041813192-qjosourb1u85i9h2b6om5l8hj7sro0t6.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "cl.nocknock.app",
+            "certificate_hash": "1b3a789bb9b324b0774a640a7ddb0efb9b4853e6"
+          }
+        },
+        {
+          "client_id": "987041813192-hdmkvsdctl5vu3d6r32d522lss00mgcm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDj6A0w15TGiwjwCcznbT3A9nDtI84AF5U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "987041813192-hdmkvsdctl5vu3d6r32d522lss00mgcm.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "987041813192-8dj3bmhful98q6h6q1tc5r3chnb155ce.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "cl.nocknock.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
