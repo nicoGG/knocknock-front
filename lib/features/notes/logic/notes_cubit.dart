@@ -3,25 +3,35 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
+import 'package:nocknock/features/notes/data/selected_list_store.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
 
 class NotesCubit extends Cubit<NotesState> {
-  NotesCubit(this._repository) : super(const NotesState());
+  NotesCubit(this._repository, {SelectedListStore? selectedListStore})
+    : _selectedListStore =
+          selectedListStore ?? SharedPreferencesSelectedListStore(),
+      super(const NotesState());
 
   final NotesRepository _repository;
+  final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
 
   Future<void> load() async {
-    emit(state.copyWith(status: NotesStatus.loading));
+    emit(
+      state.copyWith(
+        status: NotesStatus.loading,
+        pinnedNotes: const [],
+        isLoadingPinned: false,
+      ),
+    );
     _realtimeSubscription ??= _repository.realtimeEvents.listen(_onRealtime);
     try {
       final lists = await _repository.fetchLists();
-      final selectedListId =
-          lists.any((list) => list.id == state.selectedListId)
-          ? state.selectedListId
-          : lists.firstOrNull?.id ?? 'home';
+      final rememberedListId = await _readRememberedListId();
+      final selectedListId = _resolveSelectedListId(lists, rememberedListId);
+      await _rememberSelectedList(selectedListId);
       await _repository.connect(selectedListId);
       final notes = await _repository.fetchNotes(selectedListId);
       emit(
@@ -51,6 +61,7 @@ class NotesCubit extends Cubit<NotesState> {
         notes: const [],
       ),
     );
+    await _rememberSelectedList(listId);
     await _repository.connect(listId);
     try {
       final notes = await _repository.fetchNotes(listId);
@@ -61,6 +72,23 @@ class NotesCubit extends Cubit<NotesState> {
       emit(
         state.copyWith(
           status: NotesStatus.failure,
+          message: _friendlyMessage(error),
+        ),
+      );
+    }
+  }
+
+  Future<void> loadPinnedNotes() async {
+    if (state.isLoadingPinned) return;
+    emit(state.copyWith(isLoadingPinned: true));
+    try {
+      final pinnedNotes = await _repository.fetchPinnedNotes()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      emit(state.copyWith(pinnedNotes: pinnedNotes, isLoadingPinned: false));
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isLoadingPinned: false,
           message: _friendlyMessage(error),
         ),
       );
@@ -81,6 +109,7 @@ class NotesCubit extends Cubit<NotesState> {
           isSavingList: false,
         ),
       );
+      await _rememberSelectedList(list.id);
       await _repository.connect(list.id);
       final notes = await _repository.fetchNotes(list.id);
       if (state.selectedListId != list.id) return;
@@ -136,10 +165,14 @@ class NotesCubit extends Cubit<NotesState> {
           lists: remaining,
           selectedListId: nextList.id,
           notes: const [],
+          pinnedNotes: state.pinnedNotes
+              .where((note) => note.boardId != selected.id)
+              .toList(),
           isSavingList: false,
           message: 'Lista eliminada.',
         ),
       );
+      await _rememberSelectedList(nextList.id);
       await _repository.connect(nextList.id);
       final notes = await _repository.fetchNotes(nextList.id);
       if (state.selectedListId == nextList.id) {
@@ -174,6 +207,39 @@ class NotesCubit extends Cubit<NotesState> {
       return true;
     } catch (error) {
       emit(state.copyWith(isInviting: false, message: _friendlyMessage(error)));
+      return false;
+    }
+  }
+
+  Future<bool> removeCollaborator(String collaboratorUid) async {
+    final collaborator = state.selectedList?.collaborators
+        .where((person) => person.uid == collaboratorUid)
+        .firstOrNull;
+    if (collaborator == null || collaborator.role == ListMemberRole.owner) {
+      return false;
+    }
+
+    emit(state.copyWith(isRemovingCollaborator: true));
+    try {
+      final updated = await _repository.removeCollaborator(
+        state.selectedListId,
+        collaboratorUid,
+      );
+      emit(
+        state.copyWith(
+          lists: _replaceList(updated),
+          isRemovingCollaborator: false,
+          message: '${collaborator.displayName} ya no tiene acceso.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isRemovingCollaborator: false,
+          message: _friendlyMessage(error),
+        ),
+      );
       return false;
     }
   }
@@ -214,6 +280,34 @@ class NotesCubit extends Cubit<NotesState> {
   List<NoteList> _replaceList(NoteList updated) => state.lists
       .map((list) => list.id == updated.id ? updated : list)
       .toList();
+
+  String _resolveSelectedListId(
+    List<NoteList> lists,
+    String? rememberedListId,
+  ) {
+    bool exists(String? id) => id != null && lists.any((list) => list.id == id);
+
+    if (exists(rememberedListId)) return rememberedListId!;
+    if (exists(state.selectedListId)) return state.selectedListId;
+    return lists.firstOrNull?.id ?? 'home';
+  }
+
+  Future<String?> _readRememberedListId() async {
+    try {
+      return await _selectedListStore.read();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _rememberSelectedList(String listId) async {
+    try {
+      await _selectedListStore.write(listId);
+    } catch (_) {
+      // The selected list still works when local preference storage is
+      // temporarily unavailable.
+    }
+  }
 
   Future<void> createNote(NoteDraft draft) async {
     emit(state.copyWith(isSaving: true));
@@ -329,10 +423,15 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> togglePin(Note note) async {
     final targetPinned = !note.isPinned;
-    final targetOrders = state.notes
+    final knownBoardNotes = state.selectedListId == note.boardId
+        ? state.notes
+        : state.pinnedNotes.where((item) => item.boardId == note.boardId);
+    final targetOrders = knownBoardNotes
         .where((item) => item.id != note.id && item.isPinned == targetPinned)
         .map((item) => item.sortOrder);
-    final targetOrder = targetOrders.isEmpty
+    final targetOrder = !targetPinned && state.selectedListId != note.boardId
+        ? note.sortOrder
+        : targetOrders.isEmpty
         ? 0
         : targetOrders.reduce((a, b) => a < b ? a : b) - 1;
     final optimistic = note.copyWith(
@@ -441,13 +540,35 @@ class NotesCubit extends Cubit<NotesState> {
   void _onRealtime(NotesRealtimeEvent event) {
     switch (event) {
       case NoteChanged(:final note):
-        if (note.boardId == state.selectedListId) _upsert(note);
+        if (note.boardId == state.selectedListId ||
+            note.isPinned ||
+            state.pinnedNotes.any((item) => item.id == note.id)) {
+          _upsert(note);
+        }
       case NoteRemoved(:final id, :final boardId):
-        if (boardId == state.selectedListId) _remove(id);
+        if (boardId == state.selectedListId ||
+            state.pinnedNotes.any((note) => note.id == id)) {
+          _remove(id);
+        }
       case NotesReordered(:final boardId, :final notes):
         if (boardId == state.selectedListId) {
           final sorted = [...notes]..sort(compareNotes);
           emit(state.copyWith(status: NotesStatus.ready, notes: sorted));
+        }
+      case ListAppearanceChanged(:final listId, :final appearance):
+        final index = state.lists.indexWhere((list) => list.id == listId);
+        if (index != -1) {
+          emit(
+            state.copyWith(
+              lists: _replaceList(
+                state.lists[index].copyWith(appearance: appearance),
+              ),
+            ),
+          );
+        }
+      case ListAccessRemoved(:final listId):
+        if (state.lists.any((list) => list.id == listId)) {
+          unawaited(_refreshAfterAccessRemoved());
         }
       case RealtimeConnectionChanged(:final isConnected):
         emit(state.copyWith(isRealtimeConnected: isConnected));
@@ -478,22 +599,56 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<void> _refreshAfterAccessRemoved() async {
+    await load();
+    if (!isClosed && state.status == NotesStatus.ready) {
+      emit(
+        state.copyWith(
+          message: 'Ya no tienes acceso a una de las listas compartidas.',
+        ),
+      );
+    }
+  }
+
   void _upsert(Note note) {
     final notes = [...state.notes];
-    final index = notes.indexWhere((item) => item.id == note.id);
-    if (index == -1) {
-      notes.insert(0, note);
-    } else {
-      notes[index] = note;
+    if (note.boardId == state.selectedListId) {
+      final index = notes.indexWhere((item) => item.id == note.id);
+      if (index == -1) {
+        notes.insert(0, note);
+      } else {
+        notes[index] = note;
+      }
+      notes.sort(compareNotes);
     }
-    notes.sort(compareNotes);
-    emit(state.copyWith(status: NotesStatus.ready, notes: notes));
+
+    final pinnedNotes = [...state.pinnedNotes];
+    final pinnedIndex = pinnedNotes.indexWhere((item) => item.id == note.id);
+    if (note.isPinned) {
+      if (pinnedIndex == -1) {
+        pinnedNotes.insert(0, note);
+      } else {
+        pinnedNotes[pinnedIndex] = note;
+      }
+    } else if (pinnedIndex != -1) {
+      pinnedNotes.removeAt(pinnedIndex);
+    }
+    pinnedNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+    emit(
+      state.copyWith(
+        status: NotesStatus.ready,
+        notes: notes,
+        pinnedNotes: pinnedNotes,
+      ),
+    );
   }
 
   void _remove(String id) {
     emit(
       state.copyWith(
         notes: state.notes.where((note) => note.id != id).toList(),
+        pinnedNotes: state.pinnedNotes.where((note) => note.id != id).toList(),
       ),
     );
   }

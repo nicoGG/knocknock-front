@@ -10,6 +10,7 @@ import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
+import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -443,6 +444,24 @@ void main() {
 
     await tester.tapAt(tester.getTopLeft(card) + const Offset(40, 40));
     await tester.pumpAndSettle();
+    final taskContainer = find.byKey(const ValueKey('note-task-container'));
+    final checklistDetail = find.byKey(const ValueKey('note-checklist-detail'));
+    expect(
+      find.descendant(of: taskContainer, matching: checklistDetail),
+      findsOneWidget,
+    );
+    final taskBackground = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('note-task-background')),
+    );
+    expect(
+      (taskBackground.decoration as BoxDecoration).color,
+      NoteCategoryStyle.baseColor(NoteCategory.travel),
+    );
+    expect(tester.widget<Material>(checklistDetail).color, Colors.transparent);
+    expect(
+      tester.widget<Text>(find.text('Subtareas')).style?.color,
+      NoteCategoryStyle.foregroundColor(NoteCategory.travel),
+    );
     final reorderable = tester.widget<ReorderableListView>(
       find.byType(ReorderableListView),
     );
@@ -907,6 +926,87 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('compact filters stay visible on a narrow screen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.25;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('FILTRAR'), findsOneWidget);
+    expect(find.text('Todas'), findsOneWidget);
+    expect(find.text('Pend.'), findsOneWidget);
+    expect(find.text('Hechas'), findsOneWidget);
+    expect(find.text('VISTA'), findsOneWidget);
+    expect(find.text('Mosaico'), findsOneWidget);
+    expect(find.text('Lista'), findsOneWidget);
+    expect(find.text('Grande'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a completed pending task animates before leaving the list', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('note-note-1'));
+    final checkbox = find.descendant(of: card, matching: find.byType(Checkbox));
+    await tester.tap(checkbox);
+    await tester.pump();
+
+    expect(card, findsOneWidget);
+    expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.byKey(const ValueKey('note-exit-opacity-note-1')),
+          )
+          .opacity,
+      0,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('note-exit-scale-note-1')),
+          )
+          .scale,
+      0.94,
+    );
+
+    await tester.pump(const Duration(milliseconds: 299));
+    expect(card, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(card, findsNothing);
+    expect(find.text('No hay notas en este filtro'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('restores the selected board view after reopening the app', (
     tester,
   ) async {
@@ -953,12 +1053,20 @@ void main() {
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('drawer-profile-button')), findsOneWidget);
+    expect(find.text('Inicia sesión para sincronizar'), findsOneWidget);
+    expect(find.byKey(const ValueKey('google-sign-in-button')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('drawer-profile-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Perfil'), findsOneWidget);
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsOneWidget);
-    expect(find.text('Continuar con Google'), findsOneWidget);
-    expect(
-      find.textContaining('Tus cambios se guardan en este dispositivo'),
-      findsOneWidget,
-    );
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('add-list-button')));
     await tester.pumpAndSettle();
@@ -1067,6 +1175,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('settings-menu-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-version-label')), findsOneWidget);
+    expect(find.textContaining('Versión'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('settings-menu-button')));
     await tester.pumpAndSettle();
 
@@ -1111,6 +1221,64 @@ void main() {
 
     expect(find.text('Asignado a mí'), findsOneWidget);
     expect(find.text('Comprar café'), findsOneWidget);
+  });
+
+  testWidgets('shows pinned notes from every list with their origin', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(314, 683);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          withPinnedAcrossLists: true,
+          initialReminderAt: DateTime(2026, 8, 28, 6),
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+
+    final pinnedMenu = find.byKey(const ValueKey('pinned-menu-button'));
+    expect(pinnedMenu, findsOneWidget);
+    expect(find.text('Ancladas'), findsOneWidget);
+    await tester.tap(pinnedMenu);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ancladas'), findsOneWidget);
+    expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('Preparar lanzamiento'), findsOneWidget);
+    expect(find.byKey(const ValueKey('note-list-note-1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('note-list-note-pinned-work')),
+      findsOneWidget,
+    );
+    expect(find.text('Mis notas'), findsOneWidget);
+    expect(find.text('Trabajo'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('notes-large-list')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('pin-note-note-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comprar café'), findsNothing);
+    expect(find.text('Preparar lanzamiento'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('note-note-pinned-work')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+    expect(find.text('Trabajo'), findsOneWidget);
   });
 
   testWidgets('hides notes assigned to another person from the menu', (
@@ -1286,6 +1454,38 @@ void main() {
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.text('Nico Galdames'), findsOneWidget);
     expect(find.text('nico@example.com'), findsOneWidget);
+    expect(find.text('CUENTA CONECTADA'), findsOneWidget);
+    expect(find.text('Sincronización activa'), findsOneWidget);
+    expect(find.text('ZONA DE RIESGO'), findsOneWidget);
+  });
+
+  testWidgets('keeps account deletion inside profile, not in the menu', (
+    tester,
+  ) async {
+    const user = AppUser(
+      id: 'google-user',
+      displayName: 'Nico Galdames',
+      email: 'nico@example.com',
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(user: user),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('drawer-profile-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-account-button')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('drawer-profile-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Perfil'), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-account-button')), findsOneWidget);
   });
 
   testWidgets('requires confirmation before deleting an account', (
@@ -1306,7 +1506,12 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('delete-account-button')));
+    final deleteAccountButton = find.byKey(
+      const ValueKey('delete-account-button'),
+    );
+    await tester.ensureVisible(deleteAccountButton);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteAccountButton);
     await tester.pumpAndSettle();
 
     expect(find.text('¿Eliminar tu cuenta?'), findsOneWidget);
@@ -1402,6 +1607,148 @@ void main() {
     expect(repository.invitedEmail, 'ana@example.com');
     expect(find.text('Invitación enviada a ana@example.com.'), findsOneWidget);
   });
+
+  testWidgets('owner confirms before removing a collaborator', (tester) async {
+    const user = AppUser(
+      id: 'google-user',
+      displayName: 'Nico',
+      email: 'nico@example.com',
+    );
+    final repository = _FakeNotesRepository(withInvitedPeople: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(user: user),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('share-list-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('remove-collaborator-person-ana')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('remove-collaborator-owner-1')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('remove-collaborator-person-ana')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('remove-collaborator-dialog')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Las notas de la lista no se eliminarán'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('confirm-remove-collaborator')));
+    await tester.pumpAndSettle();
+
+    expect(repository.removedCollaboratorUid, 'person-ana');
+    expect(find.text('Ana Torres ya no tiene acceso.'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('remove-collaborator-person-ana')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('adds depth and parallax to the app bar while scrolling', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(noteCount: 12),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final background = find.byKey(const ValueKey('appbar-parallax-background'));
+    final header = find.byKey(const ValueKey('board-header-parallax'));
+    final bottomFade = find.byKey(const ValueKey('appbar-bottom-fade'));
+    final contentFade = find.byKey(const ValueKey('appbar-content-fade'));
+    final appBar = find.byKey(const ValueKey('parallax-app-bar'));
+    expect(bottomFade, findsOneWidget);
+    expect(contentFade, findsOneWidget);
+    expect(
+      tester.getBottomLeft(bottomFade).dy,
+      closeTo(tester.getBottomLeft(appBar).dy, 0.1),
+    );
+    final initialDecoration =
+        tester.widget<DecoratedBox>(background).decoration as BoxDecoration;
+    final initialHeaderOffset = tester
+        .widget<Transform>(header)
+        .transform
+        .getTranslation()
+        .y;
+    final initialTitleTop = tester.getTopLeft(find.text('Mis notas')).dy;
+
+    expect(initialHeaderOffset, 0);
+    await tester.drag(find.byType(GridView), const Offset(0, -72));
+    await tester.pump();
+
+    final scrolledDecoration =
+        tester.widget<DecoratedBox>(background).decoration as BoxDecoration;
+    final scrolledHeaderOffset = tester
+        .widget<Transform>(header)
+        .transform
+        .getTranslation()
+        .y;
+    final scrolledTitleTop = tester.getTopLeft(find.text('Mis notas')).dy;
+
+    expect(scrolledHeaderOffset, greaterThan(6));
+    expect(scrolledTitleTop, lessThan(initialTitleTop - 45));
+    expect(
+      scrolledDecoration.color!.a,
+      greaterThan(initialDecoration.color!.a),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the final card scrolls completely above the floating action', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(noteCount: 3),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
+    await tester.pumpAndSettle();
+
+    final list = find.byType(ReorderableListView);
+    await tester.fling(list, const Offset(0, -1600), 2400);
+    await tester.pumpAndSettle();
+
+    final lastCard = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-3')),
+    );
+    final floatingAction = tester.getRect(
+      find.byKey(const ValueKey('new-note-fab')),
+    );
+
+    expect(lastCard.bottom, lessThan(floatingAction.top - 12));
+    expect(lastCard.bottom, lessThan(tester.view.physicalSize.height));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeAuthRepository implements AuthRepository {
@@ -1434,8 +1781,10 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
     this.isConnected = false,
     this.withInvitedPeople = false,
     this.initiallyCompleted = false,
+    this.noteCount = 1,
     this.collaboratorPhotoUrl,
     this.initialAssigneeUid,
+    this.withPinnedAcrossLists = false,
     NoteCategory category = NoteCategory.general,
     List<NoteChecklistItem> checklist = const [],
     DateTime? initialReminderAt,
@@ -1451,6 +1800,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
          assigneeUid:
              initialAssigneeUid ?? (withInvitedPeople ? 'person-ana' : null),
          isCompleted: initiallyCompleted,
+         isPinned: withPinnedAcrossLists,
          positionX: 0,
          positionY: 0,
          reminderAt: initialReminderAt,
@@ -1491,18 +1841,28 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
                  ]
                : const [],
          ),
+         if (withPinnedAcrossLists)
+           NoteList(
+             id: 'work',
+             name: 'Trabajo',
+             createdAt: DateTime(2026),
+             updatedAt: DateTime(2026),
+           ),
        ];
 
   final bool isConnected;
   final bool withInvitedPeople;
   final bool initiallyCompleted;
+  final int noteCount;
   final String? collaboratorPhotoUrl;
   final String? initialAssigneeUid;
+  final bool withPinnedAcrossLists;
 
   Note _note;
   final List<NoteList> _lists;
   bool didClearLocalData = false;
   String? invitedEmail;
+  String? removedCollaboratorUid;
   Map<String, dynamic>? lastChanges;
   NoteDraft? createdDraft;
   ListAppearance? lastAppearance;
@@ -1559,6 +1919,30 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   }
 
   @override
+  Future<NoteList> removeCollaborator(
+    String listId,
+    String collaboratorUid,
+  ) async {
+    removedCollaboratorUid = collaboratorUid;
+    final index = _lists.indexWhere((list) => list.id == listId);
+    final current = _lists[index];
+    final updated = NoteList(
+      id: current.id,
+      name: current.name,
+      createdAt: current.createdAt,
+      updatedAt: DateTime(2026, 1, 2),
+      currentUserRole: current.currentUserRole,
+      collaborators: current.collaborators
+          .where((person) => person.uid != collaboratorUid)
+          .toList(),
+      pendingInvitations: current.pendingInvitations,
+      appearance: current.appearance,
+    );
+    _lists[index] = updated;
+    return updated;
+  }
+
+  @override
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
@@ -1571,8 +1955,48 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   }
 
   @override
-  Future<List<Note>> fetchNotes(String boardId) async =>
-      boardId == 'home' && !didClearLocalData ? [_note] : [];
+  Future<List<Note>> fetchNotes(String boardId) async {
+    if (boardId != 'home' || didClearLocalData) return [];
+    return List.generate(noteCount, (index) {
+      if (index == 0) return _note;
+      return Note(
+        id: 'note-${index + 1}',
+        boardId: _note.boardId,
+        title: 'Nota ${index + 1}',
+        content: _note.content,
+        color: NoteColor.values[index % NoteColor.values.length],
+        authorName: _note.authorName,
+        isCompleted: false,
+        sortOrder: index,
+        positionX: 0,
+        positionY: index.toDouble(),
+        createdAt: _note.createdAt,
+        updatedAt: _note.updatedAt,
+      );
+    });
+  }
+
+  @override
+  Future<List<Note>> fetchPinnedNotes() async {
+    if (!withPinnedAcrossLists || didClearLocalData) return const [];
+    return [
+      _note,
+      Note(
+        id: 'note-pinned-work',
+        boardId: 'work',
+        title: 'Preparar lanzamiento',
+        content: 'Revisar los últimos detalles',
+        color: NoteColor.blue,
+        authorName: 'Nico',
+        isCompleted: false,
+        isPinned: true,
+        positionX: 0,
+        positionY: 0,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026, 1, 2),
+      ),
+    ];
+  }
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {

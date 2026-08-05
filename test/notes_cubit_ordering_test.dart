@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/data/local_notes_repository.dart';
+import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
+import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -64,4 +68,39 @@ void main() {
       await cubit.close();
     },
   );
+
+  test('applies list appearance changes received in real time', () async {
+    final repository = _RealtimeLocalNotesRepository();
+    final cubit = NotesCubit(repository);
+    await cubit.load();
+
+    const appearance = ListAppearance(
+      backgroundPreset: ListBackgroundPreset.lavender,
+      backgroundBlur: 6,
+    );
+    repository.emit(
+      ListAppearanceChanged(cubit.state.selectedListId, appearance),
+    );
+
+    expect(cubit.state.selectedList?.appearance, appearance);
+
+    await cubit.close();
+  });
+}
+
+class _RealtimeLocalNotesRepository extends LocalNotesRepository {
+  final _realtimeEvents = StreamController<NotesRealtimeEvent>.broadcast(
+    sync: true,
+  );
+
+  @override
+  Stream<NotesRealtimeEvent> get realtimeEvents => _realtimeEvents.stream;
+
+  void emit(NotesRealtimeEvent event) => _realtimeEvents.add(event);
+
+  @override
+  void dispose() {
+    super.dispose();
+    unawaited(_realtimeEvents.close());
+  }
 }

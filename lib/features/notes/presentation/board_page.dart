@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -15,17 +17,22 @@ import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
 import 'package:nocknock/features/notes/presentation/board_view_mode_controller.dart';
 import 'package:nocknock/features/notes/presentation/note_detail_page.dart';
+import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/widgets/board_loading_state.dart';
+import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note_fab.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:nocknock/features/notifications/presentation/notifications_page.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 enum NoteFilter { all, pending, completed }
 
 enum _ListMenuAction { background, rename, delete }
+
+enum _BoardScope { list, assignedToMe, pinned }
 
 class BoardPage extends StatefulWidget {
   const BoardPage({
@@ -46,13 +53,14 @@ class BoardPage extends StatefulWidget {
 class _BoardPageState extends State<BoardPage>
     with SingleTickerProviderStateMixin {
   NoteFilter _filter = NoteFilter.all;
-  bool _showAssignedToMe = false;
+  _BoardScope _scope = _BoardScope.list;
   late BoardViewMode _viewMode = widget.viewModeController.viewMode;
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
   late final Animation<Offset> _headerSlide;
   late final Animation<double> _fabScale;
+  final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
 
   @override
   void initState() {
@@ -105,6 +113,7 @@ class _BoardPageState extends State<BoardPage>
     widget.viewModeController.removeListener(_restoreViewMode);
     unawaited(_notificationTapSubscription?.cancel());
     _entranceController.dispose();
+    _appBarScrollProgress.dispose();
     super.dispose();
   }
 
@@ -121,7 +130,11 @@ class _BoardPageState extends State<BoardPage>
       builder: (context, state) {
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
-        final notes = _filtered(state.notes);
+        final scopedNotes = _scope == _BoardScope.pinned
+            ? state.pinnedNotes
+            : state.notes;
+        final notes = _filtered(scopedNotes);
+        final isPinnedScope = _scope == _BoardScope.pinned;
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
@@ -130,88 +143,137 @@ class _BoardPageState extends State<BoardPage>
             onOpenProfile: _openProfile,
             notificationsController: widget.notificationsController,
             onOpenNotifications: _openNotifications,
+            scrollProgress: _appBarScrollProgress,
           ),
           drawer: _AppDrawer(
             lists: state.lists,
             selectedListId: state.selectedListId,
-            assignedToMeSelected: _showAssignedToMe,
+            assignedToMeSelected: _scope == _BoardScope.assignedToMe,
+            pinnedSelected: isPinnedScope,
             isSavingList: state.isSavingList,
             onSelectList: _selectList,
             onShowAssignedToMe: _openAssignedToMe,
+            onShowPinned: _openPinned,
             onCreateList: _createList,
+            onOpenProfile: _openProfile,
             onOpenSettings: _openSettings,
           ),
-          floatingActionButton: isCompact
+          floatingActionButton: isCompact && !isPinnedScope
               ? ScaleTransition(
                   scale: _fabScale,
-                  child: FloatingActionButton.extended(
+                  child: CollapsingNewNoteFab(
                     key: const ValueKey('new-note-fab'),
+                    scrollProgress: _appBarScrollProgress,
                     onPressed: state.isSaving ? null : () => _openEditor(),
                     backgroundColor: colorScheme.primary,
                     foregroundColor: colorScheme.onPrimary,
-                    icon: const Icon(Icons.add_rounded),
-                    label: const Text('Nueva nota'),
                   ),
                 )
               : null,
           body: ListBoardBackground(
-            appearance:
-                state.selectedList?.appearance ?? const ListAppearance(),
-            child: SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  isCompact ? 18 : 40,
-                  isCompact ? 12 : 40,
-                  isCompact ? 18 : 40,
-                  12,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    FadeTransition(
-                      opacity: _headerOpacity,
-                      child: SlideTransition(
-                        position: _headerSlide,
-                        child: _BoardHeader(
-                          title: _showAssignedToMe
-                              ? 'Asignado a mí'
-                              : state.selectedList?.name ?? 'Mis notas',
-                          list: state.selectedList,
-                          noteCount: state.notes.length,
-                          filter: _filter,
-                          viewMode: _viewMode,
-                          onFilterChanged: (value) =>
-                              setState(() => _filter = value),
-                          onViewModeChanged: _changeViewMode,
-                          onAdd: state.isSaving ? null : () => _openEditor(),
-                          onShare: state.isInviting
-                              ? null
-                              : () => _openCollaborators(state.selectedList),
-                          onCustomizeBackground: state.isSavingAppearance
-                              ? null
-                              : _openBackgroundPicker,
-                          onRenameList:
-                              state.isSavingList ||
-                                  state.selectedList?.currentUserRole !=
-                                      ListMemberRole.owner
-                              ? null
-                              : _renameList,
-                          onDeleteList:
-                              state.isSavingList ||
-                                  state.selectedList?.currentUserRole !=
-                                      ListMemberRole.owner
-                              ? null
-                              : _deleteList,
-                          isSavingListOptions:
-                              state.isSavingAppearance || state.isSavingList,
-                          showAddButton: !isCompact,
-                          isCompact: isCompact,
+            appearance: isPinnedScope
+                ? const ListAppearance()
+                : state.selectedList?.appearance ?? const ListAppearance(),
+            child: _BoardContentFade(
+              topInset: MediaQuery.paddingOf(context).top,
+              scrollProgress: _appBarScrollProgress,
+              child: SafeArea(
+                bottom: false,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _updateAppBarParallax,
+                  child: NestedScrollView(
+                    key: const ValueKey('board-scroll-view'),
+                    headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                      SliverPadding(
+                        padding: EdgeInsets.fromLTRB(
+                          isCompact ? 18 : 40,
+                          isCompact ? 12 : 40,
+                          isCompact ? 18 : 40,
+                          0,
+                        ),
+                        sliver: SliverToBoxAdapter(
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: _appBarScrollProgress,
+                            builder: (context, progress, child) {
+                              final motionProgress =
+                                  MediaQuery.disableAnimationsOf(context)
+                                  ? 0.0
+                                  : Curves.easeOutCubic.transform(progress);
+                              return Transform.translate(
+                                key: const ValueKey('board-header-parallax'),
+                                offset: Offset(0, 12 * motionProgress),
+                                child: child,
+                              );
+                            },
+                            child: FadeTransition(
+                              opacity: _headerOpacity,
+                              child: SlideTransition(
+                                position: _headerSlide,
+                                child: _BoardHeader(
+                                  title: switch (_scope) {
+                                    _BoardScope.list =>
+                                      state.selectedList?.name ?? 'Mis notas',
+                                    _BoardScope.assignedToMe => 'Asignado a mí',
+                                    _BoardScope.pinned => 'Ancladas',
+                                  },
+                                  list: isPinnedScope
+                                      ? null
+                                      : state.selectedList,
+                                  noteCount: scopedNotes.length,
+                                  filter: _filter,
+                                  viewMode: _viewMode,
+                                  onFilterChanged: (value) =>
+                                      setState(() => _filter = value),
+                                  onViewModeChanged: _changeViewMode,
+                                  onAdd: state.isSaving || isPinnedScope
+                                      ? null
+                                      : () => _openEditor(),
+                                  onShare: state.isInviting || isPinnedScope
+                                      ? null
+                                      : () => _openCollaborators(
+                                          state.selectedList,
+                                        ),
+                                  onCustomizeBackground:
+                                      state.isSavingAppearance || isPinnedScope
+                                      ? null
+                                      : _openBackgroundPicker,
+                                  onRenameList:
+                                      isPinnedScope ||
+                                          state.isSavingList ||
+                                          state.selectedList?.currentUserRole !=
+                                              ListMemberRole.owner
+                                      ? null
+                                      : _renameList,
+                                  onDeleteList:
+                                      isPinnedScope ||
+                                          state.isSavingList ||
+                                          state.selectedList?.currentUserRole !=
+                                              ListMemberRole.owner
+                                      ? null
+                                      : _deleteList,
+                                  isSavingListOptions:
+                                      state.isSavingAppearance ||
+                                      state.isSavingList,
+                                  showAddButton: !isCompact && !isPinnedScope,
+                                  isCompact: isCompact,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 26)),
+                    ],
+                    body: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        isCompact ? 18 : 40,
+                        0,
+                        isCompact ? 18 : 40,
+                        0,
+                      ),
+                      child: _content(state, notes),
                     ),
-                    const SizedBox(height: 26),
-                    Expanded(child: _content(state, notes)),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -222,7 +284,8 @@ class _BoardPageState extends State<BoardPage>
   }
 
   Widget _content(NotesState state, List<Note> notes) {
-    if (state.status == NotesStatus.loading ||
+    if ((_scope == _BoardScope.pinned && state.isLoadingPinned) ||
+        state.status == NotesStatus.loading ||
         state.status == NotesStatus.initial) {
       return const BoardLoadingState();
     }
@@ -236,24 +299,39 @@ class _BoardPageState extends State<BoardPage>
       );
     }
     if (notes.isEmpty) {
+      final isUnfiltered = _filter == NoteFilter.all;
       return _MessageState(
-        icon: Icons.sticky_note_2_outlined,
-        title: _showAssignedToMe
-            ? _filter == NoteFilter.all
-                  ? 'No tienes notas asignadas en esta lista'
-                  : 'No hay notas asignadas en este filtro'
-            : _filter == NoteFilter.all
-            ? 'Tu lista está lista'
-            : 'No hay notas en este filtro',
-        detail: _showAssignedToMe
-            ? 'Cuando te asignen una nota, aparecerá aquí.'
-            : _filter == NoteFilter.all
-            ? 'Crea una nota y empieza a organizar lo que importa.'
-            : 'Prueba otro filtro o crea una nota nueva.',
-        actionLabel: !_showAssignedToMe && _filter == NoteFilter.all
+        icon: _scope == _BoardScope.pinned
+            ? Icons.push_pin_outlined
+            : Icons.sticky_note_2_outlined,
+        title: switch (_scope) {
+          _BoardScope.assignedToMe =>
+            isUnfiltered
+                ? 'No tienes notas asignadas en esta lista'
+                : 'No hay notas asignadas en este filtro',
+          _BoardScope.pinned =>
+            isUnfiltered
+                ? 'Todavía no tienes notas ancladas'
+                : 'No hay notas ancladas en este filtro',
+          _BoardScope.list =>
+            isUnfiltered
+                ? 'Tu lista está lista'
+                : 'No hay notas en este filtro',
+        },
+        detail: switch (_scope) {
+          _BoardScope.assignedToMe =>
+            'Cuando te asignen una nota, aparecerá aquí.',
+          _BoardScope.pinned =>
+            'Ancla una nota en cualquier lista y aparecerá aquí.',
+          _BoardScope.list =>
+            isUnfiltered
+                ? 'Crea una nota y empieza a organizar lo que importa.'
+                : 'Prueba otro filtro o crea una nota nueva.',
+        },
+        actionLabel: _scope == _BoardScope.list && isUnfiltered
             ? 'Crear primera nota'
             : null,
-        onAction: !_showAssignedToMe && _filter == NoteFilter.all
+        onAction: _scope == _BoardScope.list && isUnfiltered
             ? _openEditor
             : null,
       );
@@ -283,7 +361,7 @@ class _BoardPageState extends State<BoardPage>
           key: const ValueKey('notes-list'),
           notes: notes,
           layout: PostItCardLayout.compact,
-          itemHeight: 112,
+          itemHeight: 100,
           maxWidth: 980,
           buildCard: _buildCard,
           onReorder: _reorderNotes,
@@ -292,7 +370,7 @@ class _BoardPageState extends State<BoardPage>
           key: const ValueKey('notes-large-list'),
           notes: notes,
           layout: PostItCardLayout.large,
-          itemHeight: 224,
+          itemHeight: _scope == _BoardScope.pinned ? 236 : 208,
           maxWidth: 1120,
           buildCard: _buildCard,
           onReorder: _reorderNotes,
@@ -301,9 +379,23 @@ class _BoardPageState extends State<BoardPage>
     );
   }
 
+  bool _updateAppBarParallax(ScrollNotification notification) {
+    if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    final progress = (notification.metrics.pixels / 96).clamp(0.0, 1.0);
+    if ((_appBarScrollProgress.value - progress).abs() > 0.001) {
+      _appBarScrollProgress.value = progress;
+    }
+    return false;
+  }
+
   Widget _buildCard(Note note, PostItCardLayout layout) {
-    final selectedList = context.read<NotesCubit>().state.selectedList;
-    final collaborators = selectedList?.collaborators ?? const [];
+    final state = context.read<NotesCubit>().state;
+    final noteList = state.lists
+        .where((list) => list.id == note.boardId)
+        .firstOrNull;
+    final collaborators = noteList?.collaborators ?? const [];
     final assignee = collaborators
         .where((person) => person.uid == note.assigneeUid)
         .firstOrNull;
@@ -320,26 +412,36 @@ class _BoardPageState extends State<BoardPage>
         ? currentUser?.photoUrl?.trim()
         : null;
     final collaboratorPhoto = author?.photoUrl?.trim();
-    return PostItCard(
+    return _NoteCompletionTransition(
+      key: ValueKey('note-completion-transition-${note.id}'),
       note: note,
-      layout: layout,
-      assignee: assignee,
-      authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
-          ? currentUserPhoto
-          : collaboratorPhoto,
-      onToggle: () {
-        HapticFeedback.selectionClick();
-        context.read<NotesCubit>().toggleNote(note);
+      removesFromCurrentFilter: switch (_filter) {
+        NoteFilter.all => false,
+        NoteFilter.pending => !note.isCompleted,
+        NoteFilter.completed => note.isCompleted,
       },
-      onPin: () {
-        HapticFeedback.lightImpact();
-        context.read<NotesCubit>().togglePin(note);
-      },
-      onOpen: () => _openNote(note),
-      onChecklistToggle: (item) {
-        HapticFeedback.selectionClick();
-        context.read<NotesCubit>().toggleChecklistItem(note, item);
-      },
+      onToggle: () => context.read<NotesCubit>().toggleNote(note),
+      builder: (context, displayedNote, onToggle) => PostItCard(
+        note: displayedNote,
+        layout: layout,
+        originListName: _scope == _BoardScope.pinned
+            ? noteList?.name ?? 'Lista desconocida'
+            : null,
+        assignee: assignee,
+        authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
+            ? currentUserPhoto
+            : collaboratorPhoto,
+        onToggle: onToggle,
+        onPin: () {
+          HapticFeedback.lightImpact();
+          context.read<NotesCubit>().togglePin(note);
+        },
+        onOpen: () => _openNote(note),
+        onChecklistToggle: (item) {
+          HapticFeedback.selectionClick();
+          context.read<NotesCubit>().toggleChecklistItem(note, item);
+        },
+      ),
     );
   }
 
@@ -349,7 +451,7 @@ class _BoardPageState extends State<BoardPage>
       NoteFilter.pending => notes.where((note) => !note.isCompleted).toList(),
       NoteFilter.completed => notes.where((note) => note.isCompleted).toList(),
     };
-    if (!_showAssignedToMe) return statusFiltered;
+    if (_scope != _BoardScope.assignedToMe) return statusFiltered;
     final userId = context.read<AuthRepository>().currentUser?.id;
     return statusFiltered
         .where((note) => userId != null && note.assigneeUid == userId)
@@ -357,8 +459,8 @@ class _BoardPageState extends State<BoardPage>
   }
 
   Future<void> _selectList(String listId) async {
-    if (_showAssignedToMe) {
-      setState(() => _showAssignedToMe = false);
+    if (_scope != _BoardScope.list) {
+      setState(() => _scope = _BoardScope.list);
     }
     await context.read<NotesCubit>().selectList(listId);
   }
@@ -374,16 +476,32 @@ class _BoardPageState extends State<BoardPage>
       _openProfile();
       return;
     }
-    setState(() => _showAssignedToMe = true);
+    setState(() => _scope = _BoardScope.assignedToMe);
+  }
+
+  Future<void> _openPinned() async {
+    setState(() => _scope = _BoardScope.pinned);
+    await context.read<NotesCubit>().loadPinnedNotes();
   }
 
   void _reorderNotes(List<String> orderedIds) {
+    if (_scope == _BoardScope.pinned) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ordena estas notas dentro de su lista original.'),
+        ),
+      );
+      return;
+    }
     context.read<NotesCubit>().reorderVisibleNotes(orderedIds);
   }
 
   void _openNote(Note note) {
     final cubit = context.read<NotesCubit>();
     final currentUser = context.read<AuthRepository>().currentUser;
+    final sourceList = cubit.state.lists
+        .where((list) => list.id == note.boardId)
+        .firstOrNull;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => BlocProvider<NotesCubit>.value(
@@ -391,8 +509,19 @@ class _BoardPageState extends State<BoardPage>
           child: NoteDetailPage(
             noteId: note.id,
             initialNote: note,
-            listName: cubit.state.selectedList?.name ?? 'Mis notas',
+            listName:
+                sourceList?.name ??
+                cubit.state.selectedList?.name ??
+                'Mis notas',
             defaultAuthorName: currentUser?.displayName ?? note.authorName,
+            heroTag: noteHeroTag(
+              note.id,
+              variant: switch (_viewMode) {
+                BoardViewMode.grid => PostItCardLayout.grid.name,
+                BoardViewMode.list => PostItCardLayout.compact.name,
+                BoardViewMode.largeList => PostItCardLayout.large.name,
+              },
+            ),
             currentUserId: currentUser?.id,
             currentUserPhotoUrl: currentUser?.photoUrl,
           ),
@@ -616,6 +745,99 @@ class _BoardPageState extends State<BoardPage>
 
 typedef NoteCardBuilder = Widget Function(Note note, PostItCardLayout layout);
 typedef NoteReorderCallback = void Function(List<String> orderedIds);
+typedef NoteCompletionBuilder =
+    Widget Function(BuildContext context, Note note, VoidCallback onToggle);
+
+class _NoteCompletionTransition extends StatefulWidget {
+  const _NoteCompletionTransition({
+    required this.note,
+    required this.removesFromCurrentFilter,
+    required this.onToggle,
+    required this.builder,
+    super.key,
+  });
+
+  final Note note;
+  final bool removesFromCurrentFilter;
+  final VoidCallback onToggle;
+  final NoteCompletionBuilder builder;
+
+  @override
+  State<_NoteCompletionTransition> createState() =>
+      _NoteCompletionTransitionState();
+}
+
+class _NoteCompletionTransitionState extends State<_NoteCompletionTransition> {
+  static const _duration = Duration(milliseconds: 300);
+
+  Timer? _toggleTimer;
+  bool _isExiting = false;
+  bool? _previewCompleted;
+
+  @override
+  void didUpdateWidget(covariant _NoteCompletionTransition oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.note.isCompleted != widget.note.isCompleted) {
+      _toggleTimer?.cancel();
+      _isExiting = false;
+      _previewCompleted = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _toggleTimer?.cancel();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_isExiting) return;
+    HapticFeedback.selectionClick();
+    if (!widget.removesFromCurrentFilter ||
+        MediaQuery.disableAnimationsOf(context)) {
+      widget.onToggle();
+      return;
+    }
+
+    setState(() {
+      _previewCompleted = !widget.note.isCompleted;
+      _isExiting = true;
+    });
+    _toggleTimer = Timer(_duration, widget.onToggle);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final displayedNote = _previewCompleted == null
+        ? widget.note
+        : widget.note.copyWith(isCompleted: _previewCompleted);
+    return AnimatedSlide(
+      key: ValueKey('note-exit-slide-${widget.note.id}'),
+      offset: _isExiting ? const Offset(0.08, -0.025) : Offset.zero,
+      duration: _duration,
+      curve: Curves.easeInCubic,
+      child: AnimatedScale(
+        key: ValueKey('note-exit-scale-${widget.note.id}'),
+        scale: _isExiting ? 0.94 : 1,
+        duration: _duration,
+        curve: Curves.easeInCubic,
+        alignment: Alignment.centerRight,
+        child: AnimatedOpacity(
+          key: ValueKey('note-exit-opacity-${widget.note.id}'),
+          opacity: _isExiting ? 0 : 1,
+          duration: _duration,
+          curve: Curves.easeInCubic,
+          child: widget.builder(context, displayedNote, _toggle),
+        ),
+      ),
+    );
+  }
+}
+
+double _boardBottomScrollPadding(BuildContext context) {
+  final isCompact = MediaQuery.sizeOf(context).width < 720;
+  return MediaQuery.paddingOf(context).bottom + (isCompact ? 124 : 96);
+}
 
 class _NotesGrid extends StatelessWidget {
   const _NotesGrid({
@@ -635,19 +857,19 @@ class _NotesGrid extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 720;
         return GridView.builder(
-          padding: const EdgeInsets.only(bottom: 96),
+          padding: EdgeInsets.only(bottom: _boardBottomScrollPadding(context)),
           gridDelegate: isCompact
               ? const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   childAspectRatio: 0.86,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 8,
                 )
               : const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 330,
                   mainAxisExtent: 270,
-                  crossAxisSpacing: 22,
-                  mainAxisSpacing: 22,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
                 ),
           itemCount: notes.length,
           itemBuilder: (context, index) {
@@ -767,7 +989,7 @@ class _NotesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: 96),
+      padding: EdgeInsets.only(bottom: _boardBottomScrollPadding(context)),
       itemCount: notes.length,
       buildDefaultDragHandles: false,
       proxyDecorator: (child, index, animation) => AnimatedBuilder(
@@ -800,7 +1022,7 @@ class _NotesList extends StatelessWidget {
             child: _NoteEntrance(
               index: index,
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Align(
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
@@ -857,12 +1079,14 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.isConnected,
     required this.onOpenProfile,
     required this.onOpenNotifications,
+    required this.scrollProgress,
     this.notificationsController,
   });
 
   final bool isConnected;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenNotifications;
+  final ValueListenable<double> scrollProgress;
   final NotificationsController? notificationsController;
 
   @override
@@ -871,50 +1095,148 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final repository = context.read<AuthRepository>();
-    return AppBar(
-      toolbarHeight: 72,
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      actions: [
-        _AnimatedConnectionIndicator(isConnected: isConnected),
-        const SizedBox(width: 4),
-        if (notificationsController case final controller?)
-          ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) => IconButton(
-              key: const ValueKey('notifications-button'),
-              tooltip: controller.unreadCount == 0
-                  ? 'Notificaciones'
-                  : '${controller.unreadCount} notificaciones sin leer',
-              onPressed: onOpenNotifications,
-              icon: Badge(
-                isLabelVisible: controller.unreadCount > 0,
-                label: Text(
-                  controller.unreadCount > 99
-                      ? '99+'
-                      : '${controller.unreadCount}',
+    return ValueListenableBuilder<double>(
+      valueListenable: scrollProgress,
+      builder: (context, rawProgress, _) {
+        final progress = Curves.easeOutCubic.transform(
+          rawProgress.clamp(0.0, 1.0),
+        );
+        final colorScheme = Theme.of(context).colorScheme;
+        final surfaceColor = colorScheme.surface.withValues(
+          alpha: 0.03 + (0.63 * progress),
+        );
+
+        return AppBar(
+          key: const ValueKey('parallax-app-bar'),
+          toolbarHeight: 72,
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          leading: Builder(
+            builder: (scaffoldContext) => IconButton(
+              key: const ValueKey('appbar-menu-button'),
+              tooltip: 'Abrir menú',
+              onPressed: Scaffold.of(scaffoldContext).openDrawer,
+              icon: const Icon(Icons.menu),
+            ),
+          ),
+          flexibleSpace: ClipRect(
+            child: ShaderMask(
+              key: const ValueKey('appbar-bottom-fade'),
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0, 0.68, 1],
+                colors: [Colors.white, Colors.white, Colors.transparent],
+              ).createShader(bounds),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(
+                  sigmaX: 16 * progress,
+                  sigmaY: 16 * progress,
                 ),
-                child: const Icon(Icons.notifications_none_rounded),
+                child: DecoratedBox(
+                  key: const ValueKey('appbar-parallax-background'),
+                  decoration: BoxDecoration(color: surfaceColor),
+                  child: const SizedBox.expand(),
+                ),
               ),
             ),
           ),
-        if (notificationsController != null) const SizedBox(width: 2),
-        StreamBuilder<AppUser?>(
-          stream: repository.authStateChanges,
-          initialData: repository.currentUser,
-          builder: (context, snapshot) => Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: IconButton(
-              key: const ValueKey('profile-avatar-button'),
-              tooltip: 'Abrir perfil',
-              onPressed: onOpenProfile,
-              icon: AuthAvatar(user: snapshot.data),
+          actions: [
+            Row(
+              key: const ValueKey('appbar-actions'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _AnimatedConnectionIndicator(isConnected: isConnected),
+                const SizedBox(width: 4),
+                if (notificationsController case final controller?)
+                  ListenableBuilder(
+                    listenable: controller,
+                    builder: (context, _) => IconButton(
+                      key: const ValueKey('notifications-button'),
+                      tooltip: controller.unreadCount == 0
+                          ? 'Notificaciones'
+                          : '${controller.unreadCount} notificaciones sin leer',
+                      onPressed: onOpenNotifications,
+                      icon: Badge(
+                        isLabelVisible: controller.unreadCount > 0,
+                        label: Text(
+                          controller.unreadCount > 99
+                              ? '99+'
+                              : '${controller.unreadCount}',
+                        ),
+                        child: const Icon(Icons.notifications_none_rounded),
+                      ),
+                    ),
+                  ),
+                if (notificationsController != null) const SizedBox(width: 2),
+                StreamBuilder<AppUser?>(
+                  stream: repository.authStateChanges,
+                  initialData: repository.currentUser,
+                  builder: (context, snapshot) => Padding(
+                    padding: const EdgeInsets.only(right: 16),
+                    child: IconButton(
+                      key: const ValueKey('profile-avatar-button'),
+                      tooltip: 'Abrir perfil',
+                      padding: const EdgeInsets.all(4),
+                      onPressed: onOpenProfile,
+                      icon: AuthAvatar(user: snapshot.data),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
+}
+
+class _BoardContentFade extends StatelessWidget {
+  const _BoardContentFade({
+    required this.topInset,
+    required this.scrollProgress,
+    required this.child,
+  });
+
+  final double topInset;
+  final ValueListenable<double> scrollProgress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<double>(
+    valueListenable: scrollProgress,
+    child: child,
+    builder: (context, rawProgress, child) {
+      final progress = Curves.easeOutCubic.transform(
+        rawProgress.clamp(0.0, 1.0),
+      );
+      final concealedColor = Colors.white.withValues(alpha: 1 - progress);
+
+      return ShaderMask(
+        key: const ValueKey('appbar-content-fade'),
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (bounds) {
+          final fadeStart = ((topInset + 88) / bounds.height).clamp(0.0, 1.0);
+          final fadeEnd = ((topInset + 168) / bounds.height).clamp(0.0, 1.0);
+          return LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: [0, fadeStart, fadeEnd, 1],
+            colors: [
+              concealedColor,
+              concealedColor,
+              Colors.white,
+              Colors.white,
+            ],
+          ).createShader(bounds);
+        },
+        child: child,
+      );
+    },
+  );
 }
 
 class _AnimatedConnectionIndicator extends StatelessWidget {
@@ -974,203 +1296,450 @@ class _AppDrawer extends StatelessWidget {
     required this.lists,
     required this.selectedListId,
     required this.assignedToMeSelected,
+    required this.pinnedSelected,
     required this.isSavingList,
     required this.onSelectList,
     required this.onShowAssignedToMe,
+    required this.onShowPinned,
     required this.onCreateList,
+    required this.onOpenProfile,
     required this.onOpenSettings,
   });
 
   final List<NoteList> lists;
   final String selectedListId;
   final bool assignedToMeSelected;
+  final bool pinnedSelected;
   final bool isSavingList;
   final ValueChanged<String> onSelectList;
   final VoidCallback onShowAssignedToMe;
+  final VoidCallback onShowPinned;
   final VoidCallback onCreateList;
+  final VoidCallback onOpenProfile;
   final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.88).clamp(
+      280.0,
+      360.0,
+    );
+
     return Drawer(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      width: drawerWidth,
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(28)),
+      ),
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+              padding: const EdgeInsets.fromLTRB(22, 14, 18, 16),
               child: Row(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(13),
-                    child: Image.asset(
-                      'assets/branding/nocknock-logo.png',
-                      width: 44,
-                      height: 44,
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(13),
+                      child: Image.asset(
+                        'assets/branding/nocknock-logo.png',
+                        width: 42,
+                        height: 42,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Text(
-                    'NockNock',
-                    style: TextStyle(
-                      fontSize: 21,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
+                  const Expanded(
+                    child: Text(
+                      'NockNock',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.7,
+                      ),
                     ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cerrar menú',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded, size: 21),
                   ),
                 ],
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: ProfileCard(),
-            ),
-            const SizedBox(height: 14),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: ListTile(
-                key: const ValueKey('assigned-to-me-menu-button'),
-                selected: assignedToMeSelected,
-                selectedTileColor: AppTheme.accent.withValues(alpha: 0.1),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                leading: Icon(
-                  assignedToMeSelected
-                      ? Icons.assignment_ind_rounded
-                      : Icons.assignment_ind_outlined,
-                  color: assignedToMeSelected ? AppTheme.accent : null,
-                ),
-                title: Text(
-                  'Asignado a mí',
-                  style: TextStyle(
-                    fontWeight: assignedToMeSelected
-                        ? FontWeight.w800
-                        : FontWeight.w700,
-                  ),
-                ),
-                trailing: assignedToMeSelected
-                    ? const Icon(Icons.check_rounded, size: 19)
-                    : const Icon(Icons.chevron_right_rounded),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _DrawerProfileSummary(
                 onTap: () {
                   Navigator.pop(context);
-                  onShowAssignedToMe();
+                  onOpenProfile();
                 },
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 18),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                children: [
+                  _DrawerDestinationTile(
+                    key: const ValueKey('assigned-to-me-menu-button'),
+                    selected: assignedToMeSelected,
+                    icon: assignedToMeSelected
+                        ? Icons.assignment_ind_rounded
+                        : Icons.assignment_ind_outlined,
+                    label: 'Asignado a mí',
+                    trailing: Icons.chevron_right_rounded,
+                    onTap: () {
+                      Navigator.pop(context);
+                      onShowAssignedToMe();
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  _DrawerDestinationTile(
+                    key: const ValueKey('pinned-menu-button'),
+                    selected: pinnedSelected,
+                    icon: pinnedSelected
+                        ? Icons.push_pin_rounded
+                        : Icons.push_pin_outlined,
+                    label: 'Ancladas',
+                    trailing: Icons.chevron_right_rounded,
+                    onTap: () {
+                      Navigator.pop(context);
+                      onShowPinned();
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 0, 14, 4),
               child: Row(
                 children: [
                   Text(
                     'LISTAS',
                     style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withValues(alpha: 0.52),
-                      fontSize: 11,
+                      color: colorScheme.onSurface.withValues(alpha: 0.5),
+                      fontSize: 10,
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 1.2,
+                      letterSpacing: 1.35,
                     ),
                   ),
                   const Spacer(),
-                  IconButton(
-                    key: const ValueKey('add-list-button'),
-                    tooltip: 'Agregar lista',
-                    onPressed: isSavingList
-                        ? null
-                        : () {
-                            Navigator.pop(context);
-                            onCreateList();
-                          },
-                    icon: const Icon(Icons.add_rounded),
+                  _DrawerAddListButton(
+                    isSaving: isSavingList,
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onCreateList();
+                    },
                   ),
                 ],
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.fromLTRB(10, 0, 10, 18),
-                itemCount: lists.length,
-                itemBuilder: (context, index) {
-                  final list = lists[index];
-                  final selected =
-                      !assignedToMeSelected && list.id == selectedListId;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: ListTile(
-                      key: ValueKey('list-${list.id}'),
-                      selected: selected,
-                      selectedTileColor: AppTheme.accent.withValues(alpha: 0.1),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+              child: Scrollbar(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 2, 12, 16),
+                  itemCount: lists.length,
+                  itemBuilder: (context, index) {
+                    final list = lists[index];
+                    final selected =
+                        !assignedToMeSelected &&
+                        !pinnedSelected &&
+                        list.id == selectedListId;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: _DrawerDestinationTile(
+                        key: ValueKey('list-${list.id}'),
+                        selected: selected,
+                        icon: selected
+                            ? Icons.folder_rounded
+                            : Icons.folder_outlined,
+                        label: list.name,
+                        trailing: selected
+                            ? Icons.check_rounded
+                            : list.isShared
+                            ? Icons.people_outline_rounded
+                            : null,
+                        trailingTooltip: list.isShared && !selected
+                            ? 'Lista compartida'
+                            : null,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onSelectList(list.id);
+                        },
                       ),
-                      leading: Icon(
-                        selected ? Icons.folder_rounded : Icons.folder_outlined,
-                        color: selected
-                            ? AppTheme.accent
-                            : Theme.of(context).colorScheme.onSurface,
-                      ),
-                      title: Text(
-                        list.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: selected
-                              ? FontWeight.w800
-                              : FontWeight.w600,
-                        ),
-                      ),
-                      trailing: selected
-                          ? const Icon(Icons.check_rounded, size: 19)
-                          : list.isShared
-                          ? const Tooltip(
-                              message: 'Lista compartida',
-                              child: Icon(
-                                Icons.people_outline_rounded,
-                                size: 19,
-                              ),
-                            )
-                          : null,
-                      onTap: () {
-                        Navigator.pop(context);
-                        onSelectList(list.id);
-                      },
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
-            Divider(
-              height: 1,
-              indent: 20,
-              endIndent: 20,
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurface.withValues(alpha: 0.1),
-            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-              child: ListTile(
-                key: const ValueKey('settings-menu-button'),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                leading: const Icon(Icons.settings_outlined),
-                title: const Text(
-                  'Configuración',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () {
-                  Navigator.pop(context);
-                  onOpenSettings();
-                },
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Column(
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.55,
+                        ),
+                      ),
+                    ),
+                    child: _DrawerDestinationTile(
+                      key: const ValueKey('settings-menu-button'),
+                      icon: Icons.settings_outlined,
+                      label: 'Configuración',
+                      trailing: Icons.chevron_right_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        onOpenSettings();
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const _AppVersionLabel(),
+                ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AppVersionLabel extends StatefulWidget {
+  const _AppVersionLabel();
+
+  @override
+  State<_AppVersionLabel> createState() => _AppVersionLabelState();
+}
+
+class _AppVersionLabelState extends State<_AppVersionLabel> {
+  late final Future<String> _version = _loadVersion();
+
+  Future<String> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final buildSuffix = info.buildNumber.isEmpty
+          ? ''
+          : ' (${info.buildNumber})';
+      return 'Versión ${info.version}$buildSuffix';
+    } catch (_) {
+      return 'Versión 1.0.0 (1)';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return FutureBuilder<String>(
+      future: _version,
+      builder: (context, snapshot) => Text(
+        snapshot.data ?? 'Versión 1.0.0',
+        key: const ValueKey('app-version-label'),
+        style: TextStyle(
+          color: colorScheme.onSurface.withValues(alpha: 0.38),
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.35,
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerProfileSummary extends StatelessWidget {
+  const _DrawerProfileSummary({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final repository = context.read<AuthRepository>();
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return StreamBuilder<AppUser?>(
+      stream: repository.authStateChanges,
+      initialData: repository.currentUser,
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+        return Material(
+          color: colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: const ValueKey('drawer-profile-button'),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+              child: Row(
+                children: [
+                  AuthAvatar(user: user, size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user?.displayName ?? 'Tu perfil',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          user?.email ?? 'Inicia sesión para sincronizar',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.62,
+                            ),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.chevron_right_rounded, size: 20),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DrawerAddListButton extends StatelessWidget {
+  const _DrawerAddListButton({required this.isSaving, required this.onPressed});
+
+  final bool isSaving;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return IconButton.filledTonal(
+      key: const ValueKey('add-list-button'),
+      tooltip: 'Agregar lista',
+      visualDensity: VisualDensity.compact,
+      style: IconButton.styleFrom(
+        backgroundColor: AppTheme.accent.withValues(alpha: 0.12),
+        foregroundColor: AppTheme.accent,
+      ),
+      onPressed: isSaving ? null : onPressed,
+      icon: isSaving
+          ? SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colorScheme.onSurface.withValues(alpha: 0.5),
+              ),
+            )
+          : const Icon(Icons.add_rounded, size: 20),
+    );
+  }
+}
+
+class _DrawerDestinationTile extends StatelessWidget {
+  const _DrawerDestinationTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.selected = false,
+    this.trailing,
+    this.trailingTooltip,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+  final IconData? trailing;
+  final String? trailingTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final foreground = selected ? AppTheme.accent : colorScheme.onSurface;
+    final trailingIcon = trailing == null
+        ? null
+        : Icon(trailing, size: 19, color: foreground.withValues(alpha: 0.78));
+
+    return Material(
+      color: selected
+          ? AppTheme.accent.withValues(alpha: 0.12)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 54,
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 3,
+                height: selected ? 26 : 0,
+                decoration: BoxDecoration(
+                  color: AppTheme.accent,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              const SizedBox(width: 13),
+              Icon(icon, size: 22, color: foreground),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 15,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (trailingIcon != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: trailingTooltip == null
+                      ? trailingIcon
+                      : Tooltip(message: trailingTooltip!, child: trailingIcon),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1601,6 +2170,7 @@ class _CollaboratorsDialog extends StatefulWidget {
 class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  String? _removingCollaboratorUid;
 
   @override
   void dispose() {
@@ -1627,7 +2197,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
               const Expanded(child: Text('Compartir lista')),
               IconButton(
                 tooltip: 'Cerrar',
-                onPressed: state.isInviting
+                onPressed: state.isInviting || state.isRemovingCollaborator
                     ? null
                     : () => Navigator.pop(context),
                 icon: const Icon(Icons.close_rounded),
@@ -1662,7 +2232,8 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                       child: TextFormField(
                         key: const ValueKey('collaborator-email-field'),
                         controller: _emailController,
-                        enabled: !state.isInviting,
+                        enabled:
+                            !state.isInviting && !state.isRemovingCollaborator,
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: TextInputAction.send,
                         autocorrect: false,
@@ -1682,7 +2253,10 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                       width: double.infinity,
                       child: FilledButton.icon(
                         key: const ValueKey('send-invitation-button'),
-                        onPressed: state.isInviting || !_hasValidEmail
+                        onPressed:
+                            state.isInviting ||
+                                state.isRemovingCollaborator ||
+                                !_hasValidEmail
                             ? null
                             : _sendInvitation,
                         icon: state.isInviting
@@ -1718,6 +2292,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                   else
                     ...list.collaborators.map(
                       (person) => ListTile(
+                        key: ValueKey('collaborator-${person.uid}'),
                         contentPadding: EdgeInsets.zero,
                         leading: _CollaboratorAvatar(person: person),
                         title: Text(
@@ -1731,12 +2306,41 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        trailing: Text(
-                          person.role == ListMemberRole.owner
-                              ? 'Propietario'
-                              : 'Puede editar',
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
+                        trailing: person.role == ListMemberRole.owner
+                            ? Text(
+                                'Propietario',
+                                style: Theme.of(context).textTheme.labelSmall,
+                              )
+                            : list.canInvite
+                            ? IconButton(
+                                key: ValueKey(
+                                  'remove-collaborator-${person.uid}',
+                                ),
+                                tooltip:
+                                    'Quitar acceso a ${person.displayName}',
+                                onPressed:
+                                    state.isRemovingCollaborator ||
+                                        state.isInviting
+                                    ? null
+                                    : () => _confirmRemoveCollaborator(
+                                        list,
+                                        person,
+                                      ),
+                                icon:
+                                    _removingCollaboratorUid == person.uid &&
+                                        state.isRemovingCollaborator
+                                    ? const SizedBox.square(
+                                        dimension: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.person_remove_outlined),
+                              )
+                            : Text(
+                                'Puede editar',
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
                       ),
                     ),
                   if (list.pendingInvitations.isNotEmpty) ...[
@@ -1795,6 +2399,44 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
       _emailController.clear();
       FocusScope.of(context).unfocus();
     }
+  }
+
+  Future<void> _confirmRemoveCollaborator(
+    NoteList list,
+    ListCollaborator person,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('remove-collaborator-dialog'),
+        title: const Text('Quitar acceso'),
+        content: Text(
+          '${person.displayName} dejará de ver y editar “${list.name}”. '
+          'Las notas de la lista no se eliminarán.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            key: const ValueKey('confirm-remove-collaborator'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.person_remove_outlined),
+            label: const Text('Quitar acceso'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _removingCollaboratorUid = person.uid);
+    await context.read<NotesCubit>().removeCollaborator(person.uid);
+    if (mounted) setState(() => _removingCollaboratorUid = null);
   }
 }
 
@@ -2335,62 +2977,102 @@ class _CompactBoardControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 136,
-          child: _CompactIconSelector<NoteFilter>(
-            key: const ValueKey('compact-filter-selector'),
-            keyPrefix: 'filter-mode',
-            selected: filter,
-            selectedColor: AppTheme.accent,
-            onChanged: onFilterChanged,
-            options: const [
-              _BoardControlOption(
-                value: NoteFilter.all,
-                label: 'Todas',
-                icon: Icons.dashboard_outlined,
-              ),
-              _BoardControlOption(
-                value: NoteFilter.pending,
-                label: 'Pendientes',
-                icon: Icons.schedule_rounded,
-              ),
-              _BoardControlOption(
-                value: NoteFilter.completed,
-                label: 'Completadas',
-                icon: Icons.check_circle_outline_rounded,
-              ),
-            ],
+        Expanded(
+          child: _CompactControlSection(
+            label: 'FILTRAR',
+            child: _CompactIconSelector<NoteFilter>(
+              key: const ValueKey('compact-filter-selector'),
+              keyPrefix: 'filter-mode',
+              selected: filter,
+              selectedColor: AppTheme.accent,
+              onChanged: onFilterChanged,
+              options: const [
+                _BoardControlOption(
+                  value: NoteFilter.all,
+                  label: 'Todas',
+                  icon: Icons.dashboard_outlined,
+                ),
+                _BoardControlOption(
+                  value: NoteFilter.pending,
+                  label: 'Pend.',
+                  tooltip: 'Pendientes',
+                  icon: Icons.schedule_rounded,
+                ),
+                _BoardControlOption(
+                  value: NoteFilter.completed,
+                  label: 'Hechas',
+                  tooltip: 'Completadas',
+                  icon: Icons.check_circle_outline_rounded,
+                ),
+              ],
+            ),
           ),
         ),
-        const Spacer(),
-        SizedBox(
-          width: 136,
-          child: _CompactIconSelector<BoardViewMode>(
-            key: const ValueKey('compact-view-selector'),
-            keyPrefix: 'view-mode',
-            selected: viewMode,
-            selectedColor: colorScheme.primary,
-            onChanged: onViewModeChanged,
-            options: const [
-              _BoardControlOption(
-                value: BoardViewMode.grid,
-                label: 'Vista en cuadrícula',
-                icon: Icons.grid_view_rounded,
-              ),
-              _BoardControlOption(
-                value: BoardViewMode.list,
-                label: 'Vista de lista compacta',
-                icon: Icons.view_list_rounded,
-              ),
-              _BoardControlOption(
-                value: BoardViewMode.largeList,
-                label: 'Vista de lista grande',
-                icon: Icons.view_agenda_outlined,
-              ),
-            ],
+        const SizedBox(width: 12),
+        Expanded(
+          child: _CompactControlSection(
+            label: 'VISTA',
+            child: _CompactIconSelector<BoardViewMode>(
+              key: const ValueKey('compact-view-selector'),
+              keyPrefix: 'view-mode',
+              selected: viewMode,
+              selectedColor: colorScheme.primary,
+              onChanged: onViewModeChanged,
+              options: const [
+                _BoardControlOption(
+                  value: BoardViewMode.grid,
+                  label: 'Mosaico',
+                  tooltip: 'Vista en cuadrícula',
+                  icon: Icons.grid_view_rounded,
+                ),
+                _BoardControlOption(
+                  value: BoardViewMode.list,
+                  label: 'Lista',
+                  tooltip: 'Vista de lista compacta',
+                  icon: Icons.view_list_rounded,
+                ),
+                _BoardControlOption(
+                  value: BoardViewMode.largeList,
+                  label: 'Grande',
+                  tooltip: 'Vista de lista grande',
+                  icon: Icons.view_agenda_outlined,
+                ),
+              ],
+            ),
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _CompactControlSection extends StatelessWidget {
+  const _CompactControlSection({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 5, bottom: 6),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.56),
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.1,
+            ),
+          ),
+        ),
+        child,
       ],
     );
   }
@@ -2416,7 +3098,7 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      height: 44,
+      height: 56,
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHigh,
@@ -2454,12 +3136,36 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
                       borderRadius: BorderRadius.circular(18),
                       onTap: isSelected ? null : () => onChanged(option.value),
                       child: Center(
-                        child: Icon(
-                          option.icon,
-                          size: 18,
-                          color: isSelected
-                              ? selectedForeground
-                              : colorScheme.onSurface.withValues(alpha: 0.62),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              option.icon,
+                              size: 17,
+                              color: isSelected
+                                  ? selectedForeground
+                                  : colorScheme.onSurface.withValues(
+                                      alpha: 0.62,
+                                    ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              option.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.fade,
+                              softWrap: false,
+                              style: TextStyle(
+                                color: isSelected
+                                    ? selectedForeground
+                                    : colorScheme.onSurface.withValues(
+                                        alpha: 0.62,
+                                      ),
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                height: 1,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

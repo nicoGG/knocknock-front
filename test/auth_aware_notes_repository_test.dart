@@ -238,6 +238,10 @@ class _TrackingNotesRepository
       throw UnimplementedError();
 
   @override
+  Future<NoteList> removeCollaborator(String listId, String collaboratorUid) =>
+      throw UnimplementedError();
+
+  @override
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
@@ -245,6 +249,9 @@ class _TrackingNotesRepository
 
   @override
   Future<List<Note>> fetchNotes(String boardId) => throw UnimplementedError();
+
+  @override
+  Future<List<Note>> fetchPinnedNotes() => throw UnimplementedError();
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) =>

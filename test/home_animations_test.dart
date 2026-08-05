@@ -2,7 +2,9 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
+import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/widgets/board_loading_state.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 
@@ -56,6 +58,41 @@ void main() {
     expect(pinCalls, 1);
     expect(find.byIcon(Icons.push_pin_rounded), findsOneWidget);
     expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+  });
+
+  testWidgets('a note exposes a shared transition into its detail', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_cardHarness(note: _note()));
+
+    final hero = tester.widget<Hero>(find.byType(Hero));
+    expect(hero.tag, noteHeroTag('note-1', variant: 'grid'));
+    expect(hero.transitionOnUserGestures, isTrue);
+    expect(tester.widget<HeroMode>(find.byType(HeroMode)).enabled, isTrue);
+  });
+
+  testWidgets('app pages enter softly and honor reduced motion', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_routeHarness());
+    await tester.tap(find.text('Abrir'));
+    await tester.pump(const Duration(milliseconds: 80));
+
+    expect(
+      find.byKey(const ValueKey('app-page-transition'), skipOffstage: false),
+      findsOneWidget,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(_routeHarness(disableAnimations: true));
+    await tester.tap(find.text('Abrir'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('app-page-transition'), skipOffstage: false),
+      findsNothing,
+    );
+    expect(find.text('Destino'), findsOneWidget);
   });
 
   testWidgets('the home loader mirrors the compact post-it grid', (
@@ -146,6 +183,31 @@ Widget _loadingHarness({bool disableAnimations = false, double textScale = 1}) {
         textScaler: TextScaler.linear(textScale),
       ),
       child: const Scaffold(body: BoardLoadingState()),
+    ),
+  );
+}
+
+Widget _routeHarness({bool disableAnimations = false}) {
+  return MaterialApp(
+    key: ValueKey(disableAnimations),
+    theme: AppTheme.light.copyWith(platform: TargetPlatform.android),
+    builder: (context, child) => MediaQuery(
+      data: MediaQueryData(disableAnimations: disableAnimations),
+      child: child!,
+    ),
+    home: Builder(
+      builder: (context) => Scaffold(
+        body: Center(
+          child: FilledButton(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(body: Text('Destino')),
+              ),
+            ),
+            child: const Text('Abrir'),
+          ),
+        ),
+      ),
     ),
   );
 }

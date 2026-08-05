@@ -81,6 +81,16 @@ class AuthAwareNotesRepository
   }
 
   @override
+  Future<NoteList> removeCollaborator(
+    String listId,
+    String collaboratorUid,
+  ) async {
+    await _authTransition;
+    if (!_isSignedIn) throw const CollaborationRequiresSignInFailure();
+    return remoteRepository.removeCollaborator(listId, collaboratorUid);
+  }
+
+  @override
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
@@ -91,6 +101,10 @@ class AuthAwareNotesRepository
   @override
   Future<List<Note>> fetchNotes(String boardId) =>
       _whenReady((repository) => repository.fetchNotes(boardId));
+
+  @override
+  Future<List<Note>> fetchPinnedNotes() =>
+      _whenReady((repository) => repository.fetchPinnedNotes());
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) =>

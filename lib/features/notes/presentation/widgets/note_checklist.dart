@@ -348,6 +348,9 @@ class NoteChecklistDetail extends StatelessWidget {
     required this.isSaving,
     required this.onChanged,
     required this.onEdit,
+    this.backgroundColor,
+    this.foregroundColor,
+    this.borderRadius = const BorderRadius.all(Radius.circular(20)),
     super.key,
   });
 
@@ -355,14 +358,23 @@ class NoteChecklistDetail extends StatelessWidget {
   final bool isSaving;
   final ValueChanged<List<NoteChecklistItem>> onChanged;
   final VoidCallback onEdit;
+  final Color? backgroundColor;
+  final Color? foregroundColor;
+  final BorderRadius borderRadius;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final effectiveForeground = foregroundColor ?? colorScheme.onSurface;
+    final checkboxCheckColor =
+        ThemeData.estimateBrightnessForColor(effectiveForeground) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black87;
     return Material(
       key: const ValueKey('note-checklist-detail'),
-      color: colorScheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(20),
+      color: backgroundColor ?? colorScheme.surfaceContainerLow,
+      borderRadius: borderRadius,
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
@@ -373,16 +385,21 @@ class NoteChecklistDetail extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.checklist_rounded),
+                  Icon(Icons.checklist_rounded, color: effectiveForeground),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Subtareas',
-                      style: Theme.of(context).textTheme.titleMedium,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: effectiveForeground,
+                      ),
                     ),
                   ),
                   TextButton.icon(
                     onPressed: isSaving ? null : onEdit,
+                    style: TextButton.styleFrom(
+                      foregroundColor: effectiveForeground,
+                    ),
                     icon: const Icon(Icons.edit_outlined, size: 18),
                     label: const Text('Editar'),
                   ),
@@ -414,15 +431,19 @@ class NoteChecklistDetail extends StatelessWidget {
                           padding: const EdgeInsets.all(8),
                           child: Icon(
                             Icons.drag_indicator_rounded,
-                            color: colorScheme.onSurface.withValues(
-                              alpha: 0.46,
-                            ),
+                            color: effectiveForeground.withValues(alpha: 0.56),
                           ),
                         ),
                       ),
                       Checkbox(
                         key: ValueKey('detail-check-${item.id}'),
                         value: item.isCompleted,
+                        activeColor: effectiveForeground,
+                        checkColor: checkboxCheckColor,
+                        side: BorderSide(
+                          color: effectiveForeground,
+                          width: 1.5,
+                        ),
                         onChanged: isSaving
                             ? null
                             : (value) => _replace(
@@ -435,6 +456,7 @@ class NoteChecklistDetail extends StatelessWidget {
                           item.text,
                           style: Theme.of(context).textTheme.bodyLarge
                               ?.copyWith(
+                                color: effectiveForeground,
                                 decoration: item.isCompleted
                                     ? TextDecoration.lineThrough
                                     : null,
