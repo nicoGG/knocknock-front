@@ -1,14 +1,18 @@
+import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:nocknock/core/config/app_config.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 
 class FirebaseAuthRepository implements AuthRepository {
-  FirebaseAuthRepository({FirebaseAuth? firebaseAuth})
-    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance;
+  FirebaseAuthRepository({FirebaseAuth? firebaseAuth, Dio? dio})
+    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
+      _dio = dio ?? Dio(BaseOptions(baseUrl: AppConfig.apiBaseUrl));
 
   final FirebaseAuth _firebaseAuth;
+  final Dio _dio;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _isInitialized = false;
   Future<void> Function()? _beforeSignOut;
@@ -74,6 +78,34 @@ class FirebaseAuthRepository implements AuthRepository {
     await _beforeSignOut?.call();
     await _firebaseAuth.signOut();
     if (!kIsWeb && _isInitialized) await _googleSignIn.signOut();
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    final token = await getIdToken(forceRefresh: true);
+    if (token == null) {
+      throw const AuthFailure(
+        'Inicia sesión nuevamente para eliminar tu cuenta.',
+      );
+    }
+    try {
+      await _beforeSignOut?.call();
+      await _dio.delete<void>(
+        '/account',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      await _firebaseAuth.signOut();
+      if (!kIsWeb && _isInitialized) await _googleSignIn.signOut();
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const AuthFailure(
+          'Tu sesión venció. Inicia sesión nuevamente para eliminar tu cuenta.',
+        );
+      }
+      throw const AuthFailure(
+        'No pudimos eliminar tu cuenta. Inténtalo nuevamente.',
+      );
+    }
   }
 
   @override

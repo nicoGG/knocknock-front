@@ -1288,6 +1288,38 @@ void main() {
     expect(find.text('nico@example.com'), findsOneWidget);
   });
 
+  testWidgets('requires confirmation before deleting an account', (
+    tester,
+  ) async {
+    const user = AppUser(
+      id: 'google-user',
+      displayName: 'Nico Galdames',
+      email: 'nico@example.com',
+    );
+    final authRepository = _FakeAuthRepository(user: user);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(isConnected: true),
+        authRepository: authRepository,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('delete-account-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('¿Eliminar tu cuenta?'), findsOneWidget);
+    expect(authRepository.didDeleteAccount, isFalse);
+
+    await tester.tap(
+      find.byKey(const ValueKey('confirm-delete-account-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(authRepository.didDeleteAccount, isTrue);
+  });
+
   testWidgets('asks guests to sign in before sharing a list', (tester) async {
     await tester.pumpWidget(
       NockNockApp(
@@ -1376,6 +1408,7 @@ class _FakeAuthRepository implements AuthRepository {
   _FakeAuthRepository({this.user});
 
   final AppUser? user;
+  bool didDeleteAccount = false;
 
   @override
   Stream<AppUser?> get authStateChanges => const Stream.empty();
@@ -1388,6 +1421,9 @@ class _FakeAuthRepository implements AuthRepository {
 
   @override
   Future<String?> getIdToken({bool forceRefresh = false}) async => null;
+
+  @override
+  Future<void> deleteAccount() async => didDeleteAccount = true;
 
   @override
   Future<void> signOut() async {}
