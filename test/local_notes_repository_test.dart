@@ -177,8 +177,10 @@ void main() {
 
     final reopened = LocalNotesRepository();
     final notes = await reopened.fetchNotes('home');
+    final pinnedNotes = await reopened.fetchPinnedNotes();
     expect(notes.map((note) => note.id), [first.id, second.id]);
     expect(notes.first.isPinned, isTrue);
+    expect(pinnedNotes.map((note) => note.id), [first.id]);
     expect(notes.map((note) => note.sortOrder), [0, 1]);
     reopened.dispose();
   });

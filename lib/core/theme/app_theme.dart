@@ -67,7 +67,53 @@ abstract final class AppTheme {
         backgroundColor: colorScheme.surface,
         surfaceTintColor: Colors.transparent,
       ),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: _NockNockPageTransitionsBuilder(),
+          TargetPlatform.iOS: _NockNockPageTransitionsBuilder(),
+          TargetPlatform.macOS: _NockNockPageTransitionsBuilder(),
+          TargetPlatform.windows: _NockNockPageTransitionsBuilder(),
+          TargetPlatform.linux: _NockNockPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: _NockNockPageTransitionsBuilder(),
+        },
+      ),
       dividerColor: foreground.withValues(alpha: 0.1),
+    );
+  }
+}
+
+class _NockNockPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _NockNockPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (route.isFirst || MediaQuery.disableAnimationsOf(context)) return child;
+
+    final curvedAnimation = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    return FadeTransition(
+      key: const ValueKey('app-page-transition'),
+      opacity: curvedAnimation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.025),
+          end: Offset.zero,
+        ).animate(curvedAnimation),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.985, end: 1).animate(curvedAnimation),
+          alignment: Alignment.topCenter,
+          child: child,
+        ),
+      ),
     );
   }
 }

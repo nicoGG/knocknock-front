@@ -22,6 +22,19 @@ class NotesReordered extends NotesRealtimeEvent {
   final List<Note> notes;
 }
 
+class ListAppearanceChanged extends NotesRealtimeEvent {
+  const ListAppearanceChanged(this.listId, this.appearance);
+
+  final String listId;
+  final ListAppearance appearance;
+}
+
+class ListAccessRemoved extends NotesRealtimeEvent {
+  const ListAccessRemoved(this.listId);
+
+  final String listId;
+}
+
 class RealtimeConnectionChanged extends NotesRealtimeEvent {
   const RealtimeConnectionChanged(this.isConnected);
   final bool isConnected;
@@ -113,12 +126,16 @@ abstract interface class NotesRepository {
 
   Future<NoteList> inviteCollaborator(String listId, String email);
 
+  Future<NoteList> removeCollaborator(String listId, String collaboratorUid);
+
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
   );
 
   Future<List<Note>> fetchNotes(String boardId);
+
+  Future<List<Note>> fetchPinnedNotes();
 
   Future<Note> createNote(String boardId, NoteDraft draft);
 

@@ -47,6 +47,11 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
       ..onDisconnect((_) => _events.add(const RealtimeConnectionChanged(false)))
       ..on('note:created', _onNoteChanged)
       ..on('note:updated', _onNoteChanged)
+      ..on('list:appearance-updated', _onListAppearanceChanged)
+      ..on('list:access-removed', (data) {
+        final listId = _asJson(data)?['listId'] as String?;
+        if (listId != null) _events.add(ListAccessRemoved(listId));
+      })
       ..on('notes:reordered', (data) {
         final json = _asJson(data);
         final boardId = json?['boardId'] as String?;
@@ -148,6 +153,18 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
   }
 
   @override
+  Future<NoteList> removeCollaborator(
+    String listId,
+    String collaboratorUid,
+  ) async {
+    final encodedUid = Uri.encodeComponent(collaboratorUid);
+    final response = await _dio.delete<Map<String, dynamic>>(
+      '/lists/$listId/collaborators/$encodedUid',
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
@@ -165,6 +182,14 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
       '/notes',
       queryParameters: {'boardId': boardId},
     );
+    return (response.data ?? const [])
+        .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  @override
+  Future<List<Note>> fetchPinnedNotes() async {
+    final response = await _dio.get<List<dynamic>>('/notes/pinned');
     return (response.data ?? const [])
         .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -274,6 +299,20 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
   void _onNoteChanged(dynamic data) {
     final json = _asJson(data);
     if (json != null) _events.add(NoteChanged(Note.fromJson(json)));
+  }
+
+  void _onListAppearanceChanged(dynamic data) {
+    final json = _asJson(data);
+    final listId = json?['listId'] as String?;
+    final rawAppearance = json?['appearance'];
+    if (listId != null && rawAppearance is Map) {
+      _events.add(
+        ListAppearanceChanged(
+          listId,
+          ListAppearance.fromJson(Map<String, dynamic>.from(rawAppearance)),
+        ),
+      );
+    }
   }
 
   Map<String, dynamic>? _asJson(dynamic data) {

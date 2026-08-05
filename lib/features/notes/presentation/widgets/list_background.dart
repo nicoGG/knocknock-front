@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -18,20 +19,48 @@ class ListBoardBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return Stack(
       fit: StackFit.expand,
       children: [
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 420),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 520),
           switchInCurve: Curves.easeOutCubic,
-          child: _BackgroundVisual(
-            key: ValueKey(
-              '${appearance.backgroundPreset.name}-'
-              '${appearance.customBackgroundImage?.hashCode}',
-            ),
+          switchOutCurve: Curves.easeInCubic,
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            fit: StackFit.expand,
+            children: [...previousChildren, ?currentChild],
+          ),
+          child: _BackgroundLayer(
+            key: ValueKey((appearance, isDark)),
             appearance: appearance,
+            isDark: isDark,
           ),
         ),
+        child,
+      ],
+    );
+  }
+}
+
+class _BackgroundLayer extends StatelessWidget {
+  const _BackgroundLayer({
+    required this.appearance,
+    required this.isDark,
+    super.key,
+  });
+
+  final ListAppearance appearance;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _BackgroundVisual(appearance: appearance),
         if (appearance.backgroundBlur > 0)
           ClipRect(
             child: BackdropFilter(
@@ -50,14 +79,13 @@ class ListBoardBackground extends StatelessWidget {
                 : (isDark ? 0.46 : 0.32),
           ),
         ),
-        child,
       ],
     );
   }
 }
 
 class _BackgroundVisual extends StatelessWidget {
-  const _BackgroundVisual({required this.appearance, super.key});
+  const _BackgroundVisual({required this.appearance});
 
   final ListAppearance appearance;
 
@@ -180,21 +208,42 @@ extension ListBackgroundPresetStyle on ListBackgroundPreset {
   };
 }
 
+typedef ListBackgroundImagePicker = Future<Uint8List?> Function();
+
+Future<Uint8List?> _pickListBackgroundImage() async {
+  final image = await ImagePicker().pickImage(
+    source: ImageSource.gallery,
+    maxWidth: 1600,
+    maxHeight: 1600,
+    imageQuality: 76,
+    requestFullMetadata: false,
+  );
+  return image?.readAsBytes();
+}
+
 Future<ListAppearance?> showListBackgroundPicker(
   BuildContext context, {
   required ListAppearance initialAppearance,
+  ListBackgroundImagePicker? imagePicker,
 }) => showModalBottomSheet<ListAppearance>(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
   backgroundColor: Colors.transparent,
-  builder: (_) => _ListBackgroundSheet(initialAppearance: initialAppearance),
+  builder: (_) => _ListBackgroundSheet(
+    initialAppearance: initialAppearance,
+    imagePicker: imagePicker ?? _pickListBackgroundImage,
+  ),
 );
 
 class _ListBackgroundSheet extends StatefulWidget {
-  const _ListBackgroundSheet({required this.initialAppearance});
+  const _ListBackgroundSheet({
+    required this.initialAppearance,
+    required this.imagePicker,
+  });
 
   final ListAppearance initialAppearance;
+  final ListBackgroundImagePicker imagePicker;
 
   @override
   State<_ListBackgroundSheet> createState() => _ListBackgroundSheetState();
@@ -313,6 +362,31 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
                             .map((preset) => _presetTile(theme, preset))
                             .toList(),
                       ),
+                      if (_customImage != null) ...[
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              key: const ValueKey(
+                                'change-custom-background-button',
+                              ),
+                              onPressed: _isPicking ? null : _pickCustomImage,
+                              icon: const Icon(Icons.photo_library_outlined),
+                              label: const Text('Cambiar foto'),
+                            ),
+                            TextButton.icon(
+                              key: const ValueKey(
+                                'remove-custom-background-button',
+                              ),
+                              onPressed: _isPicking ? null : _removeCustomImage,
+                              icon: const Icon(Icons.hide_image_outlined),
+                              label: const Text('Quitar foto'),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 22),
                       Row(
                         children: [
@@ -478,27 +552,28 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
       return;
     }
     if (_customImage != null) {
-      setState(() {
-        _preset = preset;
-        _error = null;
-      });
+      if (_preset == ListBackgroundPreset.custom) {
+        await _pickCustomImage();
+      } else {
+        setState(() {
+          _preset = preset;
+          _error = null;
+        });
+      }
       return;
     }
 
+    await _pickCustomImage();
+  }
+
+  Future<void> _pickCustomImage() async {
     setState(() {
       _isPicking = true;
       _error = null;
     });
     try {
-      final image = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 76,
-        requestFullMetadata: false,
-      );
-      if (image == null || !mounted) return;
-      final bytes = await image.readAsBytes();
+      final bytes = await widget.imagePicker();
+      if (bytes == null || !mounted) return;
       if (bytes.length > _maximumImageBytes) {
         setState(() {
           _error =
@@ -519,6 +594,17 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
     } finally {
       if (mounted) setState(() => _isPicking = false);
     }
+  }
+
+  void _removeCustomImage() {
+    setState(() {
+      _customImage = null;
+      _error = null;
+      if (_preset == ListBackgroundPreset.custom) {
+        _preset = ListBackgroundPreset.paper;
+        _blur = 0;
+      }
+    });
   }
 
   void _save() {

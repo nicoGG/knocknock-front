@@ -101,6 +101,10 @@ class LocalNotesRepository
       throw const CollaborationRequiresSignInFailure();
 
   @override
+  Future<NoteList> removeCollaborator(String listId, String collaboratorUid) =>
+      throw const CollaborationRequiresSignInFailure();
+
+  @override
   Future<NoteList> updateListAppearance(
     String listId,
     ListAppearance appearance,
@@ -125,6 +129,14 @@ class LocalNotesRepository
     await _ensureLoaded();
     final notes = _notes!.where((note) => note.boardId == boardId).toList()
       ..sort(compareNotes);
+    return List.unmodifiable(notes);
+  }
+
+  @override
+  Future<List<Note>> fetchPinnedNotes() async {
+    await _ensureLoaded();
+    final notes = _notes!.where((note) => note.isPinned).toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return List.unmodifiable(notes);
   }
 

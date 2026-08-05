@@ -5,6 +5,7 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
+import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
@@ -16,6 +17,7 @@ class NoteDetailPage extends StatelessWidget {
     required this.initialNote,
     required this.listName,
     required this.defaultAuthorName,
+    this.heroTag,
     this.currentUserId,
     this.currentUserPhotoUrl,
     super.key,
@@ -25,6 +27,7 @@ class NoteDetailPage extends StatelessWidget {
   final Note initialNote;
   final String listName;
   final String defaultAuthorName;
+  final Object? heroTag;
   final String? currentUserId;
   final String? currentUserPhotoUrl;
 
@@ -33,9 +36,10 @@ class NoteDetailPage extends StatelessWidget {
     return BlocBuilder<NotesCubit, NotesState>(
       builder: (context, state) {
         final note = _noteFrom(state) ?? initialNote;
-        final currentListName = state.selectedList?.name ?? listName;
+        final currentList = _listFrom(state, note) ?? state.selectedList;
+        final currentListName = currentList?.name ?? listName;
         final assignees =
-            state.selectedList?.collaborators ?? const <ListCollaborator>[];
+            currentList?.collaborators ?? const <ListCollaborator>[];
         final assignee = assignees
             .where((person) => person.uid == note.assigneeUid)
             .firstOrNull;
@@ -60,13 +64,12 @@ class NoteDetailPage extends StatelessWidget {
           author?.photoUrl,
         );
         final invitedPeople =
-            state.selectedList?.collaborators
+            currentList?.collaborators
                 .where((person) => person.role == ListMemberRole.editor)
                 .toList() ??
             const <ListCollaborator>[];
         final pendingInvitations =
-            state.selectedList?.pendingInvitations ??
-            const <ListPendingInvitation>[];
+            currentList?.pendingInvitations ?? const <ListPendingInvitation>[];
         return Scaffold(
           key: const ValueKey('note-detail-page'),
           appBar: AppBar(
@@ -97,6 +100,7 @@ class NoteDetailPage extends StatelessWidget {
             authorPhotoUrl: authorPhotoUrl,
             invitedPeople: invitedPeople,
             pendingInvitations: pendingInvitations,
+            heroTag: heroTag ?? noteHeroTag(note.id),
             isSaving: state.isSaving,
             onToggle: () => context.read<NotesCubit>().toggleNote(note),
             onEditContent: () => _editContent(context, note),
@@ -120,10 +124,14 @@ class NoteDetailPage extends StatelessWidget {
   }
 
   Note? _noteFrom(NotesState state) {
-    for (final note in state.notes) {
+    for (final note in [...state.notes, ...state.pinnedNotes]) {
       if (note.id == noteId) return note;
     }
     return null;
+  }
+
+  NoteList? _listFrom(NotesState state, Note note) {
+    return state.lists.where((list) => list.id == note.boardId).firstOrNull;
   }
 
   Future<void> _edit(BuildContext context, Note note) async {
@@ -133,7 +141,8 @@ class NoteDetailPage extends StatelessWidget {
       note: note,
       defaultAuthorName: defaultAuthorName,
       assignees:
-          cubit.state.selectedList?.collaborators ?? const <ListCollaborator>[],
+          _listFrom(cubit.state, note)?.collaborators ??
+          const <ListCollaborator>[],
     );
     if (draft == null || !context.mounted) return;
     await cubit.editNote(note, draft);
@@ -246,6 +255,7 @@ class _DetailBody extends StatelessWidget {
     required this.authorPhotoUrl,
     required this.invitedPeople,
     required this.pendingInvitations,
+    required this.heroTag,
     required this.isSaving,
     required this.onToggle,
     required this.onEditContent,
@@ -264,6 +274,7 @@ class _DetailBody extends StatelessWidget {
   final String? authorPhotoUrl;
   final List<ListCollaborator> invitedPeople;
   final List<ListPendingInvitation> pendingInvitations;
+  final Object heroTag;
   final bool isSaving;
   final VoidCallback onToggle;
   final VoidCallback onEditContent;
@@ -294,120 +305,175 @@ class _DetailBody extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  key: const ValueKey('note-detail-header'),
-                  padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
-                  decoration: BoxDecoration(
-                    color: noteColor.withValues(
-                      alpha: Theme.of(context).brightness == Brightness.dark
-                          ? 0.86
-                          : 1,
-                    ),
-                    image: backgroundAsset == null
-                        ? null
-                        : DecorationImage(
-                            image: AssetImage(backgroundAsset),
-                            fit: BoxFit.cover,
-                            colorFilter: ColorFilter.mode(
-                              Colors.black.withValues(alpha: 0.18),
-                              BlendMode.darken,
-                            ),
-                          ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: noteColor.withValues(alpha: 0.28),
-                        blurRadius: 28,
-                        offset: const Offset(0, 14),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Semantics(
-                        button: true,
-                        label: note.isCompleted
-                            ? 'Marcar como pendiente'
-                            : 'Marcar como completada',
-                        child: IconButton(
-                          key: const ValueKey('detail-complete-toggle'),
-                          tooltip: note.isCompleted
-                              ? 'Marcar como pendiente'
-                              : 'Marcar como completada',
-                          onPressed: isSaving ? null : onToggle,
-                          color: noteForeground,
-                          iconSize: 34,
-                          icon: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 180),
-                            child: Icon(
-                              note.isCompleted
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked_rounded,
-                              key: ValueKey(note.isCompleted),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 5),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                note.title,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(
-                                      color: noteForeground,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.15,
-                                      decoration: note.isCompleted
-                                          ? TextDecoration.lineThrough
-                                          : null,
-                                    ),
+                Stack(
+                  key: const ValueKey('note-task-container'),
+                  children: [
+                    Positioned.fill(
+                      child: HeroMode(
+                        enabled: !MediaQuery.disableAnimationsOf(context),
+                        child: Hero(
+                          tag: heroTag,
+                          transitionOnUserGestures: true,
+                          createRectTween: (begin, end) =>
+                              MaterialRectCenterArcTween(
+                                begin: begin,
+                                end: end,
                               ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Icon(
-                                    NoteCategoryStyle.icon(note.category),
-                                    size: 16,
-                                    color: noteForeground.withValues(
-                                      alpha: 0.86,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    NoteCategoryStyle.label(note.category),
-                                    style: TextStyle(
-                                      color: noteForeground.withValues(
-                                        alpha: 0.86,
+                          child: DecoratedBox(
+                            key: const ValueKey('note-task-background'),
+                            decoration: BoxDecoration(
+                              color: noteColor.withValues(
+                                alpha:
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark
+                                    ? 0.86
+                                    : 1,
+                              ),
+                              image: backgroundAsset == null
+                                  ? null
+                                  : DecorationImage(
+                                      image: AssetImage(backgroundAsset),
+                                      fit: BoxFit.cover,
+                                      colorFilter: ColorFilter.mode(
+                                        Colors.black.withValues(alpha: 0.18),
+                                        BlendMode.darken,
                                       ),
-                                      fontWeight: FontWeight.w700,
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: noteColor.withValues(alpha: 0.28),
+                                  blurRadius: 28,
+                                  offset: const Offset(0, 14),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            key: const ValueKey('note-detail-header'),
+                            padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(
+                                  button: true,
+                                  label: note.isCompleted
+                                      ? 'Marcar como pendiente'
+                                      : 'Marcar como completada',
+                                  child: IconButton(
+                                    key: const ValueKey(
+                                      'detail-complete-toggle',
+                                    ),
+                                    tooltip: note.isCompleted
+                                        ? 'Marcar como pendiente'
+                                        : 'Marcar como completada',
+                                    onPressed: isSaving ? null : onToggle,
+                                    color: noteForeground,
+                                    iconSize: 34,
+                                    icon: AnimatedSwitcher(
+                                      duration: const Duration(
+                                        milliseconds: 180,
+                                      ),
+                                      child: Icon(
+                                        note.isCompleted
+                                            ? Icons.check_circle_rounded
+                                            : Icons
+                                                  .radio_button_unchecked_rounded,
+                                        key: ValueKey(note.isCompleted),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 5),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          note.title,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .headlineMedium
+                                              ?.copyWith(
+                                                color: noteForeground,
+                                                fontWeight: FontWeight.w800,
+                                                height: 1.15,
+                                                decoration: note.isCompleted
+                                                    ? TextDecoration.lineThrough
+                                                    : null,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              NoteCategoryStyle.icon(
+                                                note.category,
+                                              ),
+                                              size: 16,
+                                              color: noteForeground.withValues(
+                                                alpha: 0.86,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              NoteCategoryStyle.label(
+                                                note.category,
+                                              ),
+                                              style: TextStyle(
+                                                color: noteForeground
+                                                    .withValues(alpha: 0.86),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (note.checklist.isNotEmpty) ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                              ),
+                              child: Divider(
+                                height: 1,
+                                color: noteForeground.withValues(alpha: 0.2),
+                              ),
+                            ),
+                            NoteChecklistDetail(
+                              items: note.checklist,
+                              isSaving: isSaving,
+                              onChanged: onChecklistChanged,
+                              onEdit: onEditChecklist,
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: noteForeground,
+                              borderRadius: BorderRadius.zero,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                if (note.checklist.isNotEmpty) ...[
-                  const SizedBox(height: 18),
-                  NoteChecklistDetail(
-                    items: note.checklist,
-                    isSaving: isSaving,
-                    onChanged: onChecklistChanged,
-                    onEdit: onEditChecklist,
-                  ),
-                ],
                 const SizedBox(height: 22),
                 _DetailGroup(
                   children: [

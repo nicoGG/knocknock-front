@@ -4,6 +4,7 @@ import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
+import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
 
@@ -18,6 +19,7 @@ class PostItCard extends StatelessWidget {
     required this.onChecklistToggle,
     this.assignee,
     this.authorPhotoUrl,
+    this.originListName,
     this.layout = PostItCardLayout.grid,
     super.key,
   });
@@ -29,6 +31,7 @@ class PostItCard extends StatelessWidget {
   final ValueChanged<NoteChecklistItem> onChecklistToggle;
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
+  final String? originListName;
   final PostItCardLayout layout;
 
   @override
@@ -45,11 +48,50 @@ class PostItCard extends StatelessWidget {
         ? Duration.zero
         : const Duration(milliseconds: 260);
     final borderRadius = layout == PostItCardLayout.grid ? 10.0 : 18.0;
-    final pinClearance = layout == PostItCardLayout.compact ? 12.0 : 16.0;
+    final pinClearance = layout == PostItCardLayout.compact ? 10.0 : 16.0;
     return _InteractivePostIt(
       child: Stack(
         fit: StackFit.expand,
         children: [
+          Positioned.fill(
+            child: Padding(
+              padding: EdgeInsets.only(top: pinClearance),
+              child: HeroMode(
+                enabled: !MediaQuery.disableAnimationsOf(context),
+                child: Hero(
+                  tag: noteHeroTag(note.id, variant: layout.name),
+                  transitionOnUserGestures: true,
+                  createRectTween: (begin, end) =>
+                      MaterialRectCenterArcTween(begin: begin, end: end),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      image: backgroundAsset == null
+                          ? null
+                          : DecorationImage(
+                              image: AssetImage(backgroundAsset),
+                              fit: BoxFit.cover,
+                              colorFilter: ColorFilter.mode(
+                                Colors.black.withValues(
+                                  alpha: note.isCompleted ? 0.32 : 0.16,
+                                ),
+                                BlendMode.darken,
+                              ),
+                            ),
+                      borderRadius: BorderRadius.circular(borderRadius),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppTheme.ink.withValues(alpha: 0.1),
+                          blurRadius: 18,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: EdgeInsets.only(top: pinClearance),
             child: Material(
@@ -65,9 +107,9 @@ class PostItCard extends StatelessWidget {
                   padding: switch (layout) {
                     PostItCardLayout.compact => const EdgeInsets.fromLTRB(
                       8,
-                      10,
                       8,
-                      10,
+                      8,
+                      8,
                     ),
                     PostItCardLayout.grid => const EdgeInsets.fromLTRB(
                       20,
@@ -115,6 +157,7 @@ class PostItCard extends StatelessWidget {
                         onToggle: onToggle,
                         assignee: assignee,
                         authorPhotoUrl: authorPhotoUrl,
+                        originListName: originListName,
                         foregroundColor: foregroundColor,
                       ),
                       PostItCardLayout.grid ||
@@ -123,6 +166,7 @@ class PostItCard extends StatelessWidget {
                         onToggle: onToggle,
                         assignee: assignee,
                         authorPhotoUrl: authorPhotoUrl,
+                        originListName: originListName,
                         contentMaxLines: layout == PostItCardLayout.large
                             ? 7
                             : 5,
@@ -268,6 +312,7 @@ class _NoteBody extends StatelessWidget {
     required this.onToggle,
     required this.assignee,
     required this.authorPhotoUrl,
+    required this.originListName,
     required this.contentMaxLines,
     required this.foregroundColor,
     required this.onChecklistToggle,
@@ -277,6 +322,7 @@ class _NoteBody extends StatelessWidget {
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
+  final String? originListName;
   final int contentMaxLines;
   final Color foregroundColor;
   final ValueChanged<NoteChecklistItem> onChecklistToggle;
@@ -315,6 +361,14 @@ class _NoteBody extends StatelessWidget {
             ),
           ],
         ),
+        if (originListName case final listName?) ...[
+          _OriginListBadge(
+            noteId: note.id,
+            listName: listName,
+            foregroundColor: foregroundColor,
+          ),
+          SizedBox(height: contentMaxLines == 7 ? 7 : 5),
+        ],
         if (note.category != NoteCategory.general) ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -436,6 +490,7 @@ class _CompactNoteBody extends StatelessWidget {
     required this.onToggle,
     required this.assignee,
     required this.authorPhotoUrl,
+    required this.originListName,
     required this.foregroundColor,
   });
 
@@ -443,6 +498,7 @@ class _CompactNoteBody extends StatelessWidget {
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
+  final String? originListName;
   final Color foregroundColor;
 
   @override
@@ -479,20 +535,47 @@ class _CompactNoteBody extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 5),
-                  Text(
-                    note.checklist.isNotEmpty
-                        ? '${note.checklist.where((item) => item.isCompleted).length}/${note.checklist.length} subtareas · ${NoteCategoryStyle.label(note.category)}'
-                        : note.content.isEmpty
-                        ? NoteCategoryStyle.label(note.category)
-                        : note.content,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: foregroundColor.withValues(
-                        alpha: note.content.isEmpty ? 0.45 : 0.72,
+                  if (originListName case final listName?)
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.folder_outlined,
+                          size: 14,
+                          color: foregroundColor.withValues(alpha: 0.72),
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            listName,
+                            key: ValueKey('note-list-${note.id}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: foregroundColor.withValues(
+                                    alpha: 0.72,
+                                  ),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      note.checklist.isNotEmpty
+                          ? '${note.checklist.where((item) => item.isCompleted).length}/${note.checklist.length} subtareas · ${NoteCategoryStyle.label(note.category)}'
+                          : note.content.isEmpty
+                          ? NoteCategoryStyle.label(note.category)
+                          : note.content,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: foregroundColor.withValues(
+                          alpha: note.content.isEmpty ? 0.45 : 0.72,
+                        ),
                       ),
                     ),
-                  ),
                   if (note.reminderAt case final reminder?) ...[
                     const SizedBox(height: 5),
                     Row(
@@ -550,6 +633,49 @@ class _CompactNoteBody extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _OriginListBadge extends StatelessWidget {
+  const _OriginListBadge({
+    required this.noteId,
+    required this.listName,
+    required this.foregroundColor,
+  });
+
+  final String noteId;
+  final String listName;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('note-list-$noteId'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: foregroundColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.folder_outlined, size: 13, color: foregroundColor),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              listName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foregroundColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
