@@ -181,6 +181,9 @@ class _ControllableAuthRepository implements AuthRepository {
   Future<String?> getIdToken({bool forceRefresh = false}) async => null;
 
   @override
+  Future<void> deleteAccount() async => setUser(null);
+
+  @override
   Future<void> signOut() async => setUser(null);
 }
 

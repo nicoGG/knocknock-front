@@ -15,5 +15,7 @@ abstract interface class AuthRepository {
 
   Future<String?> getIdToken({bool forceRefresh = false});
 
+  Future<void> deleteAccount();
+
   Future<void> signOut();
 }

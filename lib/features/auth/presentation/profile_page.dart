@@ -122,6 +122,7 @@ class _ProfileCardState extends State<ProfileCard> {
                   user: user,
                   isWorking: _isWorking,
                   onSignOut: () => _run(repository.signOut),
+                  onDeleteAccount: () => _confirmAccountDeletion(repository),
                 ),
         );
       },
@@ -147,6 +148,38 @@ class _ProfileCardState extends State<ProfileCard> {
     } finally {
       if (mounted) setState(() => _isWorking = false);
     }
+  }
+
+  Future<void> _confirmAccountDeletion(AuthRepository repository) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('¿Eliminar tu cuenta?'),
+        content: const Text(
+          'Se eliminarán permanentemente tu acceso, tus listas, notas, '
+          'notificaciones y dispositivos registrados. Tu perfil se quitará '
+          'de las listas compartidas; el contenido que otras personas '
+          'necesiten conservar puede permanecer de forma anónima.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-delete-account-button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Eliminar definitivamente'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _run(repository.deleteAccount);
   }
 }
 
@@ -199,46 +232,66 @@ class _SignedInProfile extends StatelessWidget {
     required this.user,
     required this.isWorking,
     required this.onSignOut,
+    required this.onDeleteAccount,
   });
 
   final AppUser user;
   final bool isWorking;
   final VoidCallback onSignOut;
+  final VoidCallback onDeleteAccount;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AuthAvatar(user: user, size: 44),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                user.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w800),
+        Row(
+          children: [
+            AuthAvatar(user: user, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    user.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  Text(
+                    user.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
-              Text(
-                user.email,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              tooltip: 'Cerrar sesión',
+              onPressed: isWorking ? null : onSignOut,
+              icon: isWorking
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.logout_rounded, size: 20),
+            ),
+          ],
         ),
-        IconButton(
-          tooltip: 'Cerrar sesión',
-          onPressed: isWorking ? null : onSignOut,
-          icon: isWorking
-              ? const SizedBox.square(
-                  dimension: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.logout_rounded, size: 20),
+        const SizedBox(height: 14),
+        Divider(color: Theme.of(context).colorScheme.outlineVariant),
+        const SizedBox(height: 6),
+        TextButton.icon(
+          key: const ValueKey('delete-account-button'),
+          onPressed: isWorking ? null : onDeleteAccount,
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+            alignment: Alignment.centerLeft,
+          ),
+          icon: const Icon(Icons.delete_forever_outlined),
+          label: const Text('Eliminar cuenta'),
         ),
       ],
     );
