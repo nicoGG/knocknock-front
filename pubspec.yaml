@@ -23,12 +23,14 @@ dependencies:
   firebase_core: ^4.13.0
   firebase_auth: ^6.5.7
   google_sign_in: ^7.2.0
+  in_app_update: ^5.0.0
   shared_preferences: ^2.5.5
   flutter_quill: ^11.5.1
   image_picker: ^1.2.1
   firebase_messaging: ^16.5.0
   flutter_local_notifications: ^22.2.0
   package_info_plus: ^10.2.1
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

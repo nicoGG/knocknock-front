@@ -4,12 +4,14 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
+import 'package:nocknock/core/update/google_play_update_prompt.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/presentation/board_page.dart';
 import 'package:nocknock/features/notes/presentation/board_view_mode_controller.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class NockNockApp extends StatefulWidget {
   const NockNockApp({
@@ -18,6 +20,7 @@ class NockNockApp extends StatefulWidget {
     this.themeController,
     this.boardViewModeController,
     this.notificationsController,
+    this.preferences,
     super.key,
   });
 
@@ -26,12 +29,14 @@ class NockNockApp extends StatefulWidget {
   final AppThemeController? themeController;
   final BoardViewModeController? boardViewModeController;
   final NotificationsController? notificationsController;
+  final SharedPreferences? preferences;
 
   @override
   State<NockNockApp> createState() => _NockNockAppState();
 }
 
 class _NockNockAppState extends State<NockNockApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
   late final AppThemeController _themeController =
       widget.themeController ?? AppThemeController();
   late final bool _ownsThemeController = widget.themeController == null;
@@ -59,6 +64,7 @@ class _NockNockAppState extends State<NockNockApp> {
     return AnimatedBuilder(
       animation: _themeController,
       builder: (context, _) => MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'NockNock',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
@@ -81,6 +87,16 @@ class _NockNockAppState extends State<NockNockApp> {
         ],
         onGenerateRoute: (settings) =>
             _isSupportedRoute(settings.name) ? _boardRoute(settings) : null,
+        builder: (context, child) {
+          final app = child ?? const SizedBox.shrink();
+          final preferences = widget.preferences;
+          if (preferences == null) return app;
+          return GooglePlayUpdatePrompt(
+            preferences: preferences,
+            navigatorKey: _navigatorKey,
+            child: app,
+          );
+        },
       ),
     );
   }

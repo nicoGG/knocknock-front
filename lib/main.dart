@@ -10,6 +10,7 @@ import 'package:nocknock/features/notes/data/auth_aware_notes_repository.dart';
 import 'package:nocknock/features/notes/data/local_notes_repository.dart';
 import 'package:nocknock/firebase_options.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -21,6 +22,7 @@ Future<void> main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   await initializeDateFormatting('es');
+  final preferences = await SharedPreferences.getInstance();
   final authRepository = FirebaseAuthRepository();
   await authRepository.initialize();
   final notificationsController = NotificationsController(
@@ -33,6 +35,7 @@ Future<void> main() async {
   runApp(
     NockNockApp(
       authRepository: authRepository,
+      preferences: preferences,
       notificationsController: notificationsController,
       repository: AuthAwareNotesRepository(
         authRepository: authRepository,
