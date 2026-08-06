@@ -51,15 +51,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          build_name="$(awk '/^version:/ { print $2 }' pubspec.yaml | cut -d+ -f1)"
-          build_number=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          version="$(awk '/^version:/ { print $2 }' pubspec.yaml)"
 
-          if [[ ! "$build_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "La version de pubspec.yaml no es valida: $build_name" >&2
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[1-9][0-9]*$ ]]; then
+            echo "La version de pubspec.yaml no es valida: $version" >&2
             exit 1
           fi
 
-          if ((build_number > 2100000000)); then
+          build_name="${version%+*}"
+          build_number="${version##*+}"
+
+          if ((10#$build_number > 2100000000)); then
             echo "El versionCode calculado supera el limite de Google Play." >&2
             exit 1
           fi
