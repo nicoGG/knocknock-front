@@ -17,6 +17,24 @@ Remote notifications. Para distribuir en iPhone, la credencial APNs del bundle
 La campana del tablero abre la bandeja persistente, permite marcar avisos como
 leídos y navega a la lista o nota indicada por el backend.
 
+## Analytics y Crashlytics
+
+Firebase Analytics registra navegación, inicio/cierre de sesión, apertura de
+notificaciones y eventos automáticos. Crashlytics captura errores fatales y las
+fallas inesperadas del API. Ambos se habilitan en builds release; para probarlos
+en debug usa `--dart-define=ENABLE_FIREBASE_TELEMETRY=true` y reinstala la app
+completamente después de agregar o actualizar plugins nativos.
+
+El proyecto `nocknock-d8fe9` debe tener Google Analytics habilitado en
+**Firebase Console → Configuración del proyecto → Integraciones**. Después de
+habilitarlo, vuelve a ejecutar `flutterfire configure` para descargar los
+archivos Android/iOS actualizados antes de generar el release.
+
+Cada request lleva un `X-Request-Id`, Firebase App Instance ID, sesión y versión
+de la app. El backend devuelve el mismo request ID y puede asociar sus eventos
+confirmados con la sesión móvil. La telemetría sanitiza las rutas y nunca envía
+títulos, contenido de notas, nombres de listas, correos ni tokens.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

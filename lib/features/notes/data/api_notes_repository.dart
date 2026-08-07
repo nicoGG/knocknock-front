@@ -4,6 +4,8 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
+import 'package:nocknock/core/telemetry/app_telemetry.dart';
+import 'package:nocknock/core/telemetry/telemetry_dio.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -13,8 +15,12 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
     required String apiBaseUrl,
     required String socketBaseUrl,
     required Future<String?> Function() accessTokenProvider,
+    AppTelemetry? telemetry,
   }) : _accessTokenProvider = accessTokenProvider,
-       _dio = Dio(BaseOptions(baseUrl: apiBaseUrl)),
+       _dio = createTelemetryDio(
+         BaseOptions(baseUrl: apiBaseUrl),
+         telemetry: telemetry,
+       ),
        _socket = io.io(
          '$socketBaseUrl/notes',
          io.OptionBuilder()

@@ -3,16 +3,28 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:nocknock/core/config/app_config.dart';
+import 'package:nocknock/core/telemetry/app_telemetry.dart';
+import 'package:nocknock/core/telemetry/telemetry_dio.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 
 class FirebaseAuthRepository implements AuthRepository {
-  FirebaseAuthRepository({FirebaseAuth? firebaseAuth, Dio? dio})
-    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
-      _dio = dio ?? Dio(BaseOptions(baseUrl: AppConfig.apiBaseUrl));
+  FirebaseAuthRepository({
+    FirebaseAuth? firebaseAuth,
+    Dio? dio,
+    AppTelemetry? telemetry,
+  }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
+       _telemetry = telemetry,
+       _dio =
+           dio ??
+           createTelemetryDio(
+             BaseOptions(baseUrl: AppConfig.apiBaseUrl),
+             telemetry: telemetry,
+           );
 
   final FirebaseAuth _firebaseAuth;
   final Dio _dio;
+  final AppTelemetry? _telemetry;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _isInitialized = false;
   Future<void> Function()? _beforeSignOut;
@@ -39,6 +51,7 @@ class FirebaseAuthRepository implements AuthRepository {
     try {
       if (kIsWeb) {
         await _firebaseAuth.signInWithPopup(GoogleAuthProvider());
+        await _telemetry?.logLogin('google');
         return;
       }
 
@@ -59,6 +72,7 @@ class FirebaseAuthRepository implements AuthRepository {
       await _firebaseAuth.signInWithCredential(
         GoogleAuthProvider.credential(idToken: idToken),
       );
+      await _telemetry?.logLogin('google');
     } on GoogleSignInException catch (error) {
       if (error.code == GoogleSignInExceptionCode.canceled) {
         throw const AuthFailure('Inicio de sesión cancelado.');
@@ -76,6 +90,7 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<void> signOut() async {
     await _beforeSignOut?.call();
+    await _telemetry?.logEvent('logout');
     await _firebaseAuth.signOut();
     if (!kIsWeb && _isInitialized) await _googleSignIn.signOut();
   }

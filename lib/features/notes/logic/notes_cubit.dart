@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/data/selected_list_store.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
+import 'package:nocknock/features/notes/logic/notes_error_message.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
 
 class NotesCubit extends Cubit<NotesState> {
@@ -353,6 +353,9 @@ class NotesCubit extends Cubit<NotesState> {
     'contentDelta': ?contentDelta,
   });
 
+  Future<void> updateNoteTitle(Note note, String title) =>
+      _updateNoteFields(note, {'title': title});
+
   Future<void> updateNoteColor(Note note, NoteColor color) =>
       _updateNoteFields(note, {'color': color.name});
 
@@ -361,6 +364,9 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> updateNoteReminder(Note note, DateTime? reminderAt) =>
       _updateNoteFields(note, {'reminderAt': reminderAt?.toIso8601String()});
+
+  Future<void> updateNoteAssignee(Note note, String? assigneeUid) =>
+      _updateNoteFields(note, {'assigneeUid': assigneeUid});
 
   Future<void> toggleChecklistItem(Note note, NoteChecklistItem item) {
     final checklist = note.checklist
@@ -660,30 +666,7 @@ class NotesCubit extends Cubit<NotesState> {
     if (error is CollaborationRequiresSignInFailure) {
       return 'Inicia sesión con Google para invitar colaboradores.';
     }
-    if (error is DioException) {
-      final status = error.response?.statusCode;
-      final data = error.response?.data;
-      final serverMessage = data is Map ? data['message'] : null;
-      if (status == 401) {
-        return 'Tu sesión venció. Inicia sesión nuevamente.';
-      }
-      if (status == 403) {
-        return serverMessage is String
-            ? serverMessage
-            : 'No tienes permiso para modificar esta lista.';
-      }
-      if ((status == 409 || status == 503) && serverMessage is String) {
-        return serverMessage;
-      }
-    }
-    if (error is DioException && error.response?.statusCode == 400) {
-      final data = error.response?.data;
-      final serverMessage = data is Map ? data['message'] : null;
-      return serverMessage is String
-          ? serverMessage
-          : 'Revisa los datos e inténtalo nuevamente.';
-    }
-    return 'No pudimos conectar con NockNock. Verifica que el backend esté encendido.';
+    return notesErrorMessage(error);
   }
 
   @override

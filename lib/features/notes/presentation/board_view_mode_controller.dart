@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum BoardViewMode { grid, list, largeList }
+enum BoardViewMode { grid, list }
 
 typedef BoardViewPreferencesLoader = Future<SharedPreferences> Function();
 
@@ -40,7 +40,7 @@ class BoardViewModeController extends ChangeNotifier {
 
   BoardViewMode _fromStorage(String? value) => switch (value) {
     'list' => BoardViewMode.list,
-    'largeList' => BoardViewMode.largeList,
+    'largeList' => BoardViewMode.list,
     _ => BoardViewMode.grid,
   };
 }

@@ -13,7 +13,7 @@
       ]
     },
     {
-      "name": "NockNock - Local con backend Railway",
+      "name": "NockNock - URL Prod",
       "request": "launch",
       "type": "dart",
       "program": "lib/main.dart",

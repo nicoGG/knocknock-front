@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:uuid/uuid.dart';
 
-class NoteChecklistEditor extends StatelessWidget {
+class NoteChecklistEditor extends StatefulWidget {
   const NoteChecklistEditor({
     required this.items,
     required this.onChanged,
@@ -11,6 +11,23 @@ class NoteChecklistEditor extends StatelessWidget {
 
   final List<NoteChecklistItem> items;
   final ValueChanged<List<NoteChecklistItem>> onChanged;
+
+  @override
+  State<NoteChecklistEditor> createState() => _NoteChecklistEditorState();
+}
+
+class _NoteChecklistEditorState extends State<NoteChecklistEditor> {
+  final _newItemFocusNode = FocusNode();
+  String? _focusedNewItemId;
+
+  List<NoteChecklistItem> get items => widget.items;
+  ValueChanged<List<NoteChecklistItem>> get onChanged => widget.onChanged;
+
+  @override
+  void dispose() {
+    _newItemFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,6 +107,10 @@ class NoteChecklistEditor extends StatelessWidget {
                 onOutdent: () =>
                     _replace(index, item.copyWith(indent: item.indent - 1)),
                 onDelete: () => _remove(index),
+                focusNode: item.id == _focusedNewItemId
+                    ? _newItemFocusNode
+                    : null,
+                onSubmitted: (text) => _addItemAfter(index, text),
               );
             },
           ),
@@ -98,7 +119,24 @@ class NoteChecklistEditor extends StatelessWidget {
   }
 
   void _addItem() {
-    onChanged([...items, NoteChecklistItem(id: const Uuid().v4(), text: '')]);
+    final item = NoteChecklistItem(id: const Uuid().v4(), text: '');
+    _focusAfterBuild(item.id);
+    onChanged([...items, item]);
+  }
+
+  void _addItemAfter(int index, String text) {
+    if (text.trim().isEmpty) return;
+    final item = NoteChecklistItem(id: const Uuid().v4(), text: '');
+    final updated = [...items]..insert(index + 1, item);
+    _focusAfterBuild(item.id);
+    onChanged(updated);
+  }
+
+  void _focusAfterBuild(String itemId) {
+    _focusedNewItemId = itemId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _newItemFocusNode.requestFocus();
+    });
   }
 
   void _replace(int index, NoteChecklistItem item) {
@@ -130,6 +168,8 @@ class _ChecklistEditorRow extends StatelessWidget {
     required this.onIndent,
     required this.onOutdent,
     required this.onDelete,
+    required this.onSubmitted,
+    this.focusNode,
     super.key,
   });
 
@@ -141,6 +181,8 @@ class _ChecklistEditorRow extends StatelessWidget {
   final VoidCallback onIndent;
   final VoidCallback onOutdent;
   final VoidCallback onDelete;
+  final ValueChanged<String> onSubmitted;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -182,8 +224,11 @@ class _ChecklistEditorRow extends StatelessWidget {
               child: TextFormField(
                 key: ValueKey('checklist-text-${item.id}'),
                 initialValue: item.text,
+                focusNode: focusNode,
                 maxLength: 120,
                 textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.next,
+                autofocus: item.text.isEmpty,
                 decoration: const InputDecoration(
                   hintText: 'Escribe una subtarea',
                   counterText: '',
@@ -191,6 +236,7 @@ class _ChecklistEditorRow extends StatelessWidget {
                   filled: false,
                 ),
                 onChanged: (text) => onChanged(item.copyWith(text: text)),
+                onFieldSubmitted: onSubmitted,
               ),
             ),
             PopupMenuButton<String>(
@@ -263,6 +309,7 @@ class NoteChecklistPreview extends StatelessWidget {
     required this.foregroundColor,
     required this.onToggle,
     this.maxItems = 4,
+    this.showOpenHint = false,
     super.key,
   });
 
@@ -270,13 +317,14 @@ class NoteChecklistPreview extends StatelessWidget {
   final Color foregroundColor;
   final ValueChanged<NoteChecklistItem> onToggle;
   final int maxItems;
+  final bool showOpenHint;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         var visibleCount = items.length.clamp(0, maxItems);
-        if (constraints.maxHeight.isFinite) {
+        if (!showOpenHint && constraints.maxHeight.isFinite) {
           final rowCapacity = (constraints.maxHeight / 30).floor();
           if (visibleCount > rowCapacity) visibleCount = rowCapacity;
           if (items.length > visibleCount) {
@@ -328,7 +376,9 @@ class NoteChecklistPreview extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(left: 35, top: 2),
                 child: Text(
-                  '+${items.length - visible.length} más',
+                  showOpenHint
+                      ? '${items.length - visible.length} más'
+                      : '+${items.length - visible.length} más',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: foregroundColor.withValues(alpha: 0.78),
                     fontWeight: FontWeight.w700,
@@ -342,7 +392,7 @@ class NoteChecklistPreview extends StatelessWidget {
   }
 }
 
-class NoteChecklistDetail extends StatelessWidget {
+class NoteChecklistDetail extends StatefulWidget {
   const NoteChecklistDetail({
     required this.items,
     required this.isSaving,
@@ -363,9 +413,24 @@ class NoteChecklistDetail extends StatelessWidget {
   final BorderRadius borderRadius;
 
   @override
+  State<NoteChecklistDetail> createState() => _NoteChecklistDetailState();
+}
+
+class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
+  final _newItemController = TextEditingController();
+  final _newItemFocusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _newItemController.dispose();
+    _newItemFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final effectiveForeground = foregroundColor ?? colorScheme.onSurface;
+    final effectiveForeground = widget.foregroundColor ?? colorScheme.onSurface;
     final checkboxCheckColor =
         ThemeData.estimateBrightnessForColor(effectiveForeground) ==
             Brightness.dark
@@ -373,8 +438,8 @@ class NoteChecklistDetail extends StatelessWidget {
         : Colors.black87;
     return Material(
       key: const ValueKey('note-checklist-detail'),
-      color: backgroundColor ?? colorScheme.surfaceContainerLow,
-      borderRadius: borderRadius,
+      color: widget.backgroundColor ?? colorScheme.surfaceContainerLow,
+      borderRadius: widget.borderRadius,
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
@@ -396,12 +461,14 @@ class NoteChecklistDetail extends StatelessWidget {
                     ),
                   ),
                   TextButton.icon(
-                    onPressed: isSaving ? null : onEdit,
+                    onPressed: widget.isSaving
+                        ? null
+                        : () => _newItemFocusNode.requestFocus(),
                     style: TextButton.styleFrom(
                       foregroundColor: effectiveForeground,
                     ),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    label: const Text('Editar'),
+                    icon: const Icon(Icons.add_rounded, size: 18),
+                    label: const Text('Agregar'),
                   ),
                 ],
               ),
@@ -411,10 +478,10 @@ class NoteChecklistDetail extends StatelessWidget {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               buildDefaultDragHandles: false,
-              itemCount: items.length,
-              onReorderItem: isSaving ? (_, _) {} : _reorder,
+              itemCount: widget.items.length,
+              onReorderItem: widget.isSaving ? (_, _) {} : _reorder,
               itemBuilder: (context, index) {
-                final item = items[index];
+                final item = widget.items[index];
                 return Padding(
                   key: ValueKey('detail-checklist-${item.id}'),
                   padding: EdgeInsets.only(
@@ -425,7 +492,7 @@ class NoteChecklistDetail extends StatelessWidget {
                   child: Row(
                     children: [
                       ReorderableDragStartListener(
-                        enabled: !isSaving,
+                        enabled: !widget.isSaving,
                         index: index,
                         child: Padding(
                           padding: const EdgeInsets.all(8),
@@ -444,7 +511,7 @@ class NoteChecklistDetail extends StatelessWidget {
                           color: effectiveForeground,
                           width: 1.5,
                         ),
-                        onChanged: isSaving
+                        onChanged: widget.isSaving
                             ? null
                             : (value) => _replace(
                                 index,
@@ -468,6 +535,29 @@ class NoteChecklistDetail extends StatelessWidget {
                 );
               },
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
+              child: TextField(
+                key: const ValueKey('detail-new-checklist-item'),
+                controller: _newItemController,
+                focusNode: _newItemFocusNode,
+                enabled: !widget.isSaving,
+                maxLength: 120,
+                textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  hintText: 'Agregar subtarea',
+                  counterText: '',
+                  border: InputBorder.none,
+                  prefixIcon: Icon(
+                    Icons.add_rounded,
+                    color: effectiveForeground,
+                  ),
+                ),
+                style: TextStyle(color: effectiveForeground),
+                onSubmitted: (_) => _submitNewItem(),
+              ),
+            ),
           ],
         ),
       ),
@@ -475,15 +565,26 @@ class NoteChecklistDetail extends StatelessWidget {
   }
 
   void _replace(int index, NoteChecklistItem item) {
-    final updated = [...items]..[index] = item;
-    onChanged(updated);
+    final updated = [...widget.items]..[index] = item;
+    widget.onChanged(updated);
   }
 
   void _reorder(int oldIndex, int newIndex) {
     if (oldIndex == newIndex) return;
-    final updated = [...items];
+    final updated = [...widget.items];
     final moved = updated.removeAt(oldIndex);
     updated.insert(newIndex, moved);
-    onChanged(updated);
+    widget.onChanged(updated);
+  }
+
+  void _submitNewItem() {
+    final text = _newItemController.text.trim();
+    if (text.isEmpty || widget.isSaving) return;
+    widget.onChanged([
+      ...widget.items,
+      NoteChecklistItem(id: const Uuid().v4(), text: text),
+    ]);
+    _newItemController.clear();
+    _newItemFocusNode.requestFocus();
   }
 }

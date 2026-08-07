@@ -9,6 +9,10 @@ enum ListBackgroundPreset {
   botanical,
   lavender,
   midnight,
+  ocean,
+  desert,
+  cherry,
+  aurora,
   custom,
 }
 

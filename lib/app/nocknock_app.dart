@@ -20,6 +20,7 @@ class NockNockApp extends StatefulWidget {
     this.themeController,
     this.boardViewModeController,
     this.notificationsController,
+    this.navigatorObservers = const [],
     this.preferences,
     super.key,
   });
@@ -29,6 +30,7 @@ class NockNockApp extends StatefulWidget {
   final AppThemeController? themeController;
   final BoardViewModeController? boardViewModeController;
   final NotificationsController? notificationsController;
+  final List<NavigatorObserver> navigatorObservers;
   final SharedPreferences? preferences;
 
   @override
@@ -67,6 +69,7 @@ class _NockNockAppState extends State<NockNockApp> {
         navigatorKey: _navigatorKey,
         title: 'NockNock',
         debugShowCheckedModeBanner: false,
+        navigatorObservers: widget.navigatorObservers,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: _themeController.themeMode,

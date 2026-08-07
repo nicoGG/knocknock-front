@@ -1,8 +1,19 @@
 import 'package:equatable/equatable.dart';
 
-enum NoteColor { yellow, pink, blue, green, purple }
+enum NoteColor { yellow, pink, blue, green, purple, orange, mint, coral, gray }
 
-enum NoteCategory { general, personal, work, shopping, health, travel }
+enum NoteCategory {
+  general,
+  personal,
+  work,
+  shopping,
+  health,
+  travel,
+  study,
+  finance,
+  home,
+  ideas,
+}
 
 class NoteChecklistItem extends Equatable {
   const NoteChecklistItem({

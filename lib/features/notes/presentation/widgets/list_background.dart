@@ -171,6 +171,10 @@ extension ListBackgroundPresetStyle on ListBackgroundPreset {
     ListBackgroundPreset.botanical => 'Botánico',
     ListBackgroundPreset.lavender => 'Lavanda',
     ListBackgroundPreset.midnight => 'Medianoche',
+    ListBackgroundPreset.ocean => 'Océano',
+    ListBackgroundPreset.desert => 'Desierto',
+    ListBackgroundPreset.cherry => 'Cerezo',
+    ListBackgroundPreset.aurora => 'Aurora',
     ListBackgroundPreset.custom => 'Tu foto',
   };
 
@@ -203,6 +207,26 @@ extension ListBackgroundPresetStyle on ListBackgroundPreset {
       Color(0xFF10172A),
       Color(0xFF263B63),
       Color(0xFF6D5A93),
+    ],
+    ListBackgroundPreset.ocean => const [
+      Color(0xFF0B3C5D),
+      Color(0xFF328CC1),
+      Color(0xFF8ED1D5),
+    ],
+    ListBackgroundPreset.desert => const [
+      Color(0xFF9C4F32),
+      Color(0xFFE0A96D),
+      Color(0xFFF3D9A4),
+    ],
+    ListBackgroundPreset.cherry => const [
+      Color(0xFF7A284B),
+      Color(0xFFD96C8D),
+      Color(0xFFFFD6DC),
+    ],
+    ListBackgroundPreset.aurora => const [
+      Color(0xFF192A56),
+      Color(0xFF6C5CE7),
+      Color(0xFF55E6C1),
     ],
     ListBackgroundPreset.custom => const [Color(0xFFB9B3A8), Color(0xFFE8E1D6)],
   };

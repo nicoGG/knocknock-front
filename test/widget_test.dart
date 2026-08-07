@@ -85,10 +85,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
 
-    await tester.tap(find.text('Lista grande'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('notes-large-list')), findsOneWidget);
-
     await tester.tap(find.byKey(const ValueKey('new-note-button')));
     await tester.pumpAndSettle();
 
@@ -120,20 +116,17 @@ void main() {
       find.descendant(of: find.byType(AppBar), matching: listOptionsButton),
       findsNothing,
     );
-    final realtimeLabel = find.byWidgetPredicate(
-      (widget) =>
-          widget is Text &&
-          (widget.data?.toLowerCase().contains('tiempo real') ?? false),
-    );
+    expect(find.textContaining('Tiempo real'), findsNothing);
+    final noteCountLabel = find.text('1 nota');
     final listOptionsButtonRect = tester.getRect(listOptionsButton);
-    final realtimeLabelRect = tester.getRect(realtimeLabel);
+    final noteCountLabelRect = tester.getRect(noteCountLabel);
     final verticalCenterDelta =
-        listOptionsButtonRect.center.dy - realtimeLabelRect.center.dy;
+        listOptionsButtonRect.center.dy - noteCountLabelRect.center.dy;
     expect(
       verticalCenterDelta.abs(),
       lessThan(1),
       reason:
-          'button=$listOptionsButtonRect, label=$realtimeLabelRect, delta=$verticalCenterDelta',
+          'button=$listOptionsButtonRect, label=$noteCountLabelRect, delta=$verticalCenterDelta',
     );
     expect(listOptionsButtonRect.right, greaterThan(398));
 
@@ -406,6 +399,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('adds consecutive checklist items by pressing enter', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-note-fab')));
+    await tester.pumpAndSettle();
+    final addItem = find.byKey(const ValueKey('add-checklist-item'));
+    await tester.ensureVisible(addItem);
+    await tester.tap(addItem);
+    await tester.pump();
+
+    var fields = find.descendant(
+      of: find.byKey(const ValueKey('checklist-editor')),
+      matching: find.byType(TextFormField),
+    );
+    await tester.enterText(fields.first, 'Primera subtarea');
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pump();
+
+    fields = find.descendant(
+      of: find.byKey(const ValueKey('checklist-editor')),
+      matching: find.byType(TextFormField),
+    );
+    expect(fields, findsNWidgets(2));
+    final lastEditable = tester.widget<EditableText>(
+      find.descendant(of: fields.last, matching: find.byType(EditableText)),
+    );
+    expect(lastEditable.focusNode.hasFocus, isTrue);
+  });
+
   testWidgets('shows category artwork and persists checklist interactions', (
     tester,
   ) async {
@@ -470,6 +504,17 @@ void main() {
     final reordered = repository.lastChanges?['checklist'] as List<dynamic>;
     expect(reordered.map((item) => item['id']), ['task-2', 'task-3', 'task-1']);
     expect(reordered.first['indent'], 0);
+
+    final directAdd = find.byKey(const ValueKey('detail-new-checklist-item'));
+    await tester.enterText(directAdd, 'Comprar adaptador');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    final checklistAfterAdd =
+        repository.lastChanges?['checklist'] as List<dynamic>;
+    expect(checklistAfterAdd.last['text'], 'Comprar adaptador');
+    expect(find.text('Comprar adaptador'), findsOneWidget);
+    expect(tester.widget<TextField>(directAdd).focusNode?.hasFocus, isTrue);
   });
 
   testWidgets('opens a useful note detail before editing', (tester) async {
@@ -505,6 +550,20 @@ void main() {
     expect(find.text('Agregar recordatorio'), findsOneWidget);
     expect(find.text('Creada por'), findsOneWidget);
     expect(find.text('Nico'), findsNWidgets(2));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('detail-content-row'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('detail-assignee-row'))).dy,
+      ),
+    );
+    expect(
+      find.text('Creada el 1 de enero de 2026 a las 00:00'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Actualizada el 1 de enero de 2026 a las 00:00'),
+      findsOneWidget,
+    );
     final assigneeAvatar = tester.widget<CircleAvatar>(
       find.descendant(
         of: find.byKey(const ValueKey('detail-assignee-avatar')),
@@ -534,7 +593,38 @@ void main() {
     expect(find.byKey(const ValueKey('note-title-field')), findsOneWidget);
   });
 
-  testWidgets('keeps the note content editor compact on a phone', (
+  testWidgets('edits the title directly in the note header card', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository();
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+
+    final header = find.byKey(const ValueKey('note-detail-header'));
+    await tester.tapAt(
+      tester.getRect(header).centerRight - const Offset(70, 0),
+    );
+    await tester.pump();
+
+    final titleField = find.byKey(const ValueKey('detail-title-field'));
+    expect(titleField, findsOneWidget);
+    await tester.enterText(titleField, 'Comprar té');
+    await tester.tap(find.byKey(const ValueKey('save-detail-title-button')));
+    await tester.pumpAndSettle();
+
+    expect(repository.lastChanges, containsPair('title', 'Comprar té'));
+    expect(find.text('Comprar té'), findsOneWidget);
+    expect(titleField, findsNothing);
+  });
+
+  testWidgets('expands and collapses the note editor inline on a phone', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -556,10 +646,14 @@ void main() {
     await tester.tapAt(tester.getTopLeft(contentRow) + const Offset(24, 28));
     await tester.pumpAndSettle();
 
-    final dialogSurface = find
-        .descendant(of: find.byType(Dialog), matching: find.byType(Material))
-        .first;
-    expect(tester.getSize(dialogSurface).height, lessThan(600));
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byKey(const ValueKey('detail-content-editor')), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('collapse-detail-content-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('detail-content-editor')), findsNothing);
   });
 
   testWidgets('edits content, color, and reminder from the note detail', (
@@ -608,14 +702,20 @@ void main() {
     expect(repository.lastChanges?['content'], 'Texto actualizado');
     expect(repository.lastChanges?['contentDelta'], contains('"italic":true'));
 
-    await tester.tap(find.byKey(const ValueKey('detail-color-row')));
+    final colorRow = find.byKey(const ValueKey('detail-color-row'));
+    await tester.ensureVisible(colorRow);
+    await tester.pumpAndSettle();
+    await tester.tap(colorRow);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('detail-color-blue')));
     await tester.pumpAndSettle();
     expect(find.text('Azul'), findsOneWidget);
     expect(repository.lastChanges?['color'], 'blue');
 
-    await tester.tap(find.byKey(const ValueKey('detail-category-row')));
+    final categoryRow = find.byKey(const ValueKey('detail-category-row'));
+    await tester.ensureVisible(categoryRow);
+    await tester.pumpAndSettle();
+    await tester.tap(categoryRow);
     await tester.pumpAndSettle();
     expect(find.text('Cambiar categoría'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('detail-category-work')));
@@ -630,7 +730,10 @@ void main() {
     expect(repository.lastChanges?['category'], 'work');
     expect(find.byKey(const ValueKey('detail-color-row')), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('detail-reminder-row')));
+    final reminderRow = find.byKey(const ValueKey('detail-reminder-row'));
+    await tester.ensureVisible(reminderRow);
+    await tester.pumpAndSettle();
+    await tester.tap(reminderRow);
     await tester.pumpAndSettle();
     final datePicker = find.byType(DatePickerDialog);
     expect(datePicker, findsOneWidget);
@@ -649,7 +752,7 @@ void main() {
     expect(repository.lastChanges, containsPair('reminderAt', null));
   });
 
-  testWidgets('shows accepted and pending invited people in note detail', (
+  testWidgets('does not repeat list collaborators in note detail', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -662,10 +765,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Persona invitada'), findsOneWidget);
-    expect(find.text('Ana Torres\nana@example.com'), findsOneWidget);
-    expect(find.text('Invitación pendiente'), findsOneWidget);
-    expect(find.text('pedro@example.com'), findsOneWidget);
+    expect(find.text('Persona invitada'), findsNothing);
+    expect(find.text('Ana Torres\nana@example.com'), findsNothing);
+    expect(find.text('Invitación pendiente'), findsNothing);
+    expect(find.text('pedro@example.com'), findsNothing);
   });
 
   testWidgets('assigns a task and shows only its responsible person', (
@@ -695,8 +798,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
-    await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('assignee-note-1')), findsOneWidget);
     expect(find.byTooltip('Responsable: Ana Torres'), findsOneWidget);
@@ -705,11 +806,6 @@ void main() {
     );
     expect(avatar.foregroundImage, isA<NetworkImage>());
     expect((avatar.foregroundImage! as NetworkImage).url, photoUrl);
-    final authorAvatar = tester.widget<CircleAvatar>(
-      find.byKey(const ValueKey('author-avatar-note-1')),
-    );
-    expect(authorAvatar.foregroundImage, isA<NetworkImage>());
-    expect((authorAvatar.foregroundImage! as NetworkImage).url, authorPhotoUrl);
     expect(find.byTooltip(RegExp('invitación pendiente')), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -756,7 +852,7 @@ void main() {
     expect(repository.createdDraft?.assigneeUid, 'person-ana');
   });
 
-  testWidgets('can leave an assigned task without a responsible person', (
+  testWidgets('changes the responsible person directly from note detail', (
     tester,
   ) async {
     final repository = _FakeNotesRepository(withInvitedPeople: true);
@@ -772,20 +868,24 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('detail-assignee-row')));
     await tester.pumpAndSettle();
 
-    final assigneeField = find.byKey(const ValueKey('note-assignee-field'));
-    await tester.ensureVisible(assigneeField);
-    await tester.tap(assigneeField);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sin responsable').last);
-    await tester.pumpAndSettle();
-
-    final saveButton = find.byKey(const ValueKey('save-note-button'));
-    await tester.ensureVisible(saveButton);
-    await tester.tap(saveButton);
+    expect(find.text('Asignar responsable'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('assignee-option-person-ana')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('assignee-option-unassigned')));
     await tester.pumpAndSettle();
 
     expect(repository.lastChanges, containsPair('assigneeUid', null));
     expect(find.text('Sin responsable'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('detail-assignee-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('assignee-option-person-ana')));
+    await tester.pumpAndSettle();
+
+    expect(repository.lastChanges, containsPair('assigneeUid', 'person-ana'));
+    expect(find.text('Ana Torres'), findsOneWidget);
   });
 
   testWidgets('note detail fits a narrow screen with large text', (
@@ -883,7 +983,7 @@ void main() {
         of: assignedCard,
         matching: find.text('Para la reunión de mañana'),
       ),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.descendant(
@@ -892,37 +992,228 @@ void main() {
       ),
       findsOneWidget,
     );
-    final grid = tester.widget<GridView>(
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Ana')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Ana Torres')),
+      findsNothing,
+    );
+    final gridContent = tester.widget<Text>(
       find.descendant(
-        of: find.byKey(const ValueKey('notes-grid')),
-        matching: find.byType(GridView),
+        of: assignedCard,
+        matching: find.text('Para la reunión de mañana'),
       ),
     );
-    expect(grid.gridDelegate, isA<SliverGridDelegateWithFixedCrossAxisCount>());
-    expect(
-      (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
-          .crossAxisCount,
-      2,
+    expect(gridContent.maxLines, 7);
+    expect(gridContent.overflow, TextOverflow.ellipsis);
+    final contentRect = tester.getRect(
+      find.descendant(
+        of: assignedCard,
+        matching: find.text('Para la reunión de mañana'),
+      ),
     );
+    final assigneeRect = tester.getRect(
+      find.byKey(const ValueKey('grid-assignee-note-1')),
+    );
+    expect(assigneeRect.top - contentRect.bottom, greaterThanOrEqualTo(10));
+    expect(find.byKey(const ValueKey('masonry-grid-columns')), findsOneWidget);
+    expect(find.byKey(const ValueKey('masonry-grid-column-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('masonry-grid-column-1')), findsOneWidget);
     final gridCardSize = tester.getSize(
       find.byKey(const ValueKey('reorder-grid-note-1')),
     );
-    expect(gridCardSize.width / gridCardSize.height, closeTo(0.86, 0.01));
+    expect(gridCardSize.height, inInclusiveRange(184, 300));
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byKey(const ValueKey('view-mode-list')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('notes-large-list')), findsOneWidget);
+    final compactCard = find.byKey(const ValueKey('note-note-1'));
+    expect(
+      find.descendant(of: compactCard, matching: find.text('Comprar café')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: compactCard,
+        matching: find.text('Para la reunión de mañana'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: compactCard,
+        matching: find.byIcon(Icons.notifications_none_rounded),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: compactCard,
+        matching: find.byKey(const ValueKey('assignee-note-1')),
+      ),
+      findsNothing,
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('reorder-list-note-1'))).height,
+      58,
+    );
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
     await tester.pumpAndSettle();
     expect(find.text('No hay notas en este filtro'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('masonry cards show ten tasks and open to reveal the rest', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final checklist = List.generate(
+      12,
+      (index) => NoteChecklistItem(
+        id: 'long-task-$index',
+        text: 'Elemento extenso del checklist número $index',
+      ),
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          noteCount: 3,
+          withInvitedPeople: true,
+          category: NoteCategory.shopping,
+          checklist: checklist,
+          initialReminderAt: DateTime(2026, 8, 4, 6, 39),
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final tallCard = find.byKey(const ValueKey('reorder-grid-note-1'));
+    final shortCard = find.byKey(const ValueKey('reorder-grid-note-2'));
+    final tallHeight = tester.getSize(tallCard).height;
+    final shortHeight = tester.getSize(shortCard).height;
+    expect(tallHeight, greaterThan(shortHeight));
+    expect(tallHeight, greaterThan(300));
+
+    final firstSurface = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-1')),
+    );
+    final secondSurface = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-2')),
+    );
+    final thirdSurface = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-3')),
+    );
+    final horizontalGap = secondSurface.left - firstSurface.right;
+    final verticalGap = thirdSurface.top - secondSurface.bottom;
+    expect(verticalGap, closeTo(horizontalGap, 0.1));
+
+    final categoryRect = tester.getRect(
+      find.byKey(const ValueKey('note-category-note-1')),
+    );
+    final titleRect = tester.getRect(find.text('Comprar café'));
+    expect(categoryRect.top - titleRect.bottom, greaterThanOrEqualTo(8));
+
+    final visibleChecklistItems = find.descendant(
+      of: tallCard,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Checkbox &&
+            widget.key.toString().contains('preview-check-long-task-'),
+      ),
+    );
+    expect(visibleChecklistItems, findsNWidgets(10));
+    final firstChecklistRect = tester.getRect(visibleChecklistItems.first);
+    expect(
+      firstChecklistRect.top - categoryRect.bottom,
+      greaterThanOrEqualTo(10),
+    );
+    final openHint = find.descendant(
+      of: tallCard,
+      matching: find.text('2 más'),
+    );
+    expect(openHint, findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(openHint);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('detail-checklist-long-task-11')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('empty masonry notes show only title and optional assignee', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          noteCount: 2,
+          initialContent: '',
+          withInvitedPeople: true,
+          category: NoteCategory.shopping,
+          initialReminderAt: DateTime(2026, 8, 4, 6, 39),
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final assignedCard = find.byKey(const ValueKey('reorder-grid-note-1'));
+    final titleOnlyCard = find.byKey(const ValueKey('reorder-grid-note-2'));
+    expect(tester.getSize(assignedCard).height, 136);
+    expect(tester.getSize(titleOnlyCard).height, 84);
+    final titleOnlySize = tester.getSize(titleOnlyCard);
+    expect(titleOnlySize.height / titleOnlySize.width, lessThan(0.55));
+    expect(
+      find.descendant(of: titleOnlyCard, matching: find.byType(Checkbox)),
+      findsOneWidget,
+    );
+    final titleOnlySurface = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-2')),
+    );
+    final titleOnlyText = tester.getRect(find.text('Nota 2'));
+    expect(titleOnlyText.center.dy, closeTo(titleOnlySurface.center.dy, 2));
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Comprar café')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Ana')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Ana Torres')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: assignedCard, matching: find.text('Compras')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: assignedCard,
+        matching: find.byIcon(Icons.notifications_none_rounded),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Sin detalles'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -944,14 +1235,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('FILTRAR'), findsOneWidget);
+    expect(find.text('FILTRAR'), findsNothing);
     expect(find.text('Todas'), findsOneWidget);
     expect(find.text('Pend.'), findsOneWidget);
-    expect(find.text('Hechas'), findsOneWidget);
-    expect(find.text('VISTA'), findsOneWidget);
+    expect(find.text('Listas'), findsOneWidget);
+    expect(find.text('VISTA'), findsNothing);
     expect(find.text('Mosaico'), findsOneWidget);
     expect(find.text('Lista'), findsOneWidget);
-    expect(find.text('Grande'), findsOneWidget);
+    expect(find.text('Grande'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1181,22 +1472,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Configuración'), findsOneWidget);
-    expect(find.text('VISTA DEL TABLERO'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('settings-view-list')));
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
+    expect(find.text('VISTA DEL TABLERO'), findsNothing);
+    expect(find.byKey(const ValueKey('settings-view-grid')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-view-list')), findsNothing);
+    expect(find.text('DATOS EN ESTE DISPOSITIVO'), findsOneWidget);
   });
 
   testWidgets('shows notes assigned to the current user from the menu', (
     tester,
   ) async {
+    final repository = _FakeNotesRepository(withInvitedPeople: true);
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(withInvitedPeople: true),
+        repository: repository,
         authRepository: _FakeAuthRepository(
           user: const AppUser(
             id: 'person-ana',
@@ -1221,6 +1509,33 @@ void main() {
 
     expect(find.text('Asignado a mí'), findsOneWidget);
     expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('1 nota'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('collaborator-avatar-stack')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
+    expect(find.byKey(const ValueKey('list-options-button')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('customize-background-menu-item')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('rename-list-menu-item')), findsNothing);
+    expect(find.byKey(const ValueKey('delete-list-menu-item')), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('customize-background-menu-item')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('background-preset-lagoon')));
+    await tester.tap(find.byKey(const ValueKey('save-background-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('preset-background-lagoon')),
+      findsOneWidget,
+    );
+    expect(repository.lastAppearance, isNull);
   });
 
   testWidgets('shows pinned notes from every list with their origin', (
@@ -1261,12 +1576,27 @@ void main() {
     );
     expect(find.text('Mis notas'), findsOneWidget);
     expect(find.text('Trabajo'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('notes-large-list')), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    expect(find.byKey(const ValueKey('list-options-button')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('customize-background-menu-item')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('rename-list-menu-item')), findsNothing);
+    expect(find.byKey(const ValueKey('delete-list-menu-item')), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('customize-background-menu-item')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('background-live-preview')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Cerrar'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('pin-note-note-1')));
     await tester.pumpAndSettle();
@@ -1695,7 +2025,13 @@ void main() {
     final initialTitleTop = tester.getTopLeft(find.text('Mis notas')).dy;
 
     expect(initialHeaderOffset, 0);
-    await tester.drag(find.byType(GridView), const Offset(0, -72));
+    await tester.drag(
+      find.descendant(
+        of: find.byKey(const ValueKey('notes-grid')),
+        matching: find.byType(SingleChildScrollView),
+      ),
+      const Offset(0, -72),
+    );
     await tester.pump();
 
     final scrolledDecoration =
@@ -1731,7 +2067,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('view-mode-largeList')));
+    await tester.tap(find.byKey(const ValueKey('view-mode-list')));
     await tester.pumpAndSettle();
 
     final list = find.byType(ReorderableListView);
@@ -1785,6 +2121,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
     this.collaboratorPhotoUrl,
     this.initialAssigneeUid,
     this.withPinnedAcrossLists = false,
+    this.initialContent = 'Para la reunión de mañana',
     NoteCategory category = NoteCategory.general,
     List<NoteChecklistItem> checklist = const [],
     DateTime? initialReminderAt,
@@ -1792,7 +2129,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
          id: 'note-1',
          boardId: 'home',
          title: 'Comprar café',
-         content: 'Para la reunión de mañana',
+         content: initialContent,
          color: NoteColor.yellow,
          category: category,
          checklist: checklist,
@@ -1857,6 +2194,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   final String? collaboratorPhotoUrl;
   final String? initialAssigneeUid;
   final bool withPinnedAcrossLists;
+  final String initialContent;
 
   Note _note;
   final List<NoteList> _lists;

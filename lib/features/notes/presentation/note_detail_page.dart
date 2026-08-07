@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
@@ -63,13 +64,6 @@ class NoteDetailPage extends StatelessWidget {
           currentUserAuthorPhoto,
           author?.photoUrl,
         );
-        final invitedPeople =
-            currentList?.collaborators
-                .where((person) => person.role == ListMemberRole.editor)
-                .toList() ??
-            const <ListCollaborator>[];
-        final pendingInvitations =
-            currentList?.pendingInvitations ?? const <ListPendingInvitation>[];
         return Scaffold(
           key: const ValueKey('note-detail-page'),
           appBar: AppBar(
@@ -98,12 +92,12 @@ class NoteDetailPage extends StatelessWidget {
             assignee: assignee,
             assigneePhotoUrl: assigneePhotoUrl,
             authorPhotoUrl: authorPhotoUrl,
-            invitedPeople: invitedPeople,
-            pendingInvitations: pendingInvitations,
             heroTag: heroTag ?? noteHeroTag(note.id),
             isSaving: state.isSaving,
             onToggle: () => context.read<NotesCubit>().toggleNote(note),
-            onEditContent: () => _editContent(context, note),
+            onSaveTitle: (title) =>
+                context.read<NotesCubit>().updateNoteTitle(note, title),
+            onSaveContent: (content) => _saveContent(context, note, content),
             onEditReminder: () => _editReminder(context, note),
             onRemoveReminder: () => _removeReminder(context, note),
             onEditCategory: () => _editCategory(context, note),
@@ -111,7 +105,7 @@ class NoteDetailPage extends StatelessWidget {
             onChecklistChanged: (items) =>
                 context.read<NotesCubit>().updateChecklist(note, items),
             onEditChecklist: () => _edit(context, note),
-            onEditAssignee: () => _edit(context, note),
+            onEditAssignee: () => _editAssignee(context, note),
           ),
           bottomNavigationBar: _DetailFooter(
             note: note,
@@ -148,20 +142,83 @@ class NoteDetailPage extends StatelessWidget {
     await cubit.editNote(note, draft);
   }
 
-  Future<void> _editContent(BuildContext context, Note note) async {
-    final content = await showDialog<NoteRichContent>(
-      context: context,
-      builder: (_) => _EditContentDialog(
-        initialText: note.content,
-        initialDeltaJson: note.contentDelta,
-      ),
-    );
-    if (content == null || !context.mounted) return;
+  Future<void> _saveContent(
+    BuildContext context,
+    Note note,
+    NoteRichContent content,
+  ) async {
     final normalizedContent = normalizeNoteRichContent(content);
     await context.read<NotesCubit>().updateNoteContent(
       note,
       normalizedContent.plainText,
       normalizedContent.deltaJson,
+    );
+  }
+
+  Future<void> _editAssignee(BuildContext context, Note note) async {
+    final cubit = context.read<NotesCubit>();
+    final assignees =
+        _listFrom(cubit.state, note)?.collaborators ??
+        const <ListCollaborator>[];
+    final selectedUid = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Text(
+                'Asignar responsable',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+            ),
+            ListTile(
+              key: const ValueKey('assignee-option-unassigned'),
+              leading: const CircleAvatar(
+                child: Icon(Icons.person_off_outlined),
+              ),
+              title: const Text('Sin responsable'),
+              trailing: note.assigneeUid == null
+                  ? const Icon(Icons.check_rounded)
+                  : null,
+              onTap: () => Navigator.pop(sheetContext, ''),
+            ),
+            ...assignees.map((person) {
+              final label = person.displayName.trim().isNotEmpty
+                  ? person.displayName.trim()
+                  : person.email.trim().isNotEmpty
+                  ? person.email.trim()
+                  : 'Persona';
+              final photoUrl = person.photoUrl?.trim();
+              final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+              return ListTile(
+                key: ValueKey('assignee-option-${person.uid}'),
+                leading: CircleAvatar(
+                  foregroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+                  onForegroundImageError: hasPhoto ? (_, _) {} : null,
+                  child: Text(label.characters.first.toUpperCase()),
+                ),
+                title: Text(label),
+                subtitle: person.email.isEmpty || person.email == label
+                    ? null
+                    : Text(person.email),
+                trailing: note.assigneeUid == person.uid
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, person.uid),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+    if (selectedUid == null || !context.mounted) return;
+    await cubit.updateNoteAssignee(
+      note,
+      selectedUid.isEmpty ? null : selectedUid,
     );
   }
 
@@ -199,6 +256,7 @@ class NoteDetailPage extends StatelessWidget {
     final color = await showModalBottomSheet<NoteColor>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) => _ColorPickerSheet(selected: note.color),
     );
     if (color == null || color == note.color || !context.mounted) return;
@@ -253,12 +311,11 @@ class _DetailBody extends StatelessWidget {
     required this.assignee,
     required this.assigneePhotoUrl,
     required this.authorPhotoUrl,
-    required this.invitedPeople,
-    required this.pendingInvitations,
     required this.heroTag,
     required this.isSaving,
     required this.onToggle,
-    required this.onEditContent,
+    required this.onSaveTitle,
+    required this.onSaveContent,
     required this.onEditReminder,
     required this.onRemoveReminder,
     required this.onEditCategory,
@@ -272,12 +329,11 @@ class _DetailBody extends StatelessWidget {
   final ListCollaborator? assignee;
   final String? assigneePhotoUrl;
   final String? authorPhotoUrl;
-  final List<ListCollaborator> invitedPeople;
-  final List<ListPendingInvitation> pendingInvitations;
   final Object heroTag;
   final bool isSaving;
   final VoidCallback onToggle;
-  final VoidCallback onEditContent;
+  final Future<void> Function(String title) onSaveTitle;
+  final Future<void> Function(NoteRichContent content) onSaveContent;
   final VoidCallback onEditReminder;
   final VoidCallback onRemoveReminder;
   final VoidCallback onEditCategory;
@@ -360,115 +416,30 @@ class _DetailBody extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Padding(
+                          _EditableNoteHeader(
                             key: const ValueKey('note-detail-header'),
-                            padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Semantics(
-                                  button: true,
-                                  label: note.isCompleted
-                                      ? 'Marcar como pendiente'
-                                      : 'Marcar como completada',
-                                  child: IconButton(
-                                    key: const ValueKey(
-                                      'detail-complete-toggle',
-                                    ),
-                                    tooltip: note.isCompleted
-                                        ? 'Marcar como pendiente'
-                                        : 'Marcar como completada',
-                                    onPressed: isSaving ? null : onToggle,
-                                    color: noteForeground,
-                                    iconSize: 34,
-                                    icon: AnimatedSwitcher(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      child: Icon(
-                                        note.isCompleted
-                                            ? Icons.check_circle_rounded
-                                            : Icons
-                                                  .radio_button_unchecked_rounded,
-                                        key: ValueKey(note.isCompleted),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 5),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          note.title,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .headlineMedium
-                                              ?.copyWith(
-                                                color: noteForeground,
-                                                fontWeight: FontWeight.w800,
-                                                height: 1.15,
-                                                decoration: note.isCompleted
-                                                    ? TextDecoration.lineThrough
-                                                    : null,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              NoteCategoryStyle.icon(
-                                                note.category,
-                                              ),
-                                              size: 16,
-                                              color: noteForeground.withValues(
-                                                alpha: 0.86,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              NoteCategoryStyle.label(
-                                                note.category,
-                                              ),
-                                              style: TextStyle(
-                                                color: noteForeground
-                                                    .withValues(alpha: 0.86),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            note: note,
+                            foregroundColor: noteForeground,
+                            isSaving: isSaving,
+                            onToggle: onToggle,
+                            onSaveTitle: onSaveTitle,
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Divider(
+                              height: 1,
+                              color: noteForeground.withValues(alpha: 0.2),
                             ),
                           ),
-                          if (note.checklist.isNotEmpty) ...[
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                              ),
-                              child: Divider(
-                                height: 1,
-                                color: noteForeground.withValues(alpha: 0.2),
-                              ),
-                            ),
-                            NoteChecklistDetail(
-                              items: note.checklist,
-                              isSaving: isSaving,
-                              onChanged: onChecklistChanged,
-                              onEdit: onEditChecklist,
-                              backgroundColor: Colors.transparent,
-                              foregroundColor: noteForeground,
-                              borderRadius: BorderRadius.zero,
-                            ),
-                          ],
+                          NoteChecklistDetail(
+                            items: note.checklist,
+                            isSaving: isSaving,
+                            onChanged: onChecklistChanged,
+                            onEdit: onEditChecklist,
+                            backgroundColor: Colors.transparent,
+                            foregroundColor: noteForeground,
+                            borderRadius: BorderRadius.zero,
+                          ),
                         ],
                       ),
                     ),
@@ -477,6 +448,12 @@ class _DetailBody extends StatelessWidget {
                 const SizedBox(height: 22),
                 _DetailGroup(
                   children: [
+                    _ExpandableContentRow(
+                      key: const ValueKey('detail-content-row'),
+                      note: note,
+                      isSaving: isSaving,
+                      onSave: onSaveContent,
+                    ),
                     _DetailRow(
                       key: const ValueKey('detail-assignee-row'),
                       icon: Icons.assignment_ind_outlined,
@@ -492,23 +469,6 @@ class _DetailBody extends StatelessWidget {
                               photoUrl: assigneePhotoUrl,
                             ),
                       onTap: isSaving ? null : onEditAssignee,
-                    ),
-                    _DetailRow(
-                      key: const ValueKey('detail-content-row'),
-                      icon: Icons.subject_rounded,
-                      title: 'Nota',
-                      value: note.content.isEmpty
-                          ? 'Agregar una nota'
-                          : note.content,
-                      valueWidget: note.content.isEmpty
-                          ? null
-                          : NoteRichTextViewer(
-                              key: ValueKey(note.contentDelta ?? note.content),
-                              plainText: note.content,
-                              deltaJson: note.contentDelta,
-                            ),
-                      valueMuted: note.content.isEmpty,
-                      onTap: isSaving ? null : onEditContent,
                     ),
                     _DetailRow(
                       key: const ValueKey('detail-reminder-row'),
@@ -577,39 +537,13 @@ class _DetailBody extends StatelessWidget {
                         photoUrl: authorPhotoUrl,
                       ),
                     ),
-                    ...invitedPeople.map(
-                      (person) => _DetailRow(
-                        key: ValueKey('detail-collaborator-${person.uid}'),
-                        icon: Icons.person_add_alt_1_outlined,
-                        title: 'Persona invitada',
-                        value: person.email.isEmpty
-                            ? person.displayName
-                            : '${person.displayName}\n${person.email}',
-                        trailing: _PersonAvatar(
-                          label: person.displayName,
-                          color: noteColor,
-                          photoUrl: person.photoUrl,
-                        ),
-                      ),
-                    ),
-                    ...pendingInvitations.map(
-                      (invitation) => _DetailRow(
-                        key: ValueKey(
-                          'detail-pending-invitation-${invitation.email}',
-                        ),
-                        icon: Icons.schedule_send_outlined,
-                        title: 'Invitación pendiente',
-                        value: invitation.email,
-                        trailing: const Icon(Icons.hourglass_top_rounded),
-                      ),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 18),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Text(
-                    'Actualizada ${_formatDate(note.updatedAt)}',
+                    'Actualizada ${_formatDateTime(note.updatedAt)}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurface.withValues(alpha: 0.56),
                     ),
@@ -658,7 +592,6 @@ class _DetailRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
-    this.valueWidget,
     this.valueMuted = false,
     this.trailing,
     this.onTap,
@@ -668,7 +601,6 @@ class _DetailRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String value;
-  final Widget? valueWidget;
   final bool valueMuted;
   final Widget? trailing;
   final VoidCallback? onTap;
@@ -700,22 +632,14 @@ class _DetailRow extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  if (valueWidget != null)
-                    DefaultTextStyle.merge(
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: colorScheme.onSurface.withValues(alpha: 0.9),
-                      ),
-                      child: valueWidget!,
-                    )
-                  else
-                    Text(
-                      value,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: colorScheme.onSurface.withValues(
-                          alpha: valueMuted ? 0.52 : 0.9,
-                        ),
+                  Text(
+                    value,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: colorScheme.onSurface.withValues(
+                        alpha: valueMuted ? 0.52 : 0.9,
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -740,65 +664,387 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
-class _EditContentDialog extends StatefulWidget {
-  const _EditContentDialog({required this.initialText, this.initialDeltaJson});
+class _EditableNoteHeader extends StatefulWidget {
+  const _EditableNoteHeader({
+    required this.note,
+    required this.foregroundColor,
+    required this.isSaving,
+    required this.onToggle,
+    required this.onSaveTitle,
+    super.key,
+  });
 
-  final String initialText;
-  final String? initialDeltaJson;
+  final Note note;
+  final Color foregroundColor;
+  final bool isSaving;
+  final VoidCallback onToggle;
+  final Future<void> Function(String title) onSaveTitle;
 
   @override
-  State<_EditContentDialog> createState() => _EditContentDialogState();
+  State<_EditableNoteHeader> createState() => _EditableNoteHeaderState();
 }
 
-class _EditContentDialogState extends State<_EditContentDialog> {
-  late NoteRichContent _content = NoteRichContent(
-    plainText: widget.initialText,
-    deltaJson:
-        widget.initialDeltaJson ??
-        noteRichContentFromDocument(
-          noteDocumentFromContent(plainText: widget.initialText),
-        ).deltaJson,
+class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.note.title,
   );
+  final FocusNode _focusNode = FocusNode();
+  bool _isEditing = false;
+
+  @override
+  void didUpdateWidget(covariant _EditableNoteHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_isEditing && oldWidget.note.title != widget.note.title) {
+      _controller.text = widget.note.title;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _startEditing() {
+    if (widget.isSaving || _isEditing) return;
+    setState(() {
+      _controller.text = widget.note.title;
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.text.length,
+      );
+      _isEditing = true;
+    });
+    _focusNode.requestFocus();
+  }
+
+  void _cancelEditing() {
+    _focusNode.unfocus();
+    setState(() {
+      _controller.text = widget.note.title;
+      _isEditing = false;
+    });
+  }
+
+  Future<void> _saveTitle() async {
+    final title = _controller.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Escribe un título para la nota.')),
+      );
+      return;
+    }
+    await widget.onSaveTitle(title);
+    if (!mounted) return;
+    _focusNode.unfocus();
+    setState(() => _isEditing = false);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      key: const ValueKey('detail-content-dialog'),
-      title: const Text('Editar texto de la nota'),
-      content: SizedBox(
-        key: const ValueKey('detail-content-field'),
-        width: 520,
-        child: NoteRichTextEditor(
-          editorKey: const ValueKey('detail-content-editor'),
-          initialPlainText: _content.plainText,
-          initialDeltaJson: _content.deltaJson,
-          autoFocus: true,
-          minEditorHeight: 150,
-          maxEditorHeight: 260,
-          onChanged: (content) => _content = content,
+    final titleStyle = Theme.of(context).textTheme.headlineMedium?.copyWith(
+      color: widget.foregroundColor,
+      fontWeight: FontWeight.w800,
+      height: 1.15,
+      decoration: widget.note.isCompleted ? TextDecoration.lineThrough : null,
+    );
+    return InkWell(
+      onTap: _startEditing,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Semantics(
+              button: true,
+              label: widget.note.isCompleted
+                  ? 'Marcar como pendiente'
+                  : 'Marcar como completada',
+              child: IconButton(
+                key: const ValueKey('detail-complete-toggle'),
+                tooltip: widget.note.isCompleted
+                    ? 'Marcar como pendiente'
+                    : 'Marcar como completada',
+                onPressed: widget.isSaving ? null : widget.onToggle,
+                color: widget.foregroundColor,
+                iconSize: 34,
+                icon: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  child: Icon(
+                    widget.note.isCompleted
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    key: ValueKey(widget.note.isCompleted),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_isEditing)
+                      TextField(
+                        key: const ValueKey('detail-title-field'),
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        maxLength: 80,
+                        textCapitalization: TextCapitalization.sentences,
+                        inputFormatters: const [
+                          InitialUppercaseTextFormatter(),
+                        ],
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _saveTitle(),
+                        style: titleStyle,
+                        decoration: InputDecoration(
+                          counterText: '',
+                          isDense: true,
+                          contentPadding: const EdgeInsets.fromLTRB(
+                            12,
+                            10,
+                            12,
+                            10,
+                          ),
+                          filled: true,
+                          fillColor: Colors.white.withValues(alpha: 0.18),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: widget.foregroundColor.withValues(
+                                alpha: 0.3,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Text(widget.note.title, style: titleStyle),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          NoteCategoryStyle.icon(widget.note.category),
+                          size: 16,
+                          color: widget.foregroundColor.withValues(alpha: 0.86),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          NoteCategoryStyle.label(widget.note.category),
+                          style: TextStyle(
+                            color: widget.foregroundColor.withValues(
+                              alpha: 0.86,
+                            ),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_isEditing) ...[
+              IconButton(
+                key: const ValueKey('cancel-detail-title-button'),
+                tooltip: 'Cancelar',
+                onPressed: widget.isSaving ? null : _cancelEditing,
+                color: widget.foregroundColor,
+                icon: const Icon(Icons.close_rounded),
+              ),
+              IconButton(
+                key: const ValueKey('save-detail-title-button'),
+                tooltip: 'Guardar título',
+                onPressed: widget.isSaving ? null : _saveTitle,
+                color: widget.foregroundColor,
+                icon: const Icon(Icons.check_rounded),
+              ),
+            ],
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
+    );
+  }
+}
+
+class _ExpandableContentRow extends StatefulWidget {
+  const _ExpandableContentRow({
+    required this.note,
+    required this.isSaving,
+    required this.onSave,
+    super.key,
+  });
+
+  final Note note;
+  final bool isSaving;
+  final Future<void> Function(NoteRichContent content) onSave;
+
+  @override
+  State<_ExpandableContentRow> createState() => _ExpandableContentRowState();
+}
+
+class _ExpandableContentRowState extends State<_ExpandableContentRow> {
+  bool _isExpanded = false;
+  int _editorVersion = 0;
+  late NoteRichContent _content = _initialContent();
+
+  NoteRichContent _initialContent() => NoteRichContent(
+    plainText: widget.note.content,
+    deltaJson:
+        widget.note.contentDelta ??
+        noteRichContentFromDocument(
+          noteDocumentFromContent(plainText: widget.note.content),
+        ).deltaJson,
+  );
+
+  void _toggle() {
+    if (widget.isSaving) return;
+    setState(() {
+      _isExpanded = !_isExpanded;
+      if (_isExpanded) {
+        _content = _initialContent();
+        _editorVersion++;
+      }
+    });
+  }
+
+  void _collapse() {
+    setState(() {
+      _isExpanded = false;
+      _content = _initialContent();
+    });
+  }
+
+  Future<void> _save() async {
+    if (_content.plainText.length > noteContentMaxLength) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El detalle puede tener hasta 500 caracteres.'),
         ),
-        FilledButton(
-          key: const ValueKey('save-detail-content-button'),
-          onPressed: () {
-            if (_content.plainText.length > noteContentMaxLength) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('El detalle puede tener hasta 500 caracteres.'),
-                ),
-              );
-              return;
-            }
-            Navigator.pop(context, _content);
-          },
-          child: const Text('Guardar'),
-        ),
-      ],
+      );
+      return;
+    }
+    await widget.onSave(_content);
+    if (mounted) setState(() => _isExpanded = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: _toggle,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 17, 18, 17),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.subject_rounded,
+                    size: 24,
+                    color: colorScheme.onSurface.withValues(alpha: 0.68),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Nota',
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: colorScheme.onSurface.withValues(
+                                  alpha: 0.58,
+                                ),
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        if (widget.note.content.isEmpty)
+                          Text(
+                            'Agregar una nota',
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.52,
+                                  ),
+                                ),
+                          )
+                        else
+                          NoteRichTextViewer(
+                            key: ValueKey(
+                              widget.note.contentDelta ?? widget.note.content,
+                            ),
+                            plainText: widget.note.content,
+                            deltaJson: widget.note.contentDelta,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: AnimatedRotation(
+                      turns: _isExpanded ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 220),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        color: colorScheme.onSurface.withValues(alpha: 0.38),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isExpanded) ...[
+            Divider(
+              height: 1,
+              indent: 62,
+              color: colorScheme.onSurface.withValues(alpha: 0.08),
+            ),
+            Padding(
+              key: const ValueKey('detail-content-field'),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              child: NoteRichTextEditor(
+                key: ValueKey('detail-content-editor-$_editorVersion'),
+                editorKey: const ValueKey('detail-content-editor'),
+                initialPlainText: _content.plainText,
+                initialDeltaJson: _content.deltaJson,
+                autoFocus: true,
+                minEditorHeight: 150,
+                maxEditorHeight: 260,
+                onChanged: (content) => _content = content,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    key: const ValueKey('collapse-detail-content-button'),
+                    onPressed: widget.isSaving ? null : _collapse,
+                    child: const Text('Cancelar'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const ValueKey('save-detail-content-button'),
+                    onPressed: widget.isSaving ? null : _save,
+                    child: const Text('Guardar'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -897,7 +1143,7 @@ class _ColorPickerSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1053,7 +1299,7 @@ class _DetailFooter extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Creada ${_formatDate(note.createdAt)}',
+                'Creada ${_formatDateTime(note.createdAt)}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1080,8 +1326,13 @@ String _formatReminder(DateTime date) {
       '${_monthName(date.month)} · ${date.hour}:$minute';
 }
 
-String _formatDate(DateTime date) =>
-    'el ${date.day} de ${_monthName(date.month)} de ${date.year}';
+String _formatDateTime(DateTime date) {
+  final localDate = date.toLocal();
+  final hour = localDate.hour.toString().padLeft(2, '0');
+  final minute = localDate.minute.toString().padLeft(2, '0');
+  return 'el ${localDate.day} de ${_monthName(localDate.month)} de '
+      '${localDate.year} a las $hour:$minute';
+}
 
 String _weekdayName(int weekday) => const [
   'lunes',
@@ -1114,4 +1365,8 @@ String _colorName(NoteColor color) => switch (color) {
   NoteColor.blue => 'Azul',
   NoteColor.green => 'Verde',
   NoteColor.purple => 'Morado',
+  NoteColor.orange => 'Naranjo',
+  NoteColor.mint => 'Menta',
+  NoteColor.coral => 'Coral',
+  NoteColor.gray => 'Gris',
 };

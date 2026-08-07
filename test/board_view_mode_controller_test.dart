@@ -14,13 +14,25 @@ void main() {
     await controller.load();
     expect(controller.viewMode, BoardViewMode.grid);
 
-    await controller.setViewMode(BoardViewMode.largeList);
-    expect(controller.viewMode, BoardViewMode.largeList);
+    await controller.setViewMode(BoardViewMode.list);
+    expect(controller.viewMode, BoardViewMode.list);
     controller.dispose();
 
     final reopenedController = BoardViewModeController();
     await reopenedController.load();
-    expect(reopenedController.viewMode, BoardViewMode.largeList);
+    expect(reopenedController.viewMode, BoardViewMode.list);
     reopenedController.dispose();
+  });
+
+  test('migrates the removed large view to the compact list', () async {
+    SharedPreferences.setMockInitialValues({
+      'nocknock.board_view_mode.v1': 'largeList',
+    });
+
+    final controller = BoardViewModeController();
+    await controller.load();
+
+    expect(controller.viewMode, BoardViewMode.list);
+    controller.dispose();
   });
 }

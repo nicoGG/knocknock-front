@@ -11,6 +11,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
+import 'package:nocknock/core/telemetry/app_telemetry.dart';
+import 'package:nocknock/core/telemetry/telemetry_dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -29,15 +31,23 @@ class NotificationsController extends ChangeNotifier
     FirebaseMessaging? messaging,
     FlutterLocalNotificationsPlugin? localNotifications,
     Dio? dio,
+    AppTelemetry? telemetry,
   }) : _messaging = messaging ?? FirebaseMessaging.instance,
        _localNotifications =
            localNotifications ?? FlutterLocalNotificationsPlugin(),
-       _dio = dio ?? Dio(BaseOptions(baseUrl: apiBaseUrl));
+       _telemetry = telemetry,
+       _dio =
+           dio ??
+           createTelemetryDio(
+             BaseOptions(baseUrl: apiBaseUrl),
+             telemetry: telemetry,
+           );
 
   final AuthRepository authRepository;
   final FirebaseMessaging _messaging;
   final FlutterLocalNotificationsPlugin _localNotifications;
   final Dio _dio;
+  final AppTelemetry? _telemetry;
   final _tapEvents = StreamController<Map<String, String>>.broadcast();
 
   StreamSubscription<AppUser?>? _authSubscription;
@@ -311,6 +321,7 @@ class NotificationsController extends ChangeNotifier
     );
     _pendingTap = normalized;
     _tapEvents.add(normalized);
+    unawaited(_telemetry?.logNotificationOpened(normalized['type']));
     unawaited(load());
   }
 

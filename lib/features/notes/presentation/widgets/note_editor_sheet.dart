@@ -252,6 +252,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 12,
+                    runSpacing: 12,
                     children: NoteColor.values.map((color) {
                       final selected = color == _color;
                       return Semantics(

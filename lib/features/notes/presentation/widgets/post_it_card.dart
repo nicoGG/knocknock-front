@@ -47,11 +47,20 @@ class PostItCard extends StatelessWidget {
     final completionDuration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 260);
-    final borderRadius = layout == PostItCardLayout.grid ? 10.0 : 18.0;
-    final pinClearance = layout == PostItCardLayout.compact ? 10.0 : 16.0;
+    final borderRadius = switch (layout) {
+      PostItCardLayout.grid => 10.0,
+      PostItCardLayout.compact => 10.0,
+      PostItCardLayout.large => 18.0,
+    };
+    final pinClearance = switch (layout) {
+      PostItCardLayout.compact => 4.0,
+      PostItCardLayout.grid => 10.0,
+      PostItCardLayout.large => 16.0,
+    };
     return _InteractivePostIt(
       child: Stack(
         fit: StackFit.expand,
+        clipBehavior: Clip.none,
         children: [
           Positioned.fill(
             child: Padding(
@@ -106,10 +115,10 @@ class PostItCard extends StatelessWidget {
                 child: Ink(
                   padding: switch (layout) {
                     PostItCardLayout.compact => const EdgeInsets.fromLTRB(
-                      8,
-                      8,
-                      8,
-                      8,
+                      6,
+                      4,
+                      38,
+                      4,
                     ),
                     PostItCardLayout.grid => const EdgeInsets.fromLTRB(
                       20,
@@ -163,13 +172,12 @@ class PostItCard extends StatelessWidget {
                       PostItCardLayout.grid ||
                       PostItCardLayout.large => _NoteBody(
                         note: note,
+                        isGrid: layout == PostItCardLayout.grid,
                         onToggle: onToggle,
                         assignee: assignee,
                         authorPhotoUrl: authorPhotoUrl,
                         originListName: originListName,
-                        contentMaxLines: layout == PostItCardLayout.large
-                            ? 7
-                            : 5,
+                        contentMaxLines: 7,
                         foregroundColor: foregroundColor,
                         onChecklistToggle: onChecklistToggle,
                       ),
@@ -180,7 +188,7 @@ class PostItCard extends StatelessWidget {
             ),
           ),
           Positioned(
-            top: 0,
+            top: layout == PostItCardLayout.grid ? -6 : 0,
             right: 0,
             child: _FloatingPinButton(
               note: note,
@@ -309,6 +317,7 @@ class _FloatingPinButton extends StatelessWidget {
 class _NoteBody extends StatelessWidget {
   const _NoteBody({
     required this.note,
+    required this.isGrid,
     required this.onToggle,
     required this.assignee,
     required this.authorPhotoUrl,
@@ -319,6 +328,7 @@ class _NoteBody extends StatelessWidget {
   });
 
   final Note note;
+  final bool isGrid;
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
@@ -329,39 +339,41 @@ class _NoteBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hideContentForAssignedGridNote =
-        assignee != null && contentMaxLines != 7;
+    final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
+    final showMetadata = !isGrid || hasBody;
+    final visibleOriginListName = showMetadata ? originListName : null;
+    final visibleReminder = showMetadata ? note.reminderAt : null;
+    final titleRow = Row(
+      children: [
+        Expanded(
+          child: Text(
+            note.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: foregroundColor,
+              fontWeight: FontWeight.w800,
+              decoration: note.isCompleted ? TextDecoration.lineThrough : null,
+            ),
+          ),
+        ),
+        Checkbox(
+          value: note.isCompleted,
+          onChanged: (_) => onToggle(),
+          activeColor: foregroundColor,
+          checkColor: note.category == NoteCategory.general
+              ? Colors.white
+              : Colors.black87,
+          side: BorderSide(color: foregroundColor, width: 1.5),
+        ),
+      ],
+    );
+    if (isGrid && !hasBody && assignee == null) return titleRow;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                note.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: foregroundColor,
-                  fontWeight: FontWeight.w800,
-                  decoration: note.isCompleted
-                      ? TextDecoration.lineThrough
-                      : null,
-                ),
-              ),
-            ),
-            Checkbox(
-              value: note.isCompleted,
-              onChanged: (_) => onToggle(),
-              activeColor: foregroundColor,
-              checkColor: note.category == NoteCategory.general
-                  ? Colors.white
-                  : Colors.black87,
-              side: BorderSide(color: foregroundColor, width: 1.5),
-            ),
-          ],
-        ),
-        if (originListName case final listName?) ...[
+        titleRow,
+        if (visibleOriginListName case final listName?) ...[
           _OriginListBadge(
             noteId: note.id,
             listName: listName,
@@ -369,8 +381,10 @@ class _NoteBody extends StatelessWidget {
           ),
           SizedBox(height: contentMaxLines == 7 ? 7 : 5),
         ],
-        if (note.category != NoteCategory.general) ...[
+        if (showMetadata && note.category != NoteCategory.general) ...[
+          if (isGrid) const SizedBox(height: 8),
           Container(
+            key: ValueKey('note-category-${note.id}'),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.black.withValues(alpha: 0.16),
@@ -396,32 +410,30 @@ class _NoteBody extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(height: contentMaxLines == 7 ? 7 : 4),
-        ] else
-          SizedBox(height: contentMaxLines == 7 ? 8 : 6),
-        if (hideContentForAssignedGridNote)
-          const Spacer()
-        else
-          Expanded(
-            child: note.checklist.isNotEmpty
-                ? NoteChecklistPreview(
-                    items: note.checklist,
-                    foregroundColor: foregroundColor,
-                    onToggle: onChecklistToggle,
-                    maxItems: contentMaxLines == 7 ? 6 : 4,
-                  )
-                : Text(
-                    note.content.isEmpty ? 'Sin detalles' : note.content,
-                    maxLines: contentMaxLines,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: foregroundColor.withValues(
-                        alpha: note.content.isEmpty ? 0.55 : 0.9,
-                      ),
-                    ),
+          SizedBox(height: isGrid ? 10 : 7),
+        ] else if (showMetadata)
+          SizedBox(height: isGrid ? 6 : 8),
+        Expanded(
+          child: note.checklist.isNotEmpty
+              ? NoteChecklistPreview(
+                  items: note.checklist,
+                  foregroundColor: foregroundColor,
+                  onToggle: onChecklistToggle,
+                  maxItems: isGrid ? 10 : 6,
+                  showOpenHint: isGrid,
+                )
+              : note.content.isEmpty
+              ? const SizedBox.shrink()
+              : Text(
+                  note.content,
+                  maxLines: contentMaxLines,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: foregroundColor.withValues(alpha: 0.9),
                   ),
-          ),
-        if (note.reminderAt case final reminder?) ...[
+                ),
+        ),
+        if (visibleReminder case final reminder?) ...[
           Row(
             children: [
               Icon(
@@ -444,11 +456,22 @@ class _NoteBody extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: contentMaxLines == 7 ? 8 : 4),
+          SizedBox(height: isGrid ? 4 : 8),
         ],
+        if (isGrid && hasBody && assignee != null) const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
             final showAuthor = constraints.maxWidth >= 220;
+            if (isGrid) {
+              if (assignee case final person?) {
+                return _GridAssignee(
+                  noteId: note.id,
+                  person: person,
+                  foregroundColor: foregroundColor,
+                );
+              }
+              if (!hasBody) return const SizedBox.shrink();
+            }
             return Row(
               children: [
                 if (showAuthor) ...[
@@ -484,6 +507,46 @@ class _NoteBody extends StatelessWidget {
   }
 }
 
+class _GridAssignee extends StatelessWidget {
+  const _GridAssignee({
+    required this.noteId,
+    required this.person,
+    required this.foregroundColor,
+  });
+
+  final String noteId;
+  final ListCollaborator person;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      key: ValueKey('grid-assignee-$noteId'),
+      children: [
+        _AssigneeIndicator(noteId: noteId, person: person, dimension: 28),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            _firstName(person),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: foregroundColor,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _firstName(ListCollaborator person) {
+  final label = _personLabel(person).trim();
+  if (label.isEmpty) return 'Persona';
+  return label.split(RegExp(r'\s+')).first;
+}
+
 class _CompactNoteBody extends StatelessWidget {
   const _CompactNoteBody({
     required this.note,
@@ -503,136 +566,32 @@ class _CompactNoteBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final showAuthor = constraints.maxWidth >= 560;
-        return Row(
-          children: [
-            Checkbox(
-              value: note.isCompleted,
-              onChanged: (_) => onToggle(),
-              activeColor: foregroundColor,
-              checkColor: note.category == NoteCategory.general
-                  ? Colors.white
-                  : Colors.black87,
-              side: BorderSide(color: foregroundColor, width: 1.5),
+    return Row(
+      children: [
+        Checkbox(
+          value: note.isCompleted,
+          onChanged: (_) => onToggle(),
+          activeColor: foregroundColor,
+          checkColor: note.category == NoteCategory.general
+              ? Colors.white
+              : Colors.black87,
+          side: BorderSide(color: foregroundColor, width: 1.5),
+          visualDensity: VisualDensity.compact,
+        ),
+        const SizedBox(width: 2),
+        Expanded(
+          child: Text(
+            note.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: foregroundColor,
+              fontWeight: FontWeight.w700,
+              decoration: note.isCompleted ? TextDecoration.lineThrough : null,
             ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    note.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: foregroundColor,
-                      decoration: note.isCompleted
-                          ? TextDecoration.lineThrough
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  if (originListName case final listName?)
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.folder_outlined,
-                          size: 14,
-                          color: foregroundColor.withValues(alpha: 0.72),
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            listName,
-                            key: ValueKey('note-list-${note.id}'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: foregroundColor.withValues(
-                                    alpha: 0.72,
-                                  ),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ],
-                    )
-                  else
-                    Text(
-                      note.checklist.isNotEmpty
-                          ? '${note.checklist.where((item) => item.isCompleted).length}/${note.checklist.length} subtareas · ${NoteCategoryStyle.label(note.category)}'
-                          : note.content.isEmpty
-                          ? NoteCategoryStyle.label(note.category)
-                          : note.content,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: foregroundColor.withValues(
-                          alpha: note.content.isEmpty ? 0.45 : 0.72,
-                        ),
-                      ),
-                    ),
-                  if (note.reminderAt case final reminder?) ...[
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.notifications_none_rounded,
-                          size: 15,
-                          color: foregroundColor.withValues(alpha: 0.8),
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            DateFormat('dd MMM · HH:mm', 'es').format(reminder),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: foregroundColor,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (showAuthor) ...[
-              const SizedBox(width: 20),
-              _AuthorAvatar(
-                note: note,
-                photoUrl: authorPhotoUrl,
-                foregroundColor: foregroundColor,
-                radius: 13,
-              ),
-              const SizedBox(width: 7),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 120),
-                child: Text(
-                  note.authorName,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foregroundColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-            if (assignee case final person?) ...[
-              const SizedBox(width: 6),
-              _AssigneeIndicator(noteId: note.id, person: person),
-            ],
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -685,13 +644,11 @@ class _AuthorAvatar extends StatelessWidget {
     required this.note,
     required this.photoUrl,
     required this.foregroundColor,
-    this.radius = 12,
   });
 
   final Note note;
   final String? photoUrl;
   final Color foregroundColor;
-  final double radius;
 
   @override
   Widget build(BuildContext context) {
@@ -700,7 +657,7 @@ class _AuthorAvatar extends StatelessWidget {
         normalizedPhotoUrl != null && normalizedPhotoUrl.isNotEmpty;
     return CircleAvatar(
       key: ValueKey('author-avatar-${note.id}'),
-      radius: radius,
+      radius: 12,
       backgroundColor: foregroundColor.withValues(alpha: 0.14),
       foregroundImage: hasPhoto ? NetworkImage(normalizedPhotoUrl) : null,
       onForegroundImageError: hasPhoto ? (_, _) {} : null,
@@ -717,10 +674,15 @@ class _AuthorAvatar extends StatelessWidget {
 }
 
 class _AssigneeIndicator extends StatelessWidget {
-  const _AssigneeIndicator({required this.noteId, required this.person});
+  const _AssigneeIndicator({
+    required this.noteId,
+    required this.person,
+    this.dimension = 34,
+  });
 
   final String noteId;
   final ListCollaborator person;
+  final double dimension;
 
   @override
   Widget build(BuildContext context) {
@@ -736,7 +698,7 @@ class _AssigneeIndicator extends StatelessWidget {
         label: label,
         child: SizedBox.square(
           key: ValueKey('assignee-$noteId'),
-          dimension: 34,
+          dimension: dimension,
           child: Stack(
             clipBehavior: Clip.none,
             children: [

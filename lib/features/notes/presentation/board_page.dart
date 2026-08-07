@@ -55,6 +55,8 @@ class _BoardPageState extends State<BoardPage>
   NoteFilter _filter = NoteFilter.all;
   _BoardScope _scope = _BoardScope.list;
   late BoardViewMode _viewMode = widget.viewModeController.viewMode;
+  ListAppearance _assignedToMeAppearance = const ListAppearance();
+  ListAppearance _pinnedAppearance = const ListAppearance();
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
@@ -133,8 +135,12 @@ class _BoardPageState extends State<BoardPage>
         final scopedNotes = _scope == _BoardScope.pinned
             ? state.pinnedNotes
             : state.notes;
-        final notes = _filtered(scopedNotes);
+        final scopeNotes = _scope == _BoardScope.assignedToMe
+            ? _assignedToCurrentUser(scopedNotes)
+            : scopedNotes;
+        final notes = _filtered(scopeNotes);
         final isPinnedScope = _scope == _BoardScope.pinned;
+        final isListScope = _scope == _BoardScope.list;
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
@@ -171,9 +177,11 @@ class _BoardPageState extends State<BoardPage>
                 )
               : null,
           body: ListBoardBackground(
-            appearance: isPinnedScope
-                ? const ListAppearance()
-                : state.selectedList?.appearance ?? const ListAppearance(),
+            appearance: isListScope
+                ? state.selectedList?.appearance ?? const ListAppearance()
+                : _scope == _BoardScope.assignedToMe
+                ? _assignedToMeAppearance
+                : _pinnedAppearance,
             child: _BoardContentFade(
               topInset: MediaQuery.paddingOf(context).top,
               scrollProgress: _appBarScrollProgress,
@@ -216,10 +224,8 @@ class _BoardPageState extends State<BoardPage>
                                     _BoardScope.assignedToMe => 'Asignado a mí',
                                     _BoardScope.pinned => 'Ancladas',
                                   },
-                                  list: isPinnedScope
-                                      ? null
-                                      : state.selectedList,
-                                  noteCount: scopedNotes.length,
+                                  list: isListScope ? state.selectedList : null,
+                                  noteCount: scopeNotes.length,
                                   filter: _filter,
                                   viewMode: _viewMode,
                                   onFilterChanged: (value) =>
@@ -234,18 +240,18 @@ class _BoardPageState extends State<BoardPage>
                                           state.selectedList,
                                         ),
                                   onCustomizeBackground:
-                                      state.isSavingAppearance || isPinnedScope
+                                      state.isSavingAppearance
                                       ? null
                                       : _openBackgroundPicker,
                                   onRenameList:
-                                      isPinnedScope ||
+                                      !isListScope ||
                                           state.isSavingList ||
                                           state.selectedList?.currentUserRole !=
                                               ListMemberRole.owner
                                       ? null
                                       : _renameList,
                                   onDeleteList:
-                                      isPinnedScope ||
+                                      !isListScope ||
                                           state.isSavingList ||
                                           state.selectedList?.currentUserRole !=
                                               ListMemberRole.owner
@@ -354,6 +360,7 @@ class _BoardPageState extends State<BoardPage>
         BoardViewMode.grid => _NotesGrid(
           key: const ValueKey('notes-grid'),
           notes: notes,
+          showOriginList: _scope == _BoardScope.pinned,
           buildCard: _buildCard,
           onReorder: _reorderNotes,
         ),
@@ -361,17 +368,8 @@ class _BoardPageState extends State<BoardPage>
           key: const ValueKey('notes-list'),
           notes: notes,
           layout: PostItCardLayout.compact,
-          itemHeight: 100,
+          itemHeight: 55,
           maxWidth: 980,
-          buildCard: _buildCard,
-          onReorder: _reorderNotes,
-        ),
-        BoardViewMode.largeList => _NotesList(
-          key: const ValueKey('notes-large-list'),
-          notes: notes,
-          layout: PostItCardLayout.large,
-          itemHeight: _scope == _BoardScope.pinned ? 236 : 208,
-          maxWidth: 1120,
           buildCard: _buildCard,
           onReorder: _reorderNotes,
         ),
@@ -446,14 +444,16 @@ class _BoardPageState extends State<BoardPage>
   }
 
   List<Note> _filtered(List<Note> notes) {
-    final statusFiltered = switch (_filter) {
+    return switch (_filter) {
       NoteFilter.all => notes,
       NoteFilter.pending => notes.where((note) => !note.isCompleted).toList(),
       NoteFilter.completed => notes.where((note) => note.isCompleted).toList(),
     };
-    if (_scope != _BoardScope.assignedToMe) return statusFiltered;
+  }
+
+  List<Note> _assignedToCurrentUser(List<Note> notes) {
     final userId = context.read<AuthRepository>().currentUser?.id;
-    return statusFiltered
+    return notes
         .where((note) => userId != null && note.assigneeUid == userId)
         .toList();
   }
@@ -519,7 +519,6 @@ class _BoardPageState extends State<BoardPage>
               variant: switch (_viewMode) {
                 BoardViewMode.grid => PostItCardLayout.grid.name,
                 BoardViewMode.list => PostItCardLayout.compact.name,
-                BoardViewMode.largeList => PostItCardLayout.large.name,
               },
             ),
             currentUserId: currentUser?.id,
@@ -606,9 +605,21 @@ class _BoardPageState extends State<BoardPage>
     if (list == null) return;
     final appearance = await showListBackgroundPicker(
       context,
-      initialAppearance: list.appearance,
+      initialAppearance: switch (_scope) {
+        _BoardScope.assignedToMe => _assignedToMeAppearance,
+        _BoardScope.pinned => _pinnedAppearance,
+        _BoardScope.list => list.appearance,
+      },
     );
     if (appearance == null || !mounted) return;
+    if (_scope == _BoardScope.assignedToMe) {
+      setState(() => _assignedToMeAppearance = appearance);
+      return;
+    }
+    if (_scope == _BoardScope.pinned) {
+      setState(() => _pinnedAppearance = appearance);
+      return;
+    }
     await cubit.updateListAppearance(appearance);
   }
 
@@ -668,10 +679,8 @@ class _BoardPageState extends State<BoardPage>
         builder: (_) => _SettingsPage(
           authRepository: authRepository,
           themeController: widget.themeController,
-          initialViewMode: _viewMode,
           onOpenProfile: _openProfile,
           onClearLocalData: notesCubit.clearLocalData,
-          onViewModeChanged: _changeViewMode,
         ),
       ),
     );
@@ -842,12 +851,14 @@ double _boardBottomScrollPadding(BuildContext context) {
 class _NotesGrid extends StatelessWidget {
   const _NotesGrid({
     required this.notes,
+    required this.showOriginList,
     required this.buildCard,
     required this.onReorder,
     super.key,
   });
 
   final List<Note> notes;
+  final bool showOriginList;
   final NoteCardBuilder buildCard;
   final NoteReorderCallback onReorder;
 
@@ -856,50 +867,191 @@ class _NotesGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 720;
-        return GridView.builder(
-          padding: EdgeInsets.only(bottom: _boardBottomScrollPadding(context)),
-          gridDelegate: isCompact
-              ? const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  childAspectRatio: 0.86,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 8,
-                )
-              : const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 330,
-                  mainAxisExtent: 270,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
+        final spacing = isCompact ? 10.0 : 16.0;
+        // Grid cards reserve 10 px above their surface for the pin. Removing
+        // that amount here keeps the visible vertical and horizontal gaps
+        // equal while allowing the pin to share the space between cards.
+        final verticalSpacing = spacing - 10;
+        final columnCount = isCompact
+            ? 2
+            : ((constraints.maxWidth + spacing) / (280 + spacing))
+                  .floor()
+                  .clamp(2, 4);
+        final columnWidth =
+            (constraints.maxWidth - (spacing * (columnCount - 1))) /
+            columnCount;
+        final columns = List.generate(
+          columnCount,
+          (_) => <({int index, Note note, double height})>[],
+        );
+        final columnHeights = List.filled(columnCount, 0.0);
+
+        for (var index = 0; index < notes.length; index++) {
+          final note = notes[index];
+          final height = _gridNoteHeight(
+            context,
+            note,
+            columnWidth: columnWidth,
+            isCompact: isCompact,
+          );
+          var targetColumn = 0;
+          for (var column = 1; column < columnCount; column++) {
+            if (columnHeights[column] < columnHeights[targetColumn]) {
+              targetColumn = column;
+            }
+          }
+          columns[targetColumn].add((index: index, note: note, height: height));
+          columnHeights[targetColumn] += height + verticalSpacing;
+        }
+
+        return SingleChildScrollView(
+          padding: EdgeInsets.only(
+            top: 6,
+            bottom: _boardBottomScrollPadding(context),
+          ),
+          child: Row(
+            key: const ValueKey('masonry-grid-columns'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var column = 0; column < columnCount; column++) ...[
+                if (column > 0) SizedBox(width: spacing),
+                Expanded(
+                  child: Column(
+                    key: ValueKey('masonry-grid-column-$column'),
+                    children: [
+                      for (final item in columns[column]) ...[
+                        SizedBox(
+                          height: item.height,
+                          child: _NoteEntrance(
+                            key: ValueKey('note-entrance-${item.note.id}'),
+                            index: item.index,
+                            child: _DraggableGridNote(
+                              key: ValueKey('reorder-grid-${item.note.id}'),
+                              note: item.note,
+                              onDrop: (draggedId) {
+                                final reordered = [...notes];
+                                final oldIndex = reordered.indexWhere(
+                                  (note) => note.id == draggedId,
+                                );
+                                if (oldIndex == -1 || oldIndex == item.index) {
+                                  return;
+                                }
+                                final moved = reordered.removeAt(oldIndex);
+                                final targetIndex = reordered.indexWhere(
+                                  (note) => note.id == item.note.id,
+                                );
+                                reordered.insert(targetIndex, moved);
+                                onReorder(
+                                  reordered.map((note) => note.id).toList(),
+                                );
+                              },
+                              child: buildCard(
+                                item.note,
+                                PostItCardLayout.grid,
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: verticalSpacing),
+                      ],
+                    ],
+                  ),
                 ),
-          itemCount: notes.length,
-          itemBuilder: (context, index) {
-            final note = notes[index];
-            return _NoteEntrance(
-              key: ValueKey('note-entrance-${note.id}'),
-              index: index,
-              child: _DraggableGridNote(
-                key: ValueKey('reorder-grid-${note.id}'),
-                note: note,
-                onDrop: (draggedId) {
-                  final reordered = [...notes];
-                  final oldIndex = reordered.indexWhere(
-                    (item) => item.id == draggedId,
-                  );
-                  if (oldIndex == -1 || oldIndex == index) return;
-                  final moved = reordered.removeAt(oldIndex);
-                  final targetIndex = reordered.indexWhere(
-                    (item) => item.id == note.id,
-                  );
-                  reordered.insert(targetIndex, moved);
-                  onReorder(reordered.map((item) => item.id).toList());
-                },
-                child: buildCard(note, PostItCardLayout.grid),
-              ),
-            );
-          },
+              ],
+            ],
+          ),
         );
       },
     );
+  }
+
+  double _gridNoteHeight(
+    BuildContext context,
+    Note note, {
+    required double columnWidth,
+    required bool isCompact,
+  }) {
+    final textScaler = MediaQuery.textScalerOf(context);
+    final textDirection = Directionality.of(context);
+    final titlePainter = TextPainter(
+      text: TextSpan(
+        text: note.title,
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+      ),
+      textDirection: textDirection,
+      textScaler: textScaler,
+      maxLines: 2,
+    )..layout(maxWidth: (columnWidth - 80).clamp(1, columnWidth));
+    final headerHeight = titlePainter.height < 48 ? 48.0 : titlePainter.height;
+    final contentPainter = TextPainter(
+      text: TextSpan(
+        text: note.content,
+        style: Theme.of(context).textTheme.bodyLarge,
+      ),
+      textDirection: textDirection,
+      textScaler: textScaler,
+      maxLines: 7,
+    )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
+    final contentHeight = note.checklist.isNotEmpty
+        ? (note.checklist.length.clamp(1, 10) * 30) +
+              (note.checklist.length > 10 ? 22 : 0)
+        : note.content.isEmpty
+        ? 0.0
+        : contentPainter.height;
+    final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
+    final originListHeight = showOriginList && hasBody ? 35.0 : 0.0;
+    final categoryHeight = hasBody
+        ? note.category == NoteCategory.general
+              ? 6.0
+              : 40.0
+        : 0.0;
+    final reminderHeight = hasBody && note.reminderAt != null ? 24.0 : 0.0;
+    final footerHeight = note.assigneeUid != null
+        ? 28.0
+        : isCompact
+        ? 0.0
+        : 24.0;
+    if (!hasBody) {
+      final hasAssignee = note.assigneeUid != null;
+      if (!hasAssignee) {
+        final titleOnlyPainter = TextPainter(
+          text: TextSpan(
+            text: note.title,
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          textDirection: textDirection,
+          textScaler: textScaler,
+          maxLines: 2,
+        )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
+        return (36.0 + titleOnlyPainter.height)
+            .clamp(isCompact ? 84.0 : 96.0, isCompact ? 120.0 : 136.0)
+            .toDouble();
+      }
+      final desiredEmptyHeight = 36.0 + headerHeight + 28;
+      return desiredEmptyHeight
+          .clamp(isCompact ? 136.0 : 142.0, isCompact ? 150.0 : 166.0)
+          .toDouble();
+    }
+    final desiredHeight =
+        36.0 +
+        headerHeight +
+        originListHeight +
+        categoryHeight +
+        contentHeight +
+        reminderHeight +
+        (note.assigneeUid != null ? 10 : 0) +
+        footerHeight +
+        (note.checklist.isNotEmpty ? 10 : 0);
+    final minimumHeight = isCompact ? 184.0 : 205.0;
+    if (note.checklist.isNotEmpty) {
+      return desiredHeight < minimumHeight ? minimumHeight : desiredHeight;
+    }
+    final maximumHeight = (isCompact ? 320.0 : 330.0) + originListHeight;
+    return desiredHeight.clamp(minimumHeight, maximumHeight).toDouble();
   }
 }
 
@@ -1022,7 +1174,9 @@ class _NotesList extends StatelessWidget {
             child: _NoteEntrance(
               index: index,
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 8),
+                padding: EdgeInsets.only(
+                  bottom: layout == PostItCardLayout.compact ? 3 : 8,
+                ),
                 child: Align(
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
@@ -1750,16 +1904,12 @@ class _SettingsPage extends StatefulWidget {
   const _SettingsPage({
     required this.authRepository,
     required this.themeController,
-    required this.initialViewMode,
-    required this.onViewModeChanged,
     required this.onOpenProfile,
     required this.onClearLocalData,
   });
 
   final AuthRepository authRepository;
   final AppThemeController themeController;
-  final BoardViewMode initialViewMode;
-  final ValueChanged<BoardViewMode> onViewModeChanged;
   final VoidCallback onOpenProfile;
   final Future<bool> Function() onClearLocalData;
 
@@ -1768,7 +1918,6 @@ class _SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<_SettingsPage> {
-  late BoardViewMode _viewMode = widget.initialViewMode;
   late ThemeMode _themeMode = widget.themeController.themeMode;
   bool _isClearingData = false;
 
@@ -1864,52 +2013,6 @@ class _SettingsPageState extends State<_SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 26),
-                    const _SettingsSectionTitle('VISTA DEL TABLERO'),
-                    const SizedBox(height: 10),
-                    _SettingsCard(
-                      child: RadioGroup<BoardViewMode>(
-                        groupValue: _viewMode,
-                        onChanged: (value) {
-                          if (value != null) _changeViewMode(value);
-                        },
-                        child: Column(
-                          children: [
-                            _ViewModeSetting(
-                              key: const ValueKey('settings-view-grid'),
-                              icon: Icons.grid_view_rounded,
-                              title: 'Cuadrícula',
-                              value: BoardViewMode.grid,
-                              groupValue: _viewMode,
-                              onChanged: _changeViewMode,
-                            ),
-                            const Divider(height: 1, indent: 56),
-                            _ViewModeSetting(
-                              key: const ValueKey('settings-view-list'),
-                              icon: Icons.view_agenda_outlined,
-                              title: 'Lista compacta',
-                              value: BoardViewMode.list,
-                              groupValue: _viewMode,
-                              onChanged: _changeViewMode,
-                            ),
-                            const Divider(height: 1, indent: 56),
-                            _ViewModeSetting(
-                              key: const ValueKey('settings-view-large-list'),
-                              icon: Icons.view_stream_outlined,
-                              title: 'Lista grande',
-                              value: BoardViewMode.largeList,
-                              groupValue: _viewMode,
-                              onChanged: _changeViewMode,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'La vista elegida se aplica de inmediato al tablero.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 26),
                     const _SettingsSectionTitle('DATOS EN ESTE DISPOSITIVO'),
                     const SizedBox(height: 10),
                     _SettingsCard(
@@ -1991,11 +2094,6 @@ class _SettingsPageState extends State<_SettingsPage> {
         ),
       ),
     );
-  }
-
-  void _changeViewMode(BoardViewMode value) {
-    setState(() => _viewMode = value);
-    widget.onViewModeChanged(value);
   }
 
   void _changeThemeMode(ThemeMode value) {
@@ -2121,43 +2219,6 @@ class _ThemeModeSetting extends StatelessWidget {
   }
 }
 
-class _ViewModeSetting extends StatelessWidget {
-  const _ViewModeSetting({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.groupValue,
-    required this.onChanged,
-    super.key,
-  });
-
-  final IconData icon;
-  final String title;
-  final BoardViewMode value;
-  final BoardViewMode groupValue;
-  final ValueChanged<BoardViewMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = value == groupValue;
-    final colorScheme = Theme.of(context).colorScheme;
-    return ListTile(
-      leading: Icon(
-        icon,
-        color: selected ? AppTheme.accent : colorScheme.onSurface,
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-        ),
-      ),
-      trailing: Radio<BoardViewMode>(value: value),
-      onTap: () => onChanged(value),
-    );
-  }
-}
-
 class _CollaboratorsDialog extends StatefulWidget {
   const _CollaboratorsDialog({required this.initialList});
 
@@ -2186,15 +2247,68 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
           (item) => item.id == widget.initialList.id,
           orElse: () => widget.initialList,
         );
+        final colorScheme = Theme.of(context).colorScheme;
         return AlertDialog(
           key: const ValueKey('collaborators-dialog'),
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 16,
             vertical: 24,
           ),
+          backgroundColor: Color.alphaBlend(
+            AppTheme.accent.withValues(alpha: 0.1),
+            colorScheme.surfaceContainerHigh,
+          ),
+          surfaceTintColor: Colors.transparent,
+          shadowColor: Colors.black.withValues(alpha: 0.36),
+          elevation: 18,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+            side: BorderSide(
+              color: colorScheme.onSurface.withValues(alpha: 0.1),
+            ),
+          ),
           title: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(child: Text('Compartir lista')),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withValues(alpha: 0.16),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.diversity_3_rounded,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      list.canInvite
+                          ? 'Comparte esta lista'
+                          : 'Personas de la lista',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      list.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               IconButton(
                 tooltip: 'Cerrar',
                 onPressed: state.isInviting || state.isRemovingCollaborator
@@ -2211,66 +2325,116 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '“${list.name}”',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    list.canInvite
-                        ? 'Invita a otra persona. Cuando inicie sesión con ese '
-                              'correo, la lista aparecerá automáticamente.'
-                        : 'Puedes editar esta lista junto a estas personas. '
-                              'Solo su propietario puede enviar invitaciones.',
-                  ),
-                  if (list.canInvite) ...[
-                    const SizedBox(height: 22),
-                    Form(
-                      key: _formKey,
-                      child: TextFormField(
-                        key: const ValueKey('collaborator-email-field'),
-                        controller: _emailController,
-                        enabled:
-                            !state.isInviting && !state.isRemovingCollaborator,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.send,
-                        autocorrect: false,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        decoration: const InputDecoration(
-                          labelText: 'Correo del colaborador',
-                          hintText: 'persona@correo.com',
-                          prefixIcon: Icon(Icons.mail_outline_rounded),
-                        ),
-                        validator: _validateEmail,
-                        onChanged: (_) => setState(() {}),
-                        onFieldSubmitted: (_) => _sendInvitation(),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          colorScheme.primary.withValues(alpha: 0.14),
+                          AppTheme.accent.withValues(alpha: 0.08),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: colorScheme.primary.withValues(alpha: 0.12),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        key: const ValueKey('send-invitation-button'),
-                        onPressed:
-                            state.isInviting ||
-                                state.isRemovingCollaborator ||
-                                !_hasValidEmail
-                            ? null
-                            : _sendInvitation,
-                        icon: state.isInviting
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.send_rounded),
-                        label: Text(
-                          state.isInviting ? 'Enviando…' : 'Enviar invitación',
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          list.canInvite
+                              ? Icons.auto_awesome_rounded
+                              : Icons.info_outline_rounded,
+                          size: 20,
+                          color: colorScheme.primary,
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            list.canInvite
+                                ? 'Invita a otras personas. La lista aparecerá '
+                                      'cuando ingresen con ese correo.'
+                                : 'Aquí puedes ver quiénes participan. Solo la '
+                                      'persona propietaria gestiona los accesos.',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.45,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (list.canInvite) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface.withValues(alpha: 0.48),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: colorScheme.onSurface.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Form(
+                            key: _formKey,
+                            child: TextFormField(
+                              key: const ValueKey('collaborator-email-field'),
+                              controller: _emailController,
+                              enabled:
+                                  !state.isInviting &&
+                                  !state.isRemovingCollaborator,
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.send,
+                              autocorrect: false,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              decoration: const InputDecoration(
+                                labelText: 'Correo electrónico',
+                                hintText: 'nombre@correo.com',
+                                prefixIcon: Icon(Icons.alternate_email_rounded),
+                              ),
+                              validator: _validateEmail,
+                              onChanged: (_) => setState(() {}),
+                              onFieldSubmitted: (_) => _sendInvitation(),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              key: const ValueKey('send-invitation-button'),
+                              onPressed:
+                                  state.isInviting ||
+                                      state.isRemovingCollaborator ||
+                                      !_hasValidEmail
+                                  ? null
+                                  : _sendInvitation,
+                              icon: state.isInviting
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.person_add_rounded),
+                              label: Text(
+                                state.isInviting
+                                    ? 'Enviando invitación…'
+                                    : 'Invitar a esta lista',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -2288,7 +2452,10 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                   ),
                   const SizedBox(height: 8),
                   if (list.collaborators.isEmpty)
-                    const Text('La lista todavía no tiene colaboradores.')
+                    Text(
+                      'Aún no hay personas con acceso a esta lista.',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    )
                   else
                     ...list.collaborators.map(
                       (person) => ListTile(
@@ -2317,7 +2484,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                   'remove-collaborator-${person.uid}',
                                 ),
                                 tooltip:
-                                    'Quitar acceso a ${person.displayName}',
+                                    'Quitar a ${person.displayName} de la lista',
                                 onPressed:
                                     state.isRemovingCollaborator ||
                                         state.isInviting
@@ -2346,7 +2513,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                   if (list.pendingInvitations.isNotEmpty) ...[
                     const Divider(height: 28),
                     const Text(
-                      'INVITACIONES PENDIENTES',
+                      'INVITACIONES POR ACEPTAR',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
@@ -2366,7 +2533,9 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: const Text('Esperando que inicie sesión'),
+                        subtitle: const Text(
+                          'Tendrá acceso cuando inicie sesión',
+                        ),
                       ),
                     ),
                   ],
@@ -2450,12 +2619,29 @@ class _CollaboratorAvatar extends StatelessWidget {
     final initial = person.displayName.trim().isEmpty
         ? '?'
         : person.displayName.trim()[0].toUpperCase();
+    final photoUrl = person.photoUrl?.trim();
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
     return CircleAvatar(
       backgroundColor: AppTheme.accent.withValues(alpha: 0.13),
-      foregroundImage: person.photoUrl == null
-          ? null
-          : NetworkImage(person.photoUrl!),
-      child: Text(initial, style: const TextStyle(fontWeight: FontWeight.w800)),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: Text(
+              initial,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          if (hasPhoto)
+            ClipOval(
+              child: Image.network(
+                photoUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -2621,6 +2807,11 @@ class _BoardHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final hasInvitedCollaborators =
+        list?.collaborators.any(
+          (person) => person.role != ListMemberRole.owner,
+        ) ==
+        true;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2653,29 +2844,43 @@ class _BoardHeader extends StatelessWidget {
                 ),
               ),
             ),
-            if (isCompact)
-              IconButton.filledTonal(
-                key: const ValueKey('share-list-button'),
-                tooltip: 'Compartir lista',
-                onPressed: onShare,
-                icon: Icon(
-                  list?.isShared == true
-                      ? Icons.group_rounded
-                      : Icons.person_add_alt_1_rounded,
+            if (isCompact && list != null)
+              if (hasInvitedCollaborators)
+                Tooltip(
+                  message: 'Personas de la lista',
+                  child: InkWell(
+                    key: const ValueKey('share-list-button'),
+                    onTap: onShare,
+                    customBorder: const StadiumBorder(),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 8,
+                      ),
+                      child: _CollaboratorAvatarStack(
+                        collaborators: list!.collaborators,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                IconButton.filledTonal(
+                  key: const ValueKey('share-list-button'),
+                  tooltip: 'Compartir lista',
+                  onPressed: onShare,
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
                 ),
-              ),
             if (showAddButton)
               Wrap(
                 spacing: 10,
                 children: [
-                  OutlinedButton.icon(
-                    key: const ValueKey('share-list-button'),
-                    onPressed: onShare,
-                    icon: const Icon(Icons.person_add_alt_1_rounded),
-                    label: Text(
-                      list?.isShared == true ? 'Personas' : 'Compartir',
+                  if (list != null)
+                    OutlinedButton.icon(
+                      key: const ValueKey('share-list-button'),
+                      onPressed: onShare,
+                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                      label: Text(list!.isShared ? 'Personas' : 'Compartir'),
                     ),
-                  ),
                   FilledButton.icon(
                     key: const ValueKey('new-note-button'),
                     style: FilledButton.styleFrom(
@@ -2709,23 +2914,17 @@ class _BoardHeader extends StatelessWidget {
                     label: '$noteCount ${noteCount == 1 ? 'nota' : 'notas'}',
                     color: AppTheme.accent,
                   ),
-                  _BoardMetaChip(
-                    icon: Icons.groups_2_outlined,
-                    label: isCompact
-                        ? 'Tiempo real'
-                        : 'Compartido en tiempo real',
-                    color: colorScheme.onSurface,
-                  ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            _ListMenuButton(
-              onCustomizeBackground: onCustomizeBackground,
-              onRenameList: onRenameList,
-              onDeleteList: onDeleteList,
-              isSaving: isSavingListOptions,
-            ),
+            if (onCustomizeBackground != null)
+              _ListMenuButton(
+                onCustomizeBackground: onCustomizeBackground,
+                onRenameList: onRenameList,
+                onDeleteList: onDeleteList,
+                isSaving: isSavingListOptions,
+              ),
           ],
         ),
         SizedBox(height: isCompact ? 16 : 24),
@@ -2745,7 +2944,6 @@ class _BoardHeader extends StatelessWidget {
                 width: 480,
                 child: _BoardControlGroup<NoteFilter>(
                   key: const ValueKey('note-filter-selector'),
-                  label: 'FILTRAR',
                   selected: filter,
                   selectedColor: AppTheme.accent,
                   onChanged: onFilterChanged,
@@ -2773,7 +2971,6 @@ class _BoardHeader extends StatelessWidget {
                 width: 430,
                 child: _BoardControlGroup<BoardViewMode>(
                   key: const ValueKey('view-mode-selector'),
-                  label: 'VISTA',
                   selected: viewMode,
                   selectedColor: colorScheme.primary,
                   onChanged: onViewModeChanged,
@@ -2790,12 +2987,6 @@ class _BoardHeader extends StatelessWidget {
                       icon: Icons.view_list_rounded,
                       tooltip: 'Vista de lista compacta',
                     ),
-                    _BoardControlOption(
-                      value: BoardViewMode.largeList,
-                      label: 'Lista grande',
-                      icon: Icons.view_agenda_outlined,
-                      tooltip: 'Vista de lista grande',
-                    ),
                   ],
                   showIcons: true,
                 ),
@@ -2803,6 +2994,53 @@ class _BoardHeader extends StatelessWidget {
             ],
           ),
       ],
+    );
+  }
+}
+
+class _CollaboratorAvatarStack extends StatelessWidget {
+  const _CollaboratorAvatarStack({required this.collaborators});
+
+  static const _avatarSize = 28.0;
+  static const _visibleWidth = 18.0;
+  static const _maxVisibleAvatars = 3;
+
+  final List<ListCollaborator> collaborators;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleCollaborators = collaborators
+        .take(_maxVisibleAvatars)
+        .toList(growable: false);
+    final width =
+        _avatarSize + (_visibleWidth * (visibleCollaborators.length - 1));
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Semantics(
+      label: 'Personas involucradas: ${collaborators.length}',
+      child: SizedBox(
+        key: const ValueKey('collaborator-avatar-stack'),
+        width: width,
+        height: _avatarSize,
+        child: Stack(
+          children: [
+            for (final indexed in visibleCollaborators.indexed)
+              Positioned(
+                left: indexed.$1 * _visibleWidth,
+                child: Container(
+                  width: _avatarSize,
+                  height: _avatarSize,
+                  padding: const EdgeInsets.all(1.5),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    shape: BoxShape.circle,
+                  ),
+                  child: _CollaboratorAvatar(person: indexed.$2),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2980,99 +3218,57 @@ class _CompactBoardControls extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: _CompactControlSection(
-            label: 'FILTRAR',
-            child: _CompactIconSelector<NoteFilter>(
-              key: const ValueKey('compact-filter-selector'),
-              keyPrefix: 'filter-mode',
-              selected: filter,
-              selectedColor: AppTheme.accent,
-              onChanged: onFilterChanged,
-              options: const [
-                _BoardControlOption(
-                  value: NoteFilter.all,
-                  label: 'Todas',
-                  icon: Icons.dashboard_outlined,
-                ),
-                _BoardControlOption(
-                  value: NoteFilter.pending,
-                  label: 'Pend.',
-                  tooltip: 'Pendientes',
-                  icon: Icons.schedule_rounded,
-                ),
-                _BoardControlOption(
-                  value: NoteFilter.completed,
-                  label: 'Hechas',
-                  tooltip: 'Completadas',
-                  icon: Icons.check_circle_outline_rounded,
-                ),
-              ],
-            ),
+          child: _CompactIconSelector<NoteFilter>(
+            key: const ValueKey('compact-filter-selector'),
+            keyPrefix: 'filter-mode',
+            selected: filter,
+            selectedColor: AppTheme.accent,
+            onChanged: onFilterChanged,
+            options: const [
+              _BoardControlOption(
+                value: NoteFilter.all,
+                label: 'Todas',
+                icon: Icons.dashboard_outlined,
+              ),
+              _BoardControlOption(
+                value: NoteFilter.pending,
+                label: 'Pend.',
+                tooltip: 'Pendientes',
+                icon: Icons.schedule_rounded,
+              ),
+              _BoardControlOption(
+                value: NoteFilter.completed,
+                label: 'Listas',
+                tooltip: 'Completadas',
+                icon: Icons.check_circle_outline_rounded,
+              ),
+            ],
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: _CompactControlSection(
-            label: 'VISTA',
-            child: _CompactIconSelector<BoardViewMode>(
-              key: const ValueKey('compact-view-selector'),
-              keyPrefix: 'view-mode',
-              selected: viewMode,
-              selectedColor: colorScheme.primary,
-              onChanged: onViewModeChanged,
-              options: const [
-                _BoardControlOption(
-                  value: BoardViewMode.grid,
-                  label: 'Mosaico',
-                  tooltip: 'Vista en cuadrícula',
-                  icon: Icons.grid_view_rounded,
-                ),
-                _BoardControlOption(
-                  value: BoardViewMode.list,
-                  label: 'Lista',
-                  tooltip: 'Vista de lista compacta',
-                  icon: Icons.view_list_rounded,
-                ),
-                _BoardControlOption(
-                  value: BoardViewMode.largeList,
-                  label: 'Grande',
-                  tooltip: 'Vista de lista grande',
-                  icon: Icons.view_agenda_outlined,
-                ),
-              ],
-            ),
+          child: _CompactIconSelector<BoardViewMode>(
+            key: const ValueKey('compact-view-selector'),
+            keyPrefix: 'view-mode',
+            selected: viewMode,
+            selectedColor: colorScheme.primary,
+            onChanged: onViewModeChanged,
+            options: const [
+              _BoardControlOption(
+                value: BoardViewMode.grid,
+                label: 'Mosaico',
+                tooltip: 'Vista en cuadrícula',
+                icon: Icons.grid_view_rounded,
+              ),
+              _BoardControlOption(
+                value: BoardViewMode.list,
+                label: 'Lista',
+                tooltip: 'Vista de lista compacta',
+                icon: Icons.view_list_rounded,
+              ),
+            ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-class _CompactControlSection extends StatelessWidget {
-  const _CompactControlSection({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 5, bottom: 6),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.56),
-              fontSize: 9,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.1,
-            ),
-          ),
-        ),
-        child,
       ],
     );
   }
@@ -3182,7 +3378,6 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
 
 class _BoardControlGroup<T> extends StatelessWidget {
   const _BoardControlGroup({
-    required this.label,
     required this.options,
     required this.selected,
     required this.selectedColor,
@@ -3191,7 +3386,6 @@ class _BoardControlGroup<T> extends StatelessWidget {
     super.key,
   });
 
-  final String label;
   final List<_BoardControlOption<T>> options;
   final T selected;
   final Color selectedColor;
@@ -3201,55 +3395,38 @@ class _BoardControlGroup<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 5, bottom: 7),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.48),
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.25,
-            ),
-          ),
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(
+          color: colorScheme.onSurface.withValues(alpha: 0.08),
         ),
-        Container(
-          height: 48,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: colorScheme.onSurface.withValues(alpha: 0.08),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: colorScheme.shadow.withValues(alpha: 0.12),
-                blurRadius: 16,
-                offset: const Offset(0, 5),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        children: options
+            .map(
+              (option) => Expanded(
+                child: _BoardControlItem<T>(
+                  option: option,
+                  selected: option.value == selected,
+                  selectedColor: selectedColor,
+                  showIcon: showIcons,
+                  onTap: () => onChanged(option.value),
+                ),
               ),
-            ],
-          ),
-          child: Row(
-            children: options
-                .map(
-                  (option) => Expanded(
-                    child: _BoardControlItem<T>(
-                      option: option,
-                      selected: option.value == selected,
-                      selectedColor: selectedColor,
-                      showIcon: showIcons,
-                      onTap: () => onChanged(option.value),
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-      ],
+            )
+            .toList(),
+      ),
     );
   }
 }

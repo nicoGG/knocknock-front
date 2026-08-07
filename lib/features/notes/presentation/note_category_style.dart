@@ -9,6 +9,10 @@ abstract final class NoteCategoryStyle {
     NoteCategory.shopping => 'Compras',
     NoteCategory.health => 'Salud',
     NoteCategory.travel => 'Viajes',
+    NoteCategory.study => 'Estudio',
+    NoteCategory.finance => 'Finanzas',
+    NoteCategory.home => 'Hogar',
+    NoteCategory.ideas => 'Ideas',
   };
 
   static IconData icon(NoteCategory category) => switch (category) {
@@ -18,6 +22,10 @@ abstract final class NoteCategoryStyle {
     NoteCategory.shopping => Icons.shopping_bag_outlined,
     NoteCategory.health => Icons.spa_outlined,
     NoteCategory.travel => Icons.landscape_outlined,
+    NoteCategory.study => Icons.school_outlined,
+    NoteCategory.finance => Icons.account_balance_wallet_outlined,
+    NoteCategory.home => Icons.home_outlined,
+    NoteCategory.ideas => Icons.lightbulb_outline_rounded,
   };
 
   static String? assetPath(NoteCategory category) => switch (category) {
@@ -27,6 +35,10 @@ abstract final class NoteCategoryStyle {
     NoteCategory.shopping => 'assets/note_backgrounds/shopping.jpg',
     NoteCategory.health => 'assets/note_backgrounds/health.jpg',
     NoteCategory.travel => 'assets/note_backgrounds/travel.jpg',
+    NoteCategory.study => null,
+    NoteCategory.finance => null,
+    NoteCategory.home => null,
+    NoteCategory.ideas => null,
   };
 
   static Color baseColor(NoteCategory category) => switch (category) {
@@ -36,6 +48,10 @@ abstract final class NoteCategoryStyle {
     NoteCategory.shopping => const Color(0xFF9A594F),
     NoteCategory.health => const Color(0xFF536E68),
     NoteCategory.travel => const Color(0xFF654D7B),
+    NoteCategory.study => const Color(0xFF385D78),
+    NoteCategory.finance => const Color(0xFF426B55),
+    NoteCategory.home => const Color(0xFF8A6049),
+    NoteCategory.ideas => const Color(0xFF84662E),
   };
 
   static Color foregroundColor(NoteCategory category) =>
