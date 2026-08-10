@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -12,10 +14,30 @@ class BoardLoadingState extends StatefulWidget {
 
 class _BoardLoadingStateState extends State<BoardLoadingState>
     with SingleTickerProviderStateMixin {
+  late final List<double> _compactNoteHeights;
+  late final List<double> _wideNoteHeights;
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1450),
   );
+
+  @override
+  void initState() {
+    super.initState();
+    final random = Random();
+    _compactNoteHeights = _randomHeights(
+      random,
+      count: 4,
+      minHeight: 208,
+      maxHeight: 252,
+    );
+    _wideNoteHeights = _randomHeights(
+      random,
+      count: 6,
+      minHeight: 224,
+      maxHeight: 274,
+    );
+  }
 
   @override
   void didChangeDependencies() {
@@ -51,26 +73,61 @@ class _BoardLoadingStateState extends State<BoardLoadingState>
                 builder: (context, constraints) {
                   final isCompact = constraints.maxWidth < 720;
                   final itemCount = isCompact ? 4 : 6;
-                  return GridView.builder(
+                  final spacing = isCompact ? 10.0 : 16.0;
+                  final verticalSpacing = spacing - 10;
+                  final columnCount = isCompact
+                      ? 2
+                      : ((constraints.maxWidth + spacing) / (280 + spacing))
+                            .floor()
+                            .clamp(2, 4);
+                  final columns = List.generate(
+                    columnCount,
+                    (_) => <({int index, double height})>[],
+                  );
+                  final columnHeights = List.filled(columnCount, 0.0);
+
+                  for (var index = 0; index < itemCount; index++) {
+                    final height = _loadingNoteHeight(index, isCompact);
+                    var targetColumn = 0;
+                    for (var column = 1; column < columnCount; column++) {
+                      if (columnHeights[column] < columnHeights[targetColumn]) {
+                        targetColumn = column;
+                      }
+                    }
+                    columns[targetColumn].add((index: index, height: height));
+                    columnHeights[targetColumn] += height + verticalSpacing;
+                  }
+
+                  return SingleChildScrollView(
                     physics: const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 92),
-                    gridDelegate: isCompact
-                        ? const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            childAspectRatio: 0.86,
-                            crossAxisSpacing: 14,
-                            mainAxisSpacing: 14,
-                          )
-                        : const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 330,
-                            mainAxisExtent: 270,
-                            crossAxisSpacing: 22,
-                            mainAxisSpacing: 22,
+                    padding: const EdgeInsets.only(top: 6, bottom: 92),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (
+                          var column = 0;
+                          column < columnCount;
+                          column++
+                        ) ...[
+                          if (column > 0) SizedBox(width: spacing),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                for (final item in columns[column]) ...[
+                                  SizedBox(
+                                    height: item.height,
+                                    child: _LoadingPostIt(
+                                      index: item.index,
+                                      progress: _controller.value,
+                                    ),
+                                  ),
+                                  SizedBox(height: verticalSpacing),
+                                ],
+                              ],
+                            ),
                           ),
-                    itemCount: itemCount,
-                    itemBuilder: (context, index) => _LoadingPostIt(
-                      index: index,
-                      progress: _controller.value,
+                        ],
+                      ],
                     ),
                   );
                 },
@@ -91,6 +148,24 @@ class _BoardLoadingStateState extends State<BoardLoadingState>
         ),
       ),
     );
+  }
+
+  double _loadingNoteHeight(int index, bool isCompact) {
+    final heights = isCompact ? _compactNoteHeights : _wideNoteHeights;
+    return heights[index % heights.length];
+  }
+
+  List<double> _randomHeights(
+    Random random, {
+    required int count,
+    required int minHeight,
+    required int maxHeight,
+  }) {
+    final candidates = [
+      for (var height = minHeight; height <= maxHeight; height += 2)
+        height.toDouble(),
+    ]..shuffle(random);
+    return candidates.take(count).toList(growable: false);
   }
 }
 
@@ -311,7 +386,9 @@ class _LoadingLabel extends StatelessWidget {
               scale: 0.88 + (pulse * 0.12),
               child: Icon(
                 Icons.auto_awesome_rounded,
-                color: AppTheme.accent.withValues(alpha: 0.72 + (pulse * 0.28)),
+                color: colorScheme.primary.withValues(
+                  alpha: 0.72 + (pulse * 0.28),
+                ),
                 size: 18,
               ),
             ),

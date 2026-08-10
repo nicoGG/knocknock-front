@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
@@ -7,21 +9,25 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
+import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 
 Future<NoteDraft?> showNoteEditor(
   BuildContext context, {
   Note? note,
   String defaultAuthorName = 'Invitado',
+  bool showAuthorField = true,
   List<ListCollaborator> assignees = const [],
 }) {
   return showModalBottomSheet<NoteDraft>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    barrierColor: Colors.black.withValues(alpha: 0.38),
     builder: (_) => NoteEditorSheet(
       note: note,
       defaultAuthorName: defaultAuthorName,
+      showAuthorField: showAuthorField,
       assignees: assignees,
     ),
   );
@@ -30,6 +36,7 @@ Future<NoteDraft?> showNoteEditor(
 class NoteEditorSheet extends StatefulWidget {
   const NoteEditorSheet({
     required this.defaultAuthorName,
+    this.showAuthorField = true,
     this.assignees = const [],
     this.note,
     super.key,
@@ -37,6 +44,7 @@ class NoteEditorSheet extends StatefulWidget {
 
   final Note? note;
   final String defaultAuthorName;
+  final bool showAuthorField;
   final List<ListCollaborator> assignees;
 
   @override
@@ -97,13 +105,12 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: EdgeInsets.only(top: MediaQuery.sizeOf(context).height * 0.08),
-      padding: EdgeInsets.fromLTRB(24, 14, 24, 24 + bottomInset),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final glassInputColor = colorScheme.surface.withValues(
+      alpha: isDark ? 0.3 : 0.42,
+    );
+    return _GlassNoteEditorSurface(
+      bottomInset: bottomInset,
       child: SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -136,7 +143,8 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   maxLength: 80,
                   textCapitalization: TextCapitalization.sentences,
                   inputFormatters: const [InitialUppercaseTextFormatter()],
-                  decoration: const InputDecoration(
+                  decoration: _glassInputDecoration(
+                    context,
                     labelText: 'Título',
                     hintText: 'Ej. Comprar entradas',
                   ),
@@ -158,27 +166,33 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   initialPlainText: _content.plainText,
                   initialDeltaJson: _content.deltaJson,
                   onChanged: (content) => _content = content,
+                  backgroundColor: glassInputColor,
                 ),
                 const SizedBox(height: 4),
-                TextFormField(
-                  controller: _authorController,
-                  maxLength: 50,
-                  decoration: const InputDecoration(
-                    labelText: 'Tu nombre',
-                    prefixIcon: Icon(Icons.person_outline_rounded),
+                if (widget.showAuthorField) ...[
+                  TextFormField(
+                    key: const ValueKey('note-author-field'),
+                    controller: _authorController,
+                    maxLength: 50,
+                    decoration: _glassInputDecoration(
+                      context,
+                      labelText: 'Tu nombre',
+                      prefixIcon: const Icon(Icons.person_outline_rounded),
+                    ),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? 'Indica quién crea la nota'
+                        : null,
                   ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Indica quién crea la nota'
-                      : null,
-                ),
-                const SizedBox(height: 10),
+                  const SizedBox(height: 10),
+                ],
                 DropdownButtonFormField<String>(
                   key: const ValueKey('note-assignee-field'),
                   initialValue: _assigneeUid ?? '',
                   isExpanded: true,
-                  decoration: const InputDecoration(
+                  decoration: _glassInputDecoration(
+                    context,
                     labelText: 'Responsable',
-                    prefixIcon: Icon(Icons.assignment_ind_outlined),
+                    prefixIcon: const Icon(Icons.assignment_ind_outlined),
                     helperText: 'Aparecerá en la tarjeta de esta tarea.',
                   ),
                   items: [
@@ -262,7 +276,9 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                           onTap: () => setState(() => _color = color),
                           customBorder: const CircleBorder(),
                           child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 160),
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 160),
                             width: 42,
                             height: 42,
                             decoration: BoxDecoration(
@@ -291,17 +307,9 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   onChanged: (items) => setState(() => _checklist = items),
                 ),
                 const SizedBox(height: 18),
-                OutlinedButton.icon(
+                _GlassReminderButton(
+                  reminderAt: _reminderAt,
                   onPressed: _selectReminder,
-                  icon: const Icon(Icons.notifications_none_rounded),
-                  label: Text(
-                    _reminderAt == null
-                        ? 'Agregar recordatorio'
-                        : DateFormat(
-                            "EEE d MMM · HH:mm",
-                            'es',
-                          ).format(_reminderAt!),
-                  ),
                 ),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -328,29 +336,45 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     );
   }
 
+  InputDecoration _glassInputDecoration(
+    BuildContext context, {
+    required String labelText,
+    String? hintText,
+    String? helperText,
+    Widget? prefixIcon,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(18);
+    final restingBorder = OutlineInputBorder(
+      borderRadius: borderRadius,
+      borderSide: BorderSide(
+        color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.42),
+      ),
+    );
+    return InputDecoration(
+      labelText: labelText,
+      hintText: hintText,
+      helperText: helperText,
+      prefixIcon: prefixIcon,
+      filled: true,
+      fillColor: colorScheme.surface.withValues(alpha: isDark ? 0.3 : 0.42),
+      border: restingBorder,
+      enabledBorder: restingBorder,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: borderRadius,
+        borderSide: BorderSide(color: colorScheme.primary, width: 2),
+      ),
+    );
+  }
+
   Future<void> _selectReminder() async {
-    final now = DateTime.now();
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _reminderAt ?? now,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: now.add(const Duration(days: 730)),
+    final reminder = await showReminderPicker(
+      context,
+      currentReminder: _reminderAt,
     );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_reminderAt ?? now),
-    );
-    if (time == null) return;
-    setState(() {
-      _reminderAt = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        time.hour,
-        time.minute,
-      );
-    });
+    if (reminder == null || !mounted) return;
+    setState(() => _reminderAt = reminder);
   }
 
   void _submit() {
@@ -376,9 +400,208 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
           trimText: true,
           removeEmpty: true,
         ),
-        authorName: _authorController.text.trim(),
+        authorName: _authorController.text.trim().isEmpty
+            ? widget.defaultAuthorName.trim()
+            : _authorController.text.trim(),
         assigneeUid: _assigneeUid,
         reminderAt: _reminderAt,
+      ),
+    );
+  }
+}
+
+class _GlassNoteEditorSurface extends StatelessWidget {
+  const _GlassNoteEditorSurface({
+    required this.bottomInset,
+    required this.child,
+  });
+
+  final double bottomInset;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const radius = BorderRadius.vertical(top: Radius.circular(32));
+    return Padding(
+      padding: EdgeInsets.only(top: MediaQuery.sizeOf(context).height * 0.08),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.shadow.withValues(alpha: isDark ? 0.48 : 0.3),
+              blurRadius: 40,
+              offset: const Offset(0, -10),
+            ),
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.1),
+              blurRadius: 28,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            key: const ValueKey('note-editor-glass-blur'),
+            filter: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+            child: DecoratedBox(
+              key: const ValueKey('note-editor-glass-surface'),
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.52),
+                ),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: isDark ? 0.09 : 0.36),
+                    colorScheme.surface.withValues(alpha: isDark ? 0.72 : 0.66),
+                  ],
+                ),
+              ),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(24, 14, 24, 24 + bottomInset),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassReminderButton extends StatelessWidget {
+  const _GlassReminderButton({
+    required this.reminderAt,
+    required this.onPressed,
+  });
+
+  final DateTime? reminderAt;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(20);
+    final title = reminderAt == null
+        ? 'Agregar recordatorio'
+        : DateFormat("EEE d MMM · HH:mm", 'es').format(reminderAt!);
+
+    return Semantics(
+      button: true,
+      label: title,
+      child: SizedBox(
+        key: const ValueKey('note-reminder-button'),
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.primary.withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 7),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              key: const ValueKey('note-reminder-glass-blur'),
+              filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Material(
+                color: Colors.transparent,
+                child: Ink(
+                  key: const ValueKey('note-reminder-glass-surface'),
+                  decoration: BoxDecoration(
+                    borderRadius: borderRadius,
+                    border: Border.all(
+                      color: Colors.white.withValues(
+                        alpha: isDark ? 0.16 : 0.44,
+                      ),
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        colorScheme.primary.withValues(
+                          alpha: isDark ? 0.22 : 0.18,
+                        ),
+                        colorScheme.surface.withValues(
+                          alpha: isDark ? 0.32 : 0.4,
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: InkWell(
+                    onTap: onPressed,
+                    borderRadius: borderRadius,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 13,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary.withValues(
+                                alpha: 0.16,
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Icon(
+                              Icons.notifications_none_rounded,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  reminderAt == null
+                                      ? 'Opciones rápidas o fecha exacta'
+                                      : 'Toca para cambiarlo',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.62,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

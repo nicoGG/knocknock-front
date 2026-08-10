@@ -78,6 +78,27 @@ class LocalNotesRepository
   }
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) async {
+    await _ensureLoaded();
+    final existingIds = _lists!.map((list) => list.id).toSet();
+    if (orderedIds.length != _lists!.length ||
+        orderedIds.toSet().length != orderedIds.length ||
+        !existingIds.containsAll(orderedIds)) {
+      throw const NotesPersistenceFailure();
+    }
+    final previous = List<NoteList>.of(_lists!);
+    final listsById = {for (final list in _lists!) list.id: list};
+    _lists = orderedIds.map((id) => listsById[id]!).toList();
+    try {
+      await _persist();
+    } catch (_) {
+      _lists = previous;
+      rethrow;
+    }
+    return List.unmodifiable(_lists!);
+  }
+
+  @override
   Future<void> deleteList(String listId) async {
     await _ensureLoaded();
     final previousLists = List<NoteList>.of(_lists!);
@@ -137,6 +158,14 @@ class LocalNotesRepository
     await _ensureLoaded();
     final notes = _notes!.where((note) => note.isPinned).toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return List.unmodifiable(notes);
+  }
+
+  @override
+  Future<List<Note>> fetchReminderNotes() async {
+    await _ensureLoaded();
+    final notes = _notes!.where((note) => note.reminderAt != null).toList()
+      ..sort(_compareReminderNotes);
     return List.unmodifiable(notes);
   }
 
@@ -204,6 +233,7 @@ class LocalNotesRepository
                   ),
                 )
                 .toList(),
+      reactions: existing.reactions,
       authorName: changes['authorName'] as String? ?? existing.authorName,
       assigneeUid: changes.containsKey('assigneeUid')
           ? changes['assigneeUid'] as String?
@@ -224,6 +254,52 @@ class LocalNotesRepository
     _notes![index] = note;
     await _persist();
     return note;
+  }
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    await _ensureLoaded();
+    if (!supportedNoteReactionEmojis.contains(emoji)) {
+      throw const NotesPersistenceFailure();
+    }
+    final index = _notes!.indexWhere((note) => note.id == id);
+    if (index == -1) throw const NotesPersistenceFailure();
+
+    final existing = _notes![index];
+    final reactions = [...existing.reactions];
+    final reactionIndex = reactions.indexWhere(
+      (reaction) => reaction.emoji == emoji,
+    );
+    final users = reactionIndex == -1
+        ? <String>{}
+        : reactions[reactionIndex].userUids.toSet();
+    if (active) {
+      users.add(localNoteReactionUserId);
+    } else {
+      users.remove(localNoteReactionUserId);
+    }
+    if (users.isEmpty) {
+      if (reactionIndex != -1) reactions.removeAt(reactionIndex);
+    } else {
+      final reaction = NoteReaction(emoji: emoji, userUids: users.toList());
+      if (reactionIndex == -1) {
+        reactions.add(reaction);
+      } else {
+        reactions[reactionIndex] = reaction;
+      }
+    }
+    reactions.sort(
+      (a, b) => supportedNoteReactionEmojis
+          .indexOf(a.emoji)
+          .compareTo(supportedNoteReactionEmojis.indexOf(b.emoji)),
+    );
+    final updated = existing.copyWith(
+      reactions: reactions,
+      updatedAt: DateTime.now(),
+    );
+    _notes![index] = updated;
+    await _persist();
+    return updated;
   }
 
   @override
@@ -347,4 +423,9 @@ class LocalNotesRepository
   void dispose() {
     unawaited(_events.close());
   }
+}
+
+int _compareReminderNotes(Note a, Note b) {
+  final byReminder = a.reminderAt!.compareTo(b.reminderAt!);
+  return byReminder != 0 ? byReminder : b.updatedAt.compareTo(a.updatedAt);
 }

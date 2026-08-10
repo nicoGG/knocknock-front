@@ -40,6 +40,10 @@ class RealtimeConnectionChanged extends NotesRealtimeEvent {
   final bool isConnected;
 }
 
+class RealtimeConnectionAttemptStarted extends NotesRealtimeEvent {
+  const RealtimeConnectionAttemptStarted();
+}
+
 class NotesSourceChanged extends NotesRealtimeEvent {
   const NotesSourceChanged();
 }
@@ -189,6 +193,8 @@ abstract interface class NotesRepository {
 
   Future<NoteList> updateList(String listId, String name);
 
+  Future<List<NoteList>> reorderLists(List<String> orderedIds);
+
   Future<void> deleteList(String listId);
 
   Future<NoteList> inviteCollaborator(String listId, String email);
@@ -204,9 +210,13 @@ abstract interface class NotesRepository {
 
   Future<List<Note>> fetchPinnedNotes();
 
+  Future<List<Note>> fetchReminderNotes();
+
   Future<Note> createNote(String boardId, NoteDraft draft);
 
   Future<Note> updateNote(String id, Map<String, dynamic> changes);
+
+  Future<Note> setNoteReaction(String id, String emoji, bool active);
 
   Future<List<Note>> reorderNotes(String boardId, List<String> orderedIds);
 

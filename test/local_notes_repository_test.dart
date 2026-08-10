@@ -151,6 +151,22 @@ void main() {
     expect(reopenedList.appearance, appearance);
   });
 
+  test('persists the custom order of guest lists', () async {
+    final repository = LocalNotesRepository();
+    final home = (await repository.fetchLists()).single;
+    final work = await repository.createList('Trabajo');
+
+    await repository.reorderLists([work.id, home.id]);
+    repository.dispose();
+
+    final reopened = LocalNotesRepository();
+    expect((await reopened.fetchLists()).map((list) => list.id), [
+      work.id,
+      home.id,
+    ]);
+    reopened.dispose();
+  });
+
   test('persists pinned notes and their manual order', () async {
     final repository = LocalNotesRepository();
     final first = await repository.createNote(
@@ -182,6 +198,83 @@ void main() {
     expect(notes.first.isPinned, isTrue);
     expect(pinnedNotes.map((note) => note.id), [first.id]);
     expect(notes.map((note) => note.sortOrder), [0, 1]);
+    reopened.dispose();
+  });
+
+  test('lists notes with reminders ordered by reminder date', () async {
+    final repository = LocalNotesRepository();
+    final later = await repository.createNote(
+      'home',
+      NoteDraft(
+        title: 'Más tarde',
+        content: '',
+        color: NoteColor.yellow,
+        authorName: 'Invitado',
+        reminderAt: DateTime(2026, 8, 20, 9),
+      ),
+    );
+    final sooner = await repository.createNote(
+      'home',
+      NoteDraft(
+        title: 'Primero',
+        content: '',
+        color: NoteColor.blue,
+        authorName: 'Invitado',
+        reminderAt: DateTime(2026, 8, 12, 9),
+      ),
+    );
+    await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Sin recordatorio',
+        content: '',
+        color: NoteColor.green,
+        authorName: 'Invitado',
+      ),
+    );
+
+    final reminders = await repository.fetchReminderNotes();
+
+    expect(reminders.map((note) => note.id), [sooner.id, later.id]);
+    repository.dispose();
+  });
+
+  test('persists idempotent emoji reactions for guest notes', () async {
+    final repository = LocalNotesRepository();
+    final note = await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Celebrar avance',
+        content: '',
+        color: NoteColor.yellow,
+        authorName: 'Invitado',
+      ),
+    );
+
+    await repository.setNoteReaction(note.id, '🎉', true);
+    await repository.setNoteReaction(note.id, '🎉', true);
+    await repository.setNoteReaction(note.id, '👍', true);
+    await repository.setNoteReaction(note.id, '🔥', true);
+    repository.dispose();
+
+    final reopened = LocalNotesRepository();
+    var stored = (await reopened.fetchNotes('home')).single;
+    expect(stored.reactions.map((reaction) => reaction.emoji), [
+      '👍',
+      '🎉',
+      '🔥',
+    ]);
+    expect(stored.reactions.every((reaction) => reaction.count == 1), isTrue);
+    expect(
+      stored.reactions.every(
+        (reaction) => reaction.isSelectedBy(localNoteReactionUserId),
+      ),
+      isTrue,
+    );
+
+    await reopened.setNoteReaction(note.id, '🎉', false);
+    stored = (await reopened.fetchNotes('home')).single;
+    expect(stored.reactions.map((reaction) => reaction.emoji), ['👍', '🔥']);
     reopened.dispose();
   });
 }

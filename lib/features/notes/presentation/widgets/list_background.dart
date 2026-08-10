@@ -10,11 +10,13 @@ class ListBoardBackground extends StatelessWidget {
   const ListBoardBackground({
     required this.appearance,
     required this.child,
+    this.useThemeBackground = false,
     super.key,
   });
 
   final ListAppearance appearance;
   final Widget child;
+  final bool useThemeBackground;
 
   @override
   Widget build(BuildContext context) {
@@ -26,21 +28,104 @@ class ListBoardBackground extends StatelessWidget {
         AnimatedSwitcher(
           duration: reduceMotion
               ? Duration.zero
-              : const Duration(milliseconds: 520),
+              : const Duration(milliseconds: 650),
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) =>
+              _BlurredBackgroundTransition(animation: animation, child: child),
           layoutBuilder: (currentChild, previousChildren) => Stack(
             fit: StackFit.expand,
             children: [...previousChildren, ?currentChild],
           ),
-          child: _BackgroundLayer(
-            key: ValueKey((appearance, isDark)),
-            appearance: appearance,
-            isDark: isDark,
-          ),
+          child: useThemeBackground
+              ? _ThemeBackgroundLayer(
+                  key: ValueKey((
+                    Theme.of(context).colorScheme.primary,
+                    isDark,
+                  )),
+                  isDark: isDark,
+                )
+              : _BackgroundLayer(
+                  key: ValueKey((appearance, isDark)),
+                  appearance: appearance,
+                  isDark: isDark,
+                ),
         ),
         child,
       ],
+    );
+  }
+}
+
+class _ThemeBackgroundLayer extends StatelessWidget {
+  const _ThemeBackgroundLayer({required this.isDark, super.key});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surface = colorScheme.surface;
+    return DecoratedBox(
+      key: const ValueKey('loading-theme-background'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.alphaBlend(
+              colorScheme.primary.withValues(alpha: isDark ? 0.24 : 0.12),
+              surface,
+            ),
+            Color.alphaBlend(
+              colorScheme.secondary.withValues(alpha: isDark ? 0.14 : 0.07),
+              surface,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BlurredBackgroundTransition extends StatelessWidget {
+  const _BlurredBackgroundTransition({
+    required this.animation,
+    required this.child,
+  });
+
+  static const _maximumBlur = 14.0;
+  static const _maximumScale = 1.018;
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: animation,
+      child: AnimatedBuilder(
+        animation: animation,
+        child: child,
+        builder: (context, child) {
+          final progress = animation.value.clamp(0.0, 1.0).toDouble();
+          final blur = _maximumBlur * (1 - progress);
+          final scale = 1 + ((_maximumScale - 1) * (1 - progress));
+          return Transform.scale(
+            scale: scale,
+            child: ImageFiltered(
+              key: const ValueKey('background-transition-blur'),
+              enabled: blur > 0.01,
+              imageFilter: ImageFilter.blur(
+                sigmaX: blur,
+                sigmaY: blur,
+                tileMode: TileMode.clamp,
+              ),
+              child: child,
+            ),
+          );
+        },
+      ),
     );
   }
 }

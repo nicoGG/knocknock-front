@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -6,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
-import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
@@ -22,17 +22,42 @@ import 'package:nocknock/features/notes/presentation/widgets/board_loading_state
 import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note_fab.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_preview_dialog.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:nocknock/features/notifications/presentation/notifications_page.dart';
+import 'package:nocknock/features/notifications/presentation/widgets/notification_bell_button.dart';
+import 'package:nocknock/features/settings/presentation/settings_page.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 enum NoteFilter { all, pending, completed }
 
 enum _ListMenuAction { background, rename, delete }
 
-enum _BoardScope { list, assignedToMe, pinned }
+enum _BoardScope { list, assignedToMe, pinned, withReminder }
+
+void _playBoardTapSound() {
+  unawaited(_playSystemClick());
+}
+
+void _playBoardLongPressSound() {
+  unawaited(_playBoardLongPressPattern());
+}
+
+Future<void> _playBoardLongPressPattern() async {
+  await _playSystemClick();
+  await Future<void>.delayed(const Duration(milliseconds: 72));
+  await _playSystemClick();
+}
+
+Future<void> _playSystemClick() async {
+  try {
+    await SystemSound.play(SystemSoundType.click);
+  } catch (_) {
+    // Sound feedback is best-effort and must never block an interaction.
+  }
+}
 
 class BoardPage extends StatefulWidget {
   const BoardPage({
@@ -57,6 +82,7 @@ class _BoardPageState extends State<BoardPage>
   late BoardViewMode _viewMode = widget.viewModeController.viewMode;
   ListAppearance _assignedToMeAppearance = const ListAppearance();
   ListAppearance _pinnedAppearance = const ListAppearance();
+  ListAppearance _withReminderAppearance = const ListAppearance();
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
@@ -132,20 +158,26 @@ class _BoardPageState extends State<BoardPage>
       builder: (context, state) {
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
-        final scopedNotes = _scope == _BoardScope.pinned
-            ? state.pinnedNotes
-            : state.notes;
+        final scopedNotes = switch (_scope) {
+          _BoardScope.pinned => state.pinnedNotes,
+          _BoardScope.withReminder => state.reminderNotes,
+          _BoardScope.list || _BoardScope.assignedToMe => state.notes,
+        };
         final scopeNotes = _scope == _BoardScope.assignedToMe
             ? _assignedToCurrentUser(scopedNotes)
             : scopedNotes;
         final notes = _filtered(scopeNotes);
         final isPinnedScope = _scope == _BoardScope.pinned;
+        final isWithReminderScope = _scope == _BoardScope.withReminder;
+        final isAggregateScope = isPinnedScope || isWithReminderScope;
         final isListScope = _scope == _BoardScope.list;
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
           appBar: _AppBar(
             isConnected: state.isRealtimeConnected,
+            isConnecting: state.isRealtimeConnecting,
+            isEncrypted: (state.selectedList?.encryption.version ?? 0) > 0,
             onOpenProfile: _openProfile,
             notificationsController: widget.notificationsController,
             onOpenNotifications: _openNotifications,
@@ -156,32 +188,43 @@ class _BoardPageState extends State<BoardPage>
             selectedListId: state.selectedListId,
             assignedToMeSelected: _scope == _BoardScope.assignedToMe,
             pinnedSelected: isPinnedScope,
+            withReminderSelected: isWithReminderScope,
             isSavingList: state.isSavingList,
             onSelectList: _selectList,
             onShowAssignedToMe: _openAssignedToMe,
             onShowPinned: _openPinned,
+            onShowWithReminder: _openWithReminder,
+            onReorderLists: _openListReorder,
             onCreateList: _createList,
             onOpenProfile: _openProfile,
             onOpenSettings: _openSettings,
           ),
-          floatingActionButton: isCompact && !isPinnedScope
+          floatingActionButton: isCompact && !isAggregateScope
               ? ScaleTransition(
                   scale: _fabScale,
                   child: CollapsingNewNoteFab(
                     key: const ValueKey('new-note-fab'),
                     scrollProgress: _appBarScrollProgress,
-                    onPressed: state.isSaving ? null : () => _openEditor(),
+                    onPressed: state.isSaving ? null : _openNewNoteEditor,
                     backgroundColor: colorScheme.primary,
                     foregroundColor: colorScheme.onPrimary,
                   ),
                 )
               : null,
           body: ListBoardBackground(
+            useThemeBackground:
+                (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
+                (_scope == _BoardScope.withReminder &&
+                    state.isLoadingReminderNotes) ||
+                state.status == NotesStatus.loading ||
+                state.status == NotesStatus.initial,
             appearance: isListScope
                 ? state.selectedList?.appearance ?? const ListAppearance()
                 : _scope == _BoardScope.assignedToMe
                 ? _assignedToMeAppearance
-                : _pinnedAppearance,
+                : _scope == _BoardScope.pinned
+                ? _pinnedAppearance
+                : _withReminderAppearance,
             child: _BoardContentFade(
               topInset: MediaQuery.paddingOf(context).top,
               scrollProgress: _appBarScrollProgress,
@@ -223,18 +266,19 @@ class _BoardPageState extends State<BoardPage>
                                       state.selectedList?.name ?? 'Mis notas',
                                     _BoardScope.assignedToMe => 'Asignado a mí',
                                     _BoardScope.pinned => 'Ancladas',
+                                    _BoardScope.withReminder =>
+                                      'Con recordatorio',
                                   },
                                   list: isListScope ? state.selectedList : null,
                                   noteCount: scopeNotes.length,
                                   filter: _filter,
                                   viewMode: _viewMode,
-                                  onFilterChanged: (value) =>
-                                      setState(() => _filter = value),
+                                  onFilterChanged: _changeFilter,
                                   onViewModeChanged: _changeViewMode,
-                                  onAdd: state.isSaving || isPinnedScope
+                                  onAdd: state.isSaving || isAggregateScope
                                       ? null
-                                      : () => _openEditor(),
-                                  onShare: state.isInviting || isPinnedScope
+                                      : _openNewNoteEditor,
+                                  onShare: state.isInviting || isAggregateScope
                                       ? null
                                       : () => _openCollaborators(
                                           state.selectedList,
@@ -260,7 +304,8 @@ class _BoardPageState extends State<BoardPage>
                                   isSavingListOptions:
                                       state.isSavingAppearance ||
                                       state.isSavingList,
-                                  showAddButton: !isCompact && !isPinnedScope,
+                                  showAddButton:
+                                      !isCompact && !isAggregateScope,
                                   isCompact: isCompact,
                                 ),
                               ),
@@ -291,6 +336,7 @@ class _BoardPageState extends State<BoardPage>
 
   Widget _content(NotesState state, List<Note> notes) {
     if ((_scope == _BoardScope.pinned && state.isLoadingPinned) ||
+        (_scope == _BoardScope.withReminder && state.isLoadingReminderNotes) ||
         state.status == NotesStatus.loading ||
         state.status == NotesStatus.initial) {
       return const BoardLoadingState();
@@ -307,9 +353,12 @@ class _BoardPageState extends State<BoardPage>
     if (notes.isEmpty) {
       final isUnfiltered = _filter == NoteFilter.all;
       return _MessageState(
-        icon: _scope == _BoardScope.pinned
-            ? Icons.push_pin_outlined
-            : Icons.sticky_note_2_outlined,
+        icon: switch (_scope) {
+          _BoardScope.pinned => Icons.push_pin_outlined,
+          _BoardScope.withReminder => Icons.alarm_outlined,
+          _BoardScope.list ||
+          _BoardScope.assignedToMe => Icons.sticky_note_2_outlined,
+        },
         title: switch (_scope) {
           _BoardScope.assignedToMe =>
             isUnfiltered
@@ -319,6 +368,10 @@ class _BoardPageState extends State<BoardPage>
             isUnfiltered
                 ? 'Todavía no tienes notas ancladas'
                 : 'No hay notas ancladas en este filtro',
+          _BoardScope.withReminder =>
+            isUnfiltered
+                ? 'Todavía no tienes notas con recordatorio'
+                : 'No hay notas con recordatorio en este filtro',
           _BoardScope.list =>
             isUnfiltered
                 ? 'Tu lista está lista'
@@ -329,6 +382,8 @@ class _BoardPageState extends State<BoardPage>
             'Cuando te asignen una nota, aparecerá aquí.',
           _BoardScope.pinned =>
             'Ancla una nota en cualquier lista y aparecerá aquí.',
+          _BoardScope.withReminder =>
+            'Agrega un recordatorio a una nota y aparecerá aquí.',
           _BoardScope.list =>
             isUnfiltered
                 ? 'Crea una nota y empieza a organizar lo que importa.'
@@ -338,7 +393,7 @@ class _BoardPageState extends State<BoardPage>
             ? 'Crear primera nota'
             : null,
         onAction: _scope == _BoardScope.list && isUnfiltered
-            ? _openEditor
+            ? _openNewNoteEditor
             : null,
       );
     }
@@ -361,8 +416,11 @@ class _BoardPageState extends State<BoardPage>
           key: const ValueKey('notes-grid'),
           notes: notes,
           groupCompleted: _filter == NoteFilter.all,
-          showOriginList: _scope == _BoardScope.pinned,
+          showOriginList:
+              _scope == _BoardScope.pinned ||
+              _scope == _BoardScope.withReminder,
           buildCard: _buildCard,
+          onPreview: _openNotePreview,
           onReorder: _reorderNotes,
         ),
         BoardViewMode.list => _NotesList(
@@ -373,6 +431,7 @@ class _BoardPageState extends State<BoardPage>
           itemHeight: 55,
           maxWidth: 980,
           buildCard: _buildCard,
+          onPreview: _openNotePreview,
           onReorder: _reorderNotes,
         ),
       },
@@ -424,7 +483,8 @@ class _BoardPageState extends State<BoardPage>
       builder: (context, displayedNote, onToggle) => PostItCard(
         note: displayedNote,
         layout: layout,
-        originListName: _scope == _BoardScope.pinned
+        originListName:
+            _scope == _BoardScope.pinned || _scope == _BoardScope.withReminder
             ? noteList?.name ?? 'Lista desconocida'
             : null,
         assignee: assignee,
@@ -433,10 +493,14 @@ class _BoardPageState extends State<BoardPage>
             : collaboratorPhoto,
         onToggle: onToggle,
         onPin: () {
+          _playBoardTapSound();
           HapticFeedback.lightImpact();
           context.read<NotesCubit>().togglePin(note);
         },
-        onOpen: () => _openNote(note),
+        onOpen: () {
+          _playBoardTapSound();
+          _openNote(note);
+        },
         onChecklistToggle: (item) {
           HapticFeedback.selectionClick();
           context.read<NotesCubit>().toggleChecklistItem(note, item);
@@ -486,8 +550,13 @@ class _BoardPageState extends State<BoardPage>
     await context.read<NotesCubit>().loadPinnedNotes();
   }
 
+  Future<void> _openWithReminder() async {
+    setState(() => _scope = _BoardScope.withReminder);
+    await context.read<NotesCubit>().loadReminderNotes();
+  }
+
   void _reorderNotes(List<String> orderedIds) {
-    if (_scope == _BoardScope.pinned) {
+    if (_scope == _BoardScope.pinned || _scope == _BoardScope.withReminder) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Ordena estas notas dentro de su lista original.'),
@@ -531,7 +600,102 @@ class _BoardPageState extends State<BoardPage>
     );
   }
 
+  Future<void> _openNotePreview(Note initialNote) async {
+    _playBoardLongPressSound();
+    HapticFeedback.mediumImpact();
+    final cubit = context.read<NotesCubit>();
+    final currentUser = context.read<AuthRepository>().currentUser;
+
+    Note latestNote(NotesState state) =>
+        [
+          ...state.notes,
+          ...state.pinnedNotes,
+          ...state.reminderNotes,
+        ].where((note) => note.id == initialNote.id).firstOrNull ??
+        initialNote;
+
+    final shouldOpen = await showNotePreviewDialog(
+      context: context,
+      noteProvider: () => latestNote(cubit.state),
+      onSave: (note, draft) => cubit.editNote(note, draft),
+      cardBuilder: (dialogContext, openNote) =>
+          BlocBuilder<NotesCubit, NotesState>(
+            bloc: cubit,
+            builder: (context, state) {
+              final note = latestNote(state);
+              final sourceList = state.lists
+                  .where((list) => list.id == note.boardId)
+                  .firstOrNull;
+              final collaborators =
+                  sourceList?.collaborators ?? const <ListCollaborator>[];
+              final signedInUserId = currentUser?.id;
+              final reactionAuthorNames = <String, String>{
+                for (final person in collaborators)
+                  person.uid: person.displayName.trim().isNotEmpty
+                      ? person.displayName.trim()
+                      : person.email.trim(),
+                ?signedInUserId: 'Tú',
+                localNoteReactionUserId: 'Tú',
+              };
+              final assignee = collaborators
+                  .where((person) => person.uid == note.assigneeUid)
+                  .firstOrNull;
+              final normalizedAuthorName = note.authorName.trim().toLowerCase();
+              final author = collaborators
+                  .where(
+                    (person) =>
+                        person.displayName.trim().toLowerCase() ==
+                        normalizedAuthorName,
+                  )
+                  .firstOrNull;
+              final currentUserPhoto =
+                  currentUser?.displayName.trim().toLowerCase() ==
+                      normalizedAuthorName
+                  ? currentUser?.photoUrl?.trim()
+                  : null;
+              final collaboratorPhoto = author?.photoUrl?.trim();
+              return PostItCard(
+                note: note,
+                layout: PostItCardLayout.large,
+                originListName: sourceList?.name,
+                assignee: assignee,
+                authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
+                    ? currentUserPhoto
+                    : collaboratorPhoto,
+                currentUserId: signedInUserId,
+                reactionAuthorNames: reactionAuthorNames,
+                isSavingReaction: state.isSaving,
+                onToggleReaction: (emoji) {
+                  HapticFeedback.selectionClick();
+                  return cubit.toggleReaction(note, emoji, signedInUserId);
+                },
+                onToggle: () {
+                  HapticFeedback.selectionClick();
+                  cubit.toggleNote(note);
+                },
+                onPin: () {
+                  _playBoardTapSound();
+                  HapticFeedback.lightImpact();
+                  cubit.togglePin(note);
+                },
+                onOpen: () {
+                  _playBoardTapSound();
+                  openNote();
+                },
+                onChecklistToggle: (item) {
+                  HapticFeedback.selectionClick();
+                  cubit.toggleChecklistItem(note, item);
+                },
+              );
+            },
+          ),
+    );
+    if (!mounted || !shouldOpen) return;
+    _openNote(latestNote(cubit.state));
+  }
+
   Future<void> _openEditor([Note? note]) async {
+    final currentUser = context.read<AuthRepository>().currentUser;
     final assignees = context
         .read<NotesCubit>()
         .state
@@ -540,8 +704,12 @@ class _BoardPageState extends State<BoardPage>
     final draft = await showNoteEditor(
       context,
       note: note,
-      defaultAuthorName:
-          context.read<AuthRepository>().currentUser?.displayName ?? 'Invitado',
+      defaultAuthorName: currentUser == null
+          ? 'Invitado'
+          : currentUser.displayName.trim().isNotEmpty
+          ? currentUser.displayName.trim()
+          : currentUser.email.trim(),
+      showAuthorField: currentUser == null,
       assignees: assignees ?? const [],
     );
     if (draft == null || !mounted) return;
@@ -553,13 +721,39 @@ class _BoardPageState extends State<BoardPage>
     }
   }
 
+  void _openNewNoteEditor() {
+    _playBoardTapSound();
+    unawaited(_openEditor());
+  }
+
   Future<void> _createList() async {
     final name = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.4),
       builder: (_) => const _CreateListDialog(),
     );
     if (name == null || !mounted) return;
     await context.read<NotesCubit>().createList(name);
+  }
+
+  Future<void> _openListReorder() async {
+    final cubit = context.read<NotesCubit>();
+    final lists = List<NoteList>.of(cubit.state.lists);
+    if (lists.length < 2) return;
+    final orderedIds = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.24),
+      builder: (_) => _ReorderListsSheet(
+        lists: lists,
+        selectedListId: cubit.state.selectedListId,
+      ),
+    );
+    if (orderedIds == null || !mounted) return;
+    await cubit.reorderLists(orderedIds);
   }
 
   Future<void> _openCollaborators(NoteList? list) async {
@@ -610,6 +804,7 @@ class _BoardPageState extends State<BoardPage>
       initialAppearance: switch (_scope) {
         _BoardScope.assignedToMe => _assignedToMeAppearance,
         _BoardScope.pinned => _pinnedAppearance,
+        _BoardScope.withReminder => _withReminderAppearance,
         _BoardScope.list => list.appearance,
       },
     );
@@ -620,6 +815,10 @@ class _BoardPageState extends State<BoardPage>
     }
     if (_scope == _BoardScope.pinned) {
       setState(() => _pinnedAppearance = appearance);
+      return;
+    }
+    if (_scope == _BoardScope.withReminder) {
+      setState(() => _withReminderAppearance = appearance);
       return;
     }
     await cubit.updateListAppearance(appearance);
@@ -678,11 +877,14 @@ class _BoardPageState extends State<BoardPage>
     final notesCubit = context.read<NotesCubit>();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _SettingsPage(
+        builder: (_) => SettingsPage(
           authRepository: authRepository,
-          themeController: widget.themeController,
           onOpenProfile: _openProfile,
           onClearLocalData: notesCubit.clearLocalData,
+          notificationsController: widget.notificationsController,
+          onOpenNotifications: widget.notificationsController == null
+              ? null
+              : _openNotifications,
         ),
       ),
     );
@@ -695,7 +897,15 @@ class _BoardPageState extends State<BoardPage>
     }
   }
 
+  void _changeFilter(NoteFilter value) {
+    if (_filter == value) return;
+    _playBoardTapSound();
+    setState(() => _filter = value);
+  }
+
   void _changeViewMode(BoardViewMode value) {
+    if (_viewMode == value) return;
+    _playBoardTapSound();
     widget.viewModeController.setViewMode(value);
   }
 
@@ -705,7 +915,7 @@ class _BoardPageState extends State<BoardPage>
       MaterialPageRoute<void>(
         builder: (_) => RepositoryProvider<AuthRepository>.value(
           value: authRepository,
-          child: const ProfilePage(),
+          child: ProfilePage(themeController: widget.themeController),
         ),
       ),
     );
@@ -862,46 +1072,23 @@ class _CompletedSectionHeader extends StatelessWidget {
     return Semantics(
       header: true,
       label: 'Completadas, $count ${count == 1 ? 'nota' : 'notas'}',
-      child: Container(
+      child: Padding(
         key: const ValueKey('completed-section-header'),
-        margin: const EdgeInsets.only(top: 20),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: colorScheme.surface.withValues(alpha: 0.86),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.42),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: colorScheme.shadow.withValues(alpha: 0.08),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
+        padding: const EdgeInsets.fromLTRB(6, 22, 6, 4),
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.check_rounded,
-                size: 20,
-                color: colorScheme.onPrimaryContainer,
-              ),
+            Icon(
+              Icons.check_circle_outline_rounded,
+              size: 22,
+              color: colorScheme.onSurface.withValues(alpha: 0.72),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'Completadas',
                 style: theme.textTheme.titleMedium?.copyWith(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface.withValues(alpha: 0.86),
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -910,7 +1097,7 @@ class _CompletedSectionHeader extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 30),
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
               decoration: BoxDecoration(
-                color: colorScheme.secondaryContainer,
+                color: colorScheme.secondaryContainer.withValues(alpha: 0.88),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -935,6 +1122,7 @@ class _NotesGrid extends StatelessWidget {
     required this.groupCompleted,
     required this.showOriginList,
     required this.buildCard,
+    required this.onPreview,
     required this.onReorder,
     super.key,
   });
@@ -943,6 +1131,7 @@ class _NotesGrid extends StatelessWidget {
   final bool groupCompleted;
   final bool showOriginList;
   final NoteCardBuilder buildCard;
+  final ValueChanged<Note> onPreview;
   final NoteReorderCallback onReorder;
 
   @override
@@ -1063,6 +1252,7 @@ class _NotesGrid extends StatelessWidget {
                       child: _DraggableGridNote(
                         key: ValueKey('reorder-grid-${item.note.id}'),
                         note: item.note,
+                        onPreview: () => onPreview(item.note),
                         onDrop: (draggedId) {
                           final reordered = [...notes];
                           final oldIndex = reordered.indexWhere(
@@ -1183,12 +1373,14 @@ class _NotesGrid extends StatelessWidget {
 class _DraggableGridNote extends StatefulWidget {
   const _DraggableGridNote({
     required this.note,
+    required this.onPreview,
     required this.onDrop,
     required this.child,
     super.key,
   });
 
   final Note note;
+  final VoidCallback onPreview;
   final ValueChanged<String> onDrop;
   final Widget child;
 
@@ -1219,24 +1411,28 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,
         child: LayoutBuilder(
-          builder: (context, constraints) => Semantics(
-            hint: 'Mantén presionada y arrastra para cambiar el orden',
-            child: LongPressDraggable<String>(
-              data: widget.note.id,
-              delay: const Duration(milliseconds: 350),
-              onDragStarted: HapticFeedback.mediumImpact,
-              feedback: Material(
-                color: Colors.transparent,
-                elevation: 10,
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  child: widget.child,
+          builder: (context, constraints) => _LongPressPreviewRegion(
+            onLongPress: widget.onPreview,
+            child: Semantics(
+              hint:
+                  'Mantén presionada para previsualizar o arrastra para cambiar el orden',
+              child: LongPressDraggable<String>(
+                data: widget.note.id,
+                delay: const Duration(milliseconds: 500),
+                onDragStarted: HapticFeedback.mediumImpact,
+                feedback: Material(
+                  color: Colors.transparent,
+                  elevation: 10,
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                    child: widget.child,
+                  ),
                 ),
+                childWhenDragging: Opacity(opacity: 0.2, child: widget.child),
+                child: widget.child,
               ),
-              childWhenDragging: Opacity(opacity: 0.2, child: widget.child),
-              child: widget.child,
             ),
           ),
         ),
@@ -1253,6 +1449,7 @@ class _NotesList extends StatelessWidget {
     required this.itemHeight,
     required this.maxWidth,
     required this.buildCard,
+    required this.onPreview,
     required this.onReorder,
     super.key,
   });
@@ -1263,6 +1460,7 @@ class _NotesList extends StatelessWidget {
   final double itemHeight;
   final double maxWidth;
   final NoteCardBuilder buildCard;
+  final ValueChanged<Note> onPreview;
   final NoteReorderCallback onReorder;
 
   @override
@@ -1339,30 +1537,133 @@ class _NotesList extends StatelessWidget {
 
   Widget _buildItem(BuildContext context, List<Note> notes, int index) {
     final note = notes[index];
-    return ReorderableDelayedDragStartListener(
+    return _LongPressPreviewRegion(
       key: ValueKey('reorder-list-${note.id}'),
-      index: index,
-      child: Semantics(
-        hint: 'Mantén presionada y arrastra para cambiar el orden',
-        child: _NoteEntrance(
-          index: index,
-          child: Padding(
-            padding: EdgeInsets.only(
-              bottom: layout == PostItCardLayout.compact ? 3 : 8,
-            ),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxWidth),
-                child: SizedBox(
-                  height: itemHeight,
-                  child: buildCard(note, layout),
+      onLongPress: () => onPreview(note),
+      child: ReorderableDelayedDragStartListener(
+        index: index,
+        child: Semantics(
+          hint:
+              'Mantén presionada para previsualizar o arrastra para cambiar el orden',
+          child: _NoteEntrance(
+            index: index,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: layout == PostItCardLayout.compact ? 3 : 8,
+              ),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: SizedBox(
+                    height: itemHeight,
+                    child: buildCard(note, layout),
+                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LongPressPreviewRegion extends StatefulWidget {
+  const _LongPressPreviewRegion({
+    required this.onLongPress,
+    required this.child,
+    super.key,
+  });
+
+  final VoidCallback onLongPress;
+  final Widget child;
+
+  @override
+  State<_LongPressPreviewRegion> createState() =>
+      _LongPressPreviewRegionState();
+}
+
+class _LongPressPreviewRegionState extends State<_LongPressPreviewRegion> {
+  static const _minimumHold = Duration(milliseconds: 500);
+  static const _previewDelay = Duration(milliseconds: 575);
+  static const _movementTolerance = 18.0;
+
+  Timer? _previewTimer;
+  int? _pointer;
+  Duration? _pressedAt;
+  Offset? _origin;
+  bool _moved = false;
+  bool _triggered = false;
+
+  @override
+  void dispose() {
+    _previewTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onPointerDown(PointerDownEvent event) {
+    if (_pointer != null) return;
+    _pointer = event.pointer;
+    _pressedAt = event.timeStamp;
+    _origin = event.position;
+    _moved = false;
+    _triggered = false;
+    _previewTimer?.cancel();
+    _previewTimer = Timer(_previewDelay, _triggerPreview);
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer || _moved) return;
+    final origin = _origin;
+    if (origin != null &&
+        (event.position - origin).distance > _movementTolerance) {
+      _moved = true;
+      _previewTimer?.cancel();
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    final pressedAt = _pressedAt;
+    final heldFor = pressedAt == null
+        ? Duration.zero
+        : event.timeStamp - pressedAt;
+    if (!_moved && !_triggered && heldFor >= _minimumHold) {
+      _triggerPreview();
+    }
+    _reset();
+  }
+
+  void _onPointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _pointer) _reset();
+  }
+
+  void _triggerPreview() {
+    if (_moved || _triggered || _pointer == null) return;
+    _triggered = true;
+    _previewTimer?.cancel();
+    widget.onLongPress();
+  }
+
+  void _reset() {
+    _previewTimer?.cancel();
+    _previewTimer = null;
+    _pointer = null;
+    _pressedAt = null;
+    _origin = null;
+    _moved = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      onPointerCancel: _onPointerCancel,
+      child: widget.child,
     );
   }
 }
@@ -1402,6 +1703,8 @@ class _NoteEntrance extends StatelessWidget {
 class _AppBar extends StatelessWidget implements PreferredSizeWidget {
   const _AppBar({
     required this.isConnected,
+    required this.isConnecting,
+    required this.isEncrypted,
     required this.onOpenProfile,
     required this.onOpenNotifications,
     required this.scrollProgress,
@@ -1409,6 +1712,8 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   final bool isConnected;
+  final bool isConnecting;
+  final bool isEncrypted;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenNotifications;
   final ValueListenable<double> scrollProgress;
@@ -1473,26 +1778,20 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
               key: const ValueKey('appbar-actions'),
               mainAxisSize: MainAxisSize.min,
               children: [
-                _AnimatedConnectionIndicator(isConnected: isConnected),
+                _AnimatedConnectionIndicator(
+                  isConnected: isConnected,
+                  isConnecting: isConnecting,
+                  isEncrypted: isEncrypted,
+                  isSignedIn: repository.currentUser != null,
+                ),
                 const SizedBox(width: 4),
                 if (notificationsController case final controller?)
                   ListenableBuilder(
                     listenable: controller,
-                    builder: (context, _) => IconButton(
+                    builder: (context, _) => NotificationBellButton(
                       key: const ValueKey('notifications-button'),
-                      tooltip: controller.unreadCount == 0
-                          ? 'Notificaciones'
-                          : '${controller.unreadCount} notificaciones sin leer',
+                      unreadCount: controller.unreadCount,
                       onPressed: onOpenNotifications,
-                      icon: Badge(
-                        isLabelVisible: controller.unreadCount > 0,
-                        label: Text(
-                          controller.unreadCount > 99
-                              ? '99+'
-                              : '${controller.unreadCount}',
-                        ),
-                        child: const Icon(Icons.notifications_none_rounded),
-                      ),
                     ),
                   ),
                 if (notificationsController != null) const SizedBox(width: 2),
@@ -1565,23 +1864,50 @@ class _BoardContentFade extends StatelessWidget {
 }
 
 class _AnimatedConnectionIndicator extends StatelessWidget {
-  const _AnimatedConnectionIndicator({required this.isConnected});
+  const _AnimatedConnectionIndicator({
+    required this.isConnected,
+    required this.isConnecting,
+    required this.isEncrypted,
+    required this.isSignedIn,
+  });
 
   final bool isConnected;
+  final bool isConnecting;
+  final bool isEncrypted;
+  final bool isSignedIn;
 
   @override
   Widget build(BuildContext context) {
-    final color = isConnected
+    final color = isConnecting
+        ? Theme.of(context).colorScheme.primary
+        : isConnected
         ? const Color(0xFF2C9B4A)
         : const Color(0xFFD34242);
-    final label = isConnected ? 'Conectado' : 'Sin conexión';
+    final label = isConnecting
+        ? 'Conectando'
+        : isConnected
+        ? 'Conectado'
+        : 'Sin conexión';
 
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        label: label,
+    return IconButton(
+      key: const ValueKey('connection-status-button'),
+      tooltip:
+          '$label. Cifrado ${isEncrypted ? 'activo' : 'no activo'}. Ver estado',
+      onPressed: () {
+        final notesCubit = context.read<NotesCubit>();
+        showDialog<void>(
+          context: context,
+          barrierColor: Colors.black.withValues(alpha: 0.24),
+          builder: (context) => BlocProvider.value(
+            value: notesCubit,
+            child: _ConnectionStatusDialog(isSignedIn: isSignedIn),
+          ),
+        );
+      },
+      icon: Semantics(
+        excludeSemantics: true,
         child: TweenAnimationBuilder<double>(
-          key: ValueKey(isConnected),
+          key: ValueKey((isConnected, isConnecting)),
           tween: Tween(begin: 0, end: 1),
           duration: const Duration(milliseconds: 650),
           curve: Curves.easeOutCubic,
@@ -1594,7 +1920,9 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
           },
           child: Container(
             key: ValueKey(
-              isConnected
+              isConnecting
+                  ? 'connecting-status-indicator'
+                  : isConnected
                   ? 'connected-status-indicator'
                   : 'disconnected-status-indicator',
             ),
@@ -1604,14 +1932,628 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
               color: color.withValues(alpha: 0.13),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              isConnected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
-              color: color,
-              size: 18,
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                if (isConnecting)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: CircularProgressIndicator(
+                      color: color,
+                      strokeWidth: 2.2,
+                    ),
+                  )
+                else
+                  Icon(
+                    isConnected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                    color: color,
+                    size: 18,
+                  ),
+                Positioned(
+                  right: -4,
+                  bottom: -4,
+                  child: _AnimatedEncryptionBadge(isEncrypted: isEncrypted),
+                ),
+              ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AnimatedEncryptionBadge extends StatelessWidget {
+  const _AnimatedEncryptionBadge({required this.isEncrypted});
+
+  final bool isEncrypted;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = isEncrypted
+        ? const Color(0xFF2C9B4A)
+        : const Color(0xFFE08A24);
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(isEncrypted),
+      tween: Tween(begin: 0.55, end: 1),
+      duration: const Duration(milliseconds: 520),
+      curve: Curves.elasticOut,
+      builder: (context, value, child) => Transform.rotate(
+        angle: (1 - value) * -0.28,
+        child: Transform.scale(scale: value, child: child),
+      ),
+      child: Container(
+        key: const ValueKey('encryption-lock-badge'),
+        width: 17,
+        height: 17,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: colorScheme.surface, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.32),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          isEncrypted ? Icons.lock_rounded : Icons.lock_open_rounded,
+          color: Colors.white,
+          size: 9,
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusDialog extends StatelessWidget {
+  const _ConnectionStatusDialog({required this.isSignedIn});
+
+  final bool isSignedIn;
+
+  @override
+  Widget build(BuildContext context) => BlocBuilder<NotesCubit, NotesState>(
+    builder: (context, state) => _buildDialog(context, state),
+  );
+
+  Widget _buildDialog(BuildContext context, NotesState state) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isConnected = state.isRealtimeConnected;
+    final isConnecting = state.isRealtimeConnecting;
+    final notesStatus = state.status;
+    final selectedList = state.selectedList;
+    final noteCount = state.notes.length;
+    final isSyncing =
+        state.isSaving ||
+        state.isSavingList ||
+        state.isInviting ||
+        state.isRemovingCollaborator ||
+        state.isSavingAppearance ||
+        state.isLoadingPinned ||
+        state.isLoadingReminderNotes;
+    final backendColor = isConnecting
+        ? colorScheme.primary
+        : isConnected
+        ? const Color(0xFF2C9B4A)
+        : colorScheme.error;
+    final encryptionVersion = selectedList?.encryption.version;
+    final isEncrypted = encryptionVersion != null && encryptionVersion > 0;
+    final selectedListName = selectedList?.name ?? 'Cargando lista';
+    final loadedNotesLabel = noteCount == 1
+        ? '1 nota cargada'
+        : '$noteCount notas cargadas';
+
+    final String syncStatus;
+    final String syncDetail;
+    final IconData syncIcon;
+    final Color syncColor;
+    if (!isSignedIn) {
+      syncStatus = 'Solo en este dispositivo';
+      syncDetail =
+          'Inicia sesión para sincronizar tus listas y notas entre dispositivos.';
+      syncIcon = Icons.phone_android_rounded;
+      syncColor = colorScheme.primary;
+    } else if (isConnecting) {
+      syncStatus = 'Esperando conexión';
+      syncDetail =
+          'La lista permanece disponible mientras restablecemos el canal en tiempo real.';
+      syncIcon = Icons.cloud_sync_outlined;
+      syncColor = colorScheme.primary;
+    } else if (isSyncing || notesStatus == NotesStatus.loading) {
+      syncStatus = 'Sincronizando';
+      syncDetail = 'Estamos actualizando la información de tu cuenta.';
+      syncIcon = Icons.sync_rounded;
+      syncColor = colorScheme.primary;
+    } else if (isConnected && notesStatus == NotesStatus.ready) {
+      syncStatus = 'Al día';
+      syncDetail = 'La lista y sus notas están actualizadas.';
+      syncIcon = Icons.cloud_done_outlined;
+      syncColor = const Color(0xFF2C9B4A);
+    } else {
+      syncStatus = 'En pausa';
+      syncDetail =
+          'Mostramos la última copia guardada hasta recuperar la conexión.';
+      syncIcon = Icons.cloud_off_outlined;
+      syncColor = const Color(0xFFE08A24);
+    }
+
+    final String encryptionStatus;
+    final String encryptionDetail;
+    final IconData encryptionIcon;
+    final Color encryptionColor;
+    if (!isSignedIn) {
+      encryptionStatus = 'Disponible al iniciar sesión';
+      encryptionDetail =
+          'En modo invitado, el contenido permanece guardado localmente en este dispositivo.';
+      encryptionIcon = Icons.phonelink_lock_outlined;
+      encryptionColor = colorScheme.primary;
+    } else if (selectedList == null) {
+      encryptionStatus = 'Verificando';
+      encryptionDetail =
+          'El estado de protección aparecerá cuando termine de cargar la lista.';
+      encryptionIcon = Icons.shield_outlined;
+      encryptionColor = colorScheme.primary;
+    } else if (isEncrypted) {
+      encryptionStatus = 'Activo en esta lista';
+      encryptionDetail =
+          'La lista y el contenido de sus notas se cifran en este dispositivo antes de sincronizarse.';
+      encryptionIcon = Icons.enhanced_encryption_outlined;
+      encryptionColor = const Color(0xFF2C9B4A);
+    } else {
+      encryptionStatus = 'Protección pendiente';
+      encryptionDetail =
+          'Esta lista todavía no informa cifrado de extremo a extremo activo.';
+      encryptionIcon = Icons.gpp_maybe_outlined;
+      encryptionColor = const Color(0xFFE08A24);
+    }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final dialogMaxHeight = MediaQuery.sizeOf(context).height - 48;
+    final glassBorder = Colors.white.withValues(alpha: isDark ? 0.14 : 0.48);
+
+    return Dialog(
+      key: const ValueKey('connection-status-dialog'),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(30),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            key: const ValueKey('connection-status-glass-surface'),
+            width: 560,
+            constraints: BoxConstraints(maxHeight: dialogMaxHeight),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                    ? [
+                        colorScheme.surface.withValues(alpha: 0.8),
+                        colorScheme.surfaceContainerHigh.withValues(
+                          alpha: 0.66,
+                        ),
+                      ]
+                    : [
+                        Colors.white.withValues(alpha: 0.74),
+                        colorScheme.surface.withValues(alpha: 0.6),
+                      ],
+              ),
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: glassBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.2),
+                  blurRadius: 36,
+                  spreadRadius: -8,
+                  offset: const Offset(0, 18),
+                ),
+                BoxShadow(
+                  color: Colors.white.withValues(alpha: isDark ? 0.04 : 0.34),
+                  blurRadius: 2,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 20, 18, 16),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              backendColor.withValues(alpha: 0.26),
+                              backendColor.withValues(alpha: 0.1),
+                            ],
+                          ),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: backendColor.withValues(alpha: 0.28),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: backendColor.withValues(alpha: 0.16),
+                              blurRadius: 14,
+                            ),
+                          ],
+                        ),
+                        child: isConnecting
+                            ? Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                  color: backendColor,
+                                  strokeWidth: 2.4,
+                                ),
+                              )
+                            : Icon(
+                                isConnected
+                                    ? Icons.wifi_rounded
+                                    : Icons.wifi_off_rounded,
+                                color: backendColor,
+                                size: 24,
+                              ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Estado de NockNock',
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.35,
+                                  ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Actualizado en tiempo real',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey('close-connection-status-dialog'),
+                        tooltip: 'Cerrar',
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(
+                            alpha: isDark ? 0.07 : 0.42,
+                          ),
+                        ),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: Colors.white.withValues(alpha: isDark ? 0.09 : 0.42),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                    child: Column(
+                      children: [
+                        _ConnectionStatusRow(
+                          key: const ValueKey('backend-status-row'),
+                          icon: isConnecting
+                              ? Icons.sync_rounded
+                              : isConnected
+                              ? Icons.dns_rounded
+                              : Icons.cloud_off_outlined,
+                          label: 'Backend',
+                          status: isConnecting
+                              ? 'Conectando…'
+                              : isConnected
+                              ? 'Conectado'
+                              : 'Sin conexión',
+                          detail: isConnecting
+                              ? 'Estamos autenticando el dispositivo y abriendo el canal para recibir cambios.'
+                              : isConnected
+                              ? 'La app mantiene un canal abierto para recibir cambios sin tener que actualizar manualmente.'
+                              : 'No hay un canal activo. Los cambios de otras personas no llegarán hasta recuperar la conexión.',
+                          facts: [
+                            (
+                              'Canal en tiempo real',
+                              isConnecting
+                                  ? 'Estableciendo…'
+                                  : isConnected
+                                  ? 'Activo'
+                                  : 'Inactivo',
+                            ),
+                            (
+                              'Cambios colaborativos',
+                              isConnecting
+                                  ? 'Esperando conexión'
+                                  : isConnected
+                                  ? 'Automáticos'
+                                  : 'En pausa',
+                            ),
+                          ],
+                          factsKey: const ValueKey('backend-status-details'),
+                          showProgress: isConnecting,
+                          color: backendColor,
+                        ),
+                        const SizedBox(height: 12),
+                        _ConnectionStatusRow(
+                          key: const ValueKey('sync-status-row'),
+                          icon: syncIcon,
+                          label: 'Sincronización',
+                          status: syncStatus,
+                          detail: syncDetail,
+                          facts: [
+                            (
+                              'Cuenta',
+                              isSignedIn ? 'Conectada' : 'Modo invitado',
+                            ),
+                            ('Lista actual', selectedListName),
+                            ('Contenido disponible', loadedNotesLabel),
+                            (
+                              'Operación en curso',
+                              isSyncing || notesStatus == NotesStatus.loading
+                                  ? 'Sí'
+                                  : 'No',
+                            ),
+                          ],
+                          factsKey: const ValueKey('sync-status-details'),
+                          color: syncColor,
+                        ),
+                        const SizedBox(height: 12),
+                        _ConnectionStatusRow(
+                          key: const ValueKey('encryption-status-row'),
+                          icon: encryptionIcon,
+                          label: 'Cifrado de lista y notas',
+                          status: encryptionStatus,
+                          detail: encryptionDetail,
+                          facts: !isSignedIn
+                              ? const [
+                                  ('Ubicación', 'Solo este dispositivo'),
+                                  (
+                                    'Cifrado al sincronizar',
+                                    'Requiere iniciar sesión',
+                                  ),
+                                ]
+                              : isEncrypted
+                              ? const [
+                                  ('Contenido', 'AES-256-GCM'),
+                                  (
+                                    'Claves de la lista',
+                                    'Protegidas por dispositivo',
+                                  ),
+                                  ('Acceso', 'Personas autorizadas'),
+                                ]
+                              : [
+                                  (
+                                    'Versión de cifrado',
+                                    '${encryptionVersion ?? 0}',
+                                  ),
+                                  ('Estado de las claves', 'Pendiente'),
+                                ],
+                          factsKey: const ValueKey('encryption-status-details'),
+                          color: encryptionColor,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusRow extends StatelessWidget {
+  const _ConnectionStatusRow({
+    required this.icon,
+    required this.label,
+    required this.status,
+    required this.detail,
+    this.facts = const [],
+    this.factsKey,
+    this.showProgress = false,
+    required this.color,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final String status;
+  final String detail;
+  final List<(String, String)> facts;
+  final Key? factsKey;
+  final bool showProgress;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  Colors.white.withValues(alpha: 0.075),
+                  colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+                ]
+              : [
+                  Colors.white.withValues(alpha: 0.58),
+                  colorScheme.surface.withValues(alpha: 0.32),
+                ],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: isDark ? 0.11 : 0.52),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.07),
+            blurRadius: 18,
+            spreadRadius: -8,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: showProgress
+                    ? Padding(
+                        padding: const EdgeInsets.all(9),
+                        child: CircularProgressIndicator(
+                          color: color,
+                          strokeWidth: 2.2,
+                        ),
+                      )
+                    : Icon(icon, color: color, size: 21),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: Text(
+                        status,
+                        key: ValueKey(status),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: color,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      detail,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (facts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              key: factsKey,
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(
+                  alpha: isDark ? 0.46 : 0.38,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: isDark ? 0.07 : 0.36),
+                ),
+              ),
+              child: Column(
+                children: [
+                  for (var index = 0; index < facts.length; index++) ...[
+                    _ConnectionStatusFact(
+                      label: facts[index].$1,
+                      value: facts[index].$2,
+                    ),
+                    if (index != facts.length - 1)
+                      Divider(
+                        height: 15,
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.45,
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusFact extends StatelessWidget {
+  const _ConnectionStatusFact({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1622,10 +2564,13 @@ class _AppDrawer extends StatelessWidget {
     required this.selectedListId,
     required this.assignedToMeSelected,
     required this.pinnedSelected,
+    required this.withReminderSelected,
     required this.isSavingList,
     required this.onSelectList,
     required this.onShowAssignedToMe,
     required this.onShowPinned,
+    required this.onShowWithReminder,
+    required this.onReorderLists,
     required this.onCreateList,
     required this.onOpenProfile,
     required this.onOpenSettings,
@@ -1635,10 +2580,13 @@ class _AppDrawer extends StatelessWidget {
   final String selectedListId;
   final bool assignedToMeSelected;
   final bool pinnedSelected;
+  final bool withReminderSelected;
   final bool isSavingList;
   final ValueChanged<String> onSelectList;
   final VoidCallback onShowAssignedToMe;
   final VoidCallback onShowPinned;
+  final VoidCallback onShowWithReminder;
+  final VoidCallback onReorderLists;
   final VoidCallback onCreateList;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenSettings;
@@ -1646,199 +2594,595 @@ class _AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.88).clamp(
-      280.0,
-      360.0,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
+      272.0,
+      336.0,
     );
+    final drawerRadius = BorderRadius.horizontal(right: Radius.circular(30));
 
     return Drawer(
       width: drawerWidth,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      backgroundColor: colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.horizontal(right: Radius.circular(28)),
-      ),
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 14, 18, 16),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(13),
-                      child: Image.asset(
-                        'assets/branding/nocknock-logo.png',
-                        width: 42,
-                        height: 42,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'NockNock',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.7,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Cerrar menú',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, size: 21),
-                  ),
-                ],
+      backgroundColor: Colors.transparent,
+      shadowColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: drawerRadius),
+      clipBehavior: Clip.antiAlias,
+      child: BackdropFilter(
+        key: const ValueKey('app-drawer-glass-blur'),
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: DecoratedBox(
+          key: const ValueKey('app-drawer-glass-surface'),
+          decoration: BoxDecoration(
+            borderRadius: drawerRadius,
+            border: Border(
+              right: BorderSide(
+                color: Colors.white.withValues(alpha: isDark ? 0.16 : 0.48),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _DrawerProfileSummary(
-                onTap: () {
-                  Navigator.pop(context);
-                  onOpenProfile();
-                },
-              ),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withValues(alpha: isDark ? 0.08 : 0.38),
+                colorScheme.surface.withValues(alpha: isDark ? 0.76 : 0.7),
+              ],
             ),
-            const SizedBox(height: 18),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Column(
-                children: [
-                  _DrawerDestinationTile(
-                    key: const ValueKey('assigned-to-me-menu-button'),
-                    selected: assignedToMeSelected,
-                    icon: assignedToMeSelected
-                        ? Icons.assignment_ind_rounded
-                        : Icons.assignment_ind_outlined,
-                    label: 'Asignado a mí',
-                    trailing: Icons.chevron_right_rounded,
-                    onTap: () {
-                      Navigator.pop(context);
-                      onShowAssignedToMe();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  _DrawerDestinationTile(
-                    key: const ValueKey('pinned-menu-button'),
-                    selected: pinnedSelected,
-                    icon: pinnedSelected
-                        ? Icons.push_pin_rounded
-                        : Icons.push_pin_outlined,
-                    label: 'Ancladas',
-                    trailing: Icons.chevron_right_rounded,
-                    onTap: () {
-                      Navigator.pop(context);
-                      onShowPinned();
-                    },
-                  ),
-                ],
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(alpha: 0.3),
+                blurRadius: 34,
+                offset: const Offset(12, 0),
               ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 0, 14, 4),
-              child: Row(
-                children: [
-                  Text(
-                    'LISTAS',
-                    style: TextStyle(
-                      color: colorScheme.onSurface.withValues(alpha: 0.5),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.35,
-                    ),
-                  ),
-                  const Spacer(),
-                  _DrawerAddListButton(
-                    isSaving: isSavingList,
-                    onPressed: () {
-                      Navigator.pop(context);
-                      onCreateList();
-                    },
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Scrollbar(
-                child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 2, 12, 16),
-                  itemCount: lists.length,
-                  itemBuilder: (context, index) {
-                    final list = lists[index];
-                    final selected =
-                        !assignedToMeSelected &&
-                        !pinnedSelected &&
-                        list.id == selectedListId;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: _DrawerDestinationTile(
-                        key: ValueKey('list-${list.id}'),
-                        selected: selected,
-                        icon: selected
-                            ? Icons.folder_rounded
-                            : Icons.folder_outlined,
-                        label: list.name,
-                        trailing: selected
-                            ? Icons.check_rounded
-                            : list.isShared
-                            ? Icons.people_outline_rounded
-                            : null,
-                        trailingTooltip: list.isShared && !selected
-                            ? 'Lista compartida'
-                            : null,
-                        onTap: () {
-                          Navigator.pop(context);
-                          onSelectList(list.id);
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-              child: Column(
-                children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerLow,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: colorScheme.outlineVariant.withValues(
-                          alpha: 0.55,
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 14, 16),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.white.withValues(
+                                alpha: isDark ? 0.14 : 0.48,
+                              ),
+                              colorScheme.primary.withValues(alpha: 0.18),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withValues(
+                              alpha: isDark ? 0.16 : 0.42,
+                            ),
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(13),
+                          child: Image.asset(
+                            'assets/branding/nocknock-logo.png',
+                            width: 42,
+                            height: 42,
+                          ),
                         ),
                       ),
-                    ),
-                    child: _DrawerDestinationTile(
-                      key: const ValueKey('settings-menu-button'),
-                      icon: Icons.settings_outlined,
-                      label: 'Configuración',
-                      trailing: Icons.chevron_right_rounded,
-                      onTap: () {
-                        Navigator.pop(context);
-                        onOpenSettings();
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'NockNock',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.7,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Cerrar menú',
+                        style: IconButton.styleFrom(
+                          backgroundColor: colorScheme.surface.withValues(
+                            alpha: isDark ? 0.2 : 0.32,
+                          ),
+                          side: BorderSide(
+                            color: Colors.white.withValues(
+                              alpha: isDark ? 0.12 : 0.36,
+                            ),
+                          ),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded, size: 21),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: _DrawerProfileSummary(
+                    onTap: () {
+                      Navigator.pop(context);
+                      onOpenProfile();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Column(
+                    children: [
+                      _DrawerDestinationTile(
+                        key: const ValueKey('assigned-to-me-menu-button'),
+                        selected: assignedToMeSelected,
+                        icon: assignedToMeSelected
+                            ? Icons.assignment_ind_rounded
+                            : Icons.assignment_ind_outlined,
+                        label: 'Asignado a mí',
+                        trailing: Icons.chevron_right_rounded,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onShowAssignedToMe();
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _DrawerDestinationTile(
+                        key: const ValueKey('pinned-menu-button'),
+                        selected: pinnedSelected,
+                        icon: pinnedSelected
+                            ? Icons.push_pin_rounded
+                            : Icons.push_pin_outlined,
+                        label: 'Ancladas',
+                        trailing: Icons.chevron_right_rounded,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onShowPinned();
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _DrawerDestinationTile(
+                        key: const ValueKey('with-reminder-menu-button'),
+                        selected: withReminderSelected,
+                        icon: withReminderSelected
+                            ? Icons.alarm_rounded
+                            : Icons.alarm_outlined,
+                        label: 'Con recordatorio',
+                        trailing: Icons.chevron_right_rounded,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onShowWithReminder();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 12, 4),
+                  child: Row(
+                    children: [
+                      Text(
+                        'LISTAS',
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withValues(alpha: 0.5),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.35,
+                        ),
+                      ),
+                      const Spacer(),
+                      _DrawerReorderListsButton(
+                        enabled: !isSavingList && lists.length > 1,
+                        onPressed: () {
+                          Navigator.pop(context);
+                          onReorderLists();
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      _DrawerAddListButton(
+                        isSaving: isSavingList,
+                        onPressed: () {
+                          Navigator.pop(context);
+                          onCreateList();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Scrollbar(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(10, 2, 10, 16),
+                      itemCount: lists.length,
+                      itemBuilder: (context, index) {
+                        final list = lists[index];
+                        final selected =
+                            !assignedToMeSelected &&
+                            !pinnedSelected &&
+                            !withReminderSelected &&
+                            list.id == selectedListId;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _DrawerDestinationTile(
+                            key: ValueKey('list-${list.id}'),
+                            selected: selected,
+                            icon: selected
+                                ? Icons.folder_rounded
+                                : Icons.folder_outlined,
+                            label: list.name,
+                            trailing: selected
+                                ? Icons.check_rounded
+                                : list.isShared
+                                ? Icons.people_outline_rounded
+                                : null,
+                            trailingTooltip: list.isShared && !selected
+                                ? 'Lista compartida'
+                                : null,
+                            onTap: () {
+                              Navigator.pop(context);
+                              onSelectList(list.id);
+                            },
+                          ),
+                        );
                       },
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  const _AppVersionLabel(),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+                  child: Column(
+                    children: [
+                      _DrawerDestinationTile(
+                        key: const ValueKey('settings-menu-button'),
+                        icon: Icons.settings_outlined,
+                        label: 'Configuración',
+                        trailing: Icons.chevron_right_rounded,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenSettings();
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      const _AppVersionLabel(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReorderListsSheet extends StatefulWidget {
+  const _ReorderListsSheet({required this.lists, required this.selectedListId});
+
+  final List<NoteList> lists;
+  final String selectedListId;
+
+  @override
+  State<_ReorderListsSheet> createState() => _ReorderListsSheetState();
+}
+
+class _ReorderListsSheetState extends State<_ReorderListsSheet> {
+  late final List<NoteList> _lists = List.of(widget.lists);
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final maxHeight = math.min(MediaQuery.sizeOf(context).height * 0.72, 620.0);
+    const borderRadius = BorderRadius.vertical(top: Radius.circular(32));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withValues(alpha: isDark ? 0.5 : 0.3),
+            blurRadius: 40,
+            offset: const Offset(0, -8),
+          ),
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: 0.1),
+            blurRadius: 32,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        key: const ValueKey('reorder-lists-sheet'),
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          key: const ValueKey('reorder-lists-glass-blur'),
+          filter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+          child: DecoratedBox(
+            key: const ValueKey('reorder-lists-glass-surface'),
+            decoration: BoxDecoration(
+              borderRadius: borderRadius,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: isDark ? 0.2 : 0.58),
+              ),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: isDark ? 0.13 : 0.52),
+                  colorScheme.surface.withValues(alpha: isDark ? 0.66 : 0.62),
                 ],
               ),
             ),
-          ],
+            child: Material(
+              color: Colors.transparent,
+              child: SizedBox(
+                height: maxHeight,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 18, 14, 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Ordenar listas',
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w900),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Mantén presionado el control y arrastra.',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.6,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(
+                                alpha: isDark ? 0.08 : 0.38,
+                              ),
+                              side: BorderSide(
+                                color: Colors.white.withValues(
+                                  alpha: isDark ? 0.12 : 0.5,
+                                ),
+                              ),
+                            ),
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ReorderableListView.builder(
+                        key: const ValueKey('reorder-lists-view'),
+                        buildDefaultDragHandles: false,
+                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+                        itemCount: _lists.length,
+                        proxyDecorator: (child, index, animation) => Material(
+                          color: Colors.transparent,
+                          elevation: 10,
+                          shadowColor: colorScheme.shadow.withValues(
+                            alpha: 0.28,
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          child: child,
+                        ),
+                        onReorderItem: (oldIndex, newIndex) {
+                          if (newIndex == oldIndex) return;
+                          HapticFeedback.selectionClick();
+                          setState(() {
+                            final list = _lists.removeAt(oldIndex);
+                            _lists.insert(newIndex, list);
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final list = _lists[index];
+                          final selected = list.id == widget.selectedListId;
+                          return Padding(
+                            key: ValueKey('reorder-list-item-${list.id}'),
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: selected
+                                      ? [
+                                          colorScheme.primary.withValues(
+                                            alpha: 0.2,
+                                          ),
+                                          colorScheme.primary.withValues(
+                                            alpha: 0.08,
+                                          ),
+                                        ]
+                                      : [
+                                          Colors.white.withValues(
+                                            alpha: isDark ? 0.08 : 0.44,
+                                          ),
+                                          colorScheme.surfaceContainerHigh
+                                              .withValues(
+                                                alpha: isDark ? 0.26 : 0.3,
+                                              ),
+                                        ],
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: selected
+                                      ? colorScheme.primary.withValues(
+                                          alpha: 0.3,
+                                        )
+                                      : colorScheme.outlineVariant.withValues(
+                                          alpha: 0.55,
+                                        ),
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  12,
+                                  8,
+                                  12,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      selected
+                                          ? Icons.folder_rounded
+                                          : Icons.folder_outlined,
+                                      color: selected
+                                          ? colorScheme.primary
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        list.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: selected
+                                              ? FontWeight.w800
+                                              : FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    if (list.isShared)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 4,
+                                        ),
+                                        child: Icon(
+                                          Icons.people_outline_rounded,
+                                          size: 19,
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                                    ReorderableDragStartListener(
+                                      key: ValueKey(
+                                        'reorder-list-handle-${list.id}',
+                                      ),
+                                      index: index,
+                                      child: Semantics(
+                                        label: 'Mover ${list.name}',
+                                        button: true,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(10),
+                                          child: Icon(
+                                            Icons.drag_handle_rounded,
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.62),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            colorScheme.surface.withValues(alpha: 0),
+                            colorScheme.surface.withValues(
+                              alpha: isDark ? 0.22 : 0.18,
+                            ),
+                          ],
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: OutlinedButton(
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(54),
+                                  foregroundColor: colorScheme.onSurface,
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(
+                                      alpha: isDark ? 0.34 : 0.72,
+                                    ),
+                                  ),
+                                  shape: const StadiumBorder(),
+                                ),
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text(
+                                  'Cancelar',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              flex: 6,
+                              child: FilledButton.icon(
+                                key: const ValueKey('save-list-order-button'),
+                                style: FilledButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(54),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                  ),
+                                  shape: const StadiumBorder(),
+                                ),
+                                onPressed: () => Navigator.pop(
+                                  context,
+                                  _lists.map((list) => list.id).toList(),
+                                ),
+                                icon: const Icon(
+                                  Icons.check_circle_outline_rounded,
+                                  size: 20,
+                                ),
+                                label: const Text(
+                                  'Guardar orden',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.fade,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1895,74 +3239,124 @@ class _DrawerProfileSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final repository = context.read<AuthRepository>();
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(22);
 
     return StreamBuilder<AppUser?>(
       stream: repository.authStateChanges,
       initialData: repository.currentUser,
       builder: (context, snapshot) {
         final user = snapshot.data;
-        return Material(
+        return DecoratedBox(
           key: user == null
               ? const ValueKey('drawer-google-sign-in-suggestion')
               : null,
-          color: colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(20),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            key: const ValueKey('drawer-profile-button'),
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
-              child: Row(
-                children: [
-                  AuthAvatar(user: user, size: 46),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user?.displayName ?? 'Inicia sesión con Google',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          user?.email ?? 'Sincroniza y protege tus notas',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colorScheme.onSurface.withValues(
-                              alpha: 0.62,
-                            ),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(alpha: 0.16),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              key: const ValueKey('drawer-profile-glass-blur'),
+              filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Material(
+                color: Colors.transparent,
+                child: Ink(
+                  key: const ValueKey('drawer-profile-glass-surface'),
+                  decoration: BoxDecoration(
+                    borderRadius: borderRadius,
+                    border: Border.all(
+                      color: Colors.white.withValues(
+                        alpha: isDark ? 0.14 : 0.42,
+                      ),
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white.withValues(alpha: isDark ? 0.1 : 0.34),
+                        colorScheme.surfaceContainerHigh.withValues(
+                          alpha: isDark ? 0.5 : 0.42,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface.withValues(alpha: 0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      user == null
-                          ? Icons.login_rounded
-                          : Icons.chevron_right_rounded,
-                      size: 20,
-                      color: user == null ? AppTheme.accent : null,
+                  child: InkWell(
+                    key: const ValueKey('drawer-profile-button'),
+                    borderRadius: borderRadius,
+                    onTap: onTap,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+                      child: Row(
+                        children: [
+                          AuthAvatar(user: user, size: 46),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  user?.displayName ??
+                                      'Inicia sesión con Google',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  user?.email ??
+                                      'Sincroniza y protege tus notas',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface.withValues(
+                                      alpha: 0.62,
+                                    ),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              color: colorScheme.surface.withValues(
+                                alpha: isDark ? 0.26 : 0.42,
+                              ),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(
+                                  alpha: isDark ? 0.1 : 0.3,
+                                ),
+                              ),
+                            ),
+                            child: Icon(
+                              user == null
+                                  ? Icons.login_rounded
+                                  : Icons.chevron_right_rounded,
+                              size: 20,
+                              color: user == null ? colorScheme.primary : null,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -1970,6 +3364,41 @@ class _DrawerProfileSummary extends StatelessWidget {
       },
     );
   }
+}
+
+class _DrawerReorderListsButton extends StatelessWidget {
+  const _DrawerReorderListsButton({
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      key: const ValueKey('reorder-lists-button'),
+      tooltip: 'Reordenar listas',
+      visualDensity: VisualDensity.compact,
+      style: _drawerListActionButtonStyle(context),
+      onPressed: enabled ? onPressed : null,
+      icon: const Icon(Icons.swap_vert_rounded, size: 20),
+    );
+  }
+}
+
+ButtonStyle _drawerListActionButtonStyle(BuildContext context) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return IconButton.styleFrom(
+    backgroundColor: colorScheme.primary.withValues(alpha: 0.16),
+    foregroundColor: colorScheme.primary,
+    side: BorderSide(
+      color: Colors.white.withValues(
+        alpha: Theme.of(context).brightness == Brightness.dark ? 0.14 : 0.4,
+      ),
+    ),
+  );
 }
 
 class _DrawerAddListButton extends StatelessWidget {
@@ -1985,10 +3414,7 @@ class _DrawerAddListButton extends StatelessWidget {
       key: const ValueKey('add-list-button'),
       tooltip: 'Agregar lista',
       visualDensity: VisualDensity.compact,
-      style: IconButton.styleFrom(
-        backgroundColor: AppTheme.accent.withValues(alpha: 0.12),
-        foregroundColor: AppTheme.accent,
-      ),
+      style: _drawerListActionButtonStyle(context),
       onPressed: isSaving ? null : onPressed,
       icon: isSaving
           ? SizedBox.square(
@@ -2024,377 +3450,113 @@ class _DrawerDestinationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final foreground = selected ? AppTheme.accent : colorScheme.onSurface;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = selected ? colorScheme.primary : colorScheme.onSurface;
     final trailingIcon = trailing == null
         ? null
         : Icon(trailing, size: 19, color: foreground.withValues(alpha: 0.78));
 
-    return Material(
-      color: selected
-          ? AppTheme.accent.withValues(alpha: 0.12)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: 54,
-          child: Row(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 3,
-                height: selected ? 26 : 0,
-                decoration: BoxDecoration(
-                  color: AppTheme.accent,
-                  borderRadius: BorderRadius.circular(99),
+    final borderRadius = BorderRadius.circular(18);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: Material(
+          color: Colors.transparent,
+          child: Ink(
+            key: selected ? const ValueKey('drawer-selected-tile-glass') : null,
+            decoration: BoxDecoration(
+              borderRadius: borderRadius,
+              border: Border.all(
+                color: Colors.white.withValues(
+                  alpha: selected
+                      ? (isDark ? 0.18 : 0.46)
+                      : (isDark ? 0.07 : 0.24),
                 ),
               ),
-              const SizedBox(width: 13),
-              Icon(icon, size: 22, color: foreground),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 15,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                ),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: selected
+                    ? [
+                        colorScheme.primary.withValues(
+                          alpha: isDark ? 0.24 : 0.2,
+                        ),
+                        colorScheme.surface.withValues(
+                          alpha: isDark ? 0.3 : 0.38,
+                        ),
+                      ]
+                    : [
+                        Colors.white.withValues(alpha: isDark ? 0.035 : 0.16),
+                        colorScheme.surface.withValues(
+                          alpha: isDark ? 0.12 : 0.18,
+                        ),
+                      ],
               ),
-              if (trailingIcon != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: trailingTooltip == null
-                      ? trailingIcon
-                      : Tooltip(message: trailingTooltip!, child: trailingIcon),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SettingsPage extends StatefulWidget {
-  const _SettingsPage({
-    required this.authRepository,
-    required this.themeController,
-    required this.onOpenProfile,
-    required this.onClearLocalData,
-  });
-
-  final AuthRepository authRepository;
-  final AppThemeController themeController;
-  final VoidCallback onOpenProfile;
-  final Future<bool> Function() onClearLocalData;
-
-  @override
-  State<_SettingsPage> createState() => _SettingsPageState();
-}
-
-class _SettingsPageState extends State<_SettingsPage> {
-  late ThemeMode _themeMode = widget.themeController.themeMode;
-  bool _isClearingData = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Configuración',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-          children: [
-            Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: borderRadius,
+              child: SizedBox(
+                height: 54,
+                child: Row(
                   children: [
-                    const _SettingsSectionTitle('APARIENCIA'),
-                    const SizedBox(height: 10),
-                    _SettingsCard(
-                      child: RadioGroup<ThemeMode>(
-                        groupValue: _themeMode,
-                        onChanged: (value) {
-                          if (value != null) _changeThemeMode(value);
-                        },
-                        child: Column(
-                          children: [
-                            _ThemeModeSetting(
-                              key: const ValueKey('theme-mode-system'),
-                              icon: Icons.brightness_auto_outlined,
-                              title: 'Usar configuración del sistema',
-                              value: ThemeMode.system,
-                              groupValue: _themeMode,
-                              onChanged: _changeThemeMode,
-                            ),
-                            const Divider(height: 1, indent: 56),
-                            _ThemeModeSetting(
-                              key: const ValueKey('theme-mode-light'),
-                              icon: Icons.light_mode_outlined,
-                              title: 'Modo claro',
-                              value: ThemeMode.light,
-                              groupValue: _themeMode,
-                              onChanged: _changeThemeMode,
-                            ),
-                            const Divider(height: 1, indent: 56),
-                            _ThemeModeSetting(
-                              key: const ValueKey('theme-mode-dark'),
-                              icon: Icons.dark_mode_outlined,
-                              title: 'Modo oscuro',
-                              value: ThemeMode.dark,
-                              groupValue: _themeMode,
-                              onChanged: _changeThemeMode,
-                            ),
-                          ],
+                    AnimatedContainer(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      width: 3,
+                      height: selected ? 26 : 0,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    const SizedBox(width: 13),
+                    Icon(icon, size: 22, color: foreground),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 15,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 26),
-                    const _SettingsSectionTitle('CUENTA'),
-                    const SizedBox(height: 10),
-                    _SettingsCard(
-                      child: StreamBuilder<AppUser?>(
-                        stream: widget.authRepository.authStateChanges,
-                        initialData: widget.authRepository.currentUser,
-                        builder: (context, snapshot) {
-                          final user = snapshot.data;
-                          return ListTile(
-                            key: const ValueKey('settings-profile-button'),
-                            leading: AuthAvatar(user: user),
-                            title: const Text(
-                              'Perfil y cuenta',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            subtitle: Text(
-                              user == null
-                                  ? 'Estás usando NockNock como invitado'
-                                  : 'Conectado como ${user.email}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: const Icon(Icons.chevron_right_rounded),
-                            onTap: widget.onOpenProfile,
-                          );
-                        },
+                    if (trailingIcon != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 16),
+                        child: trailingTooltip == null
+                            ? trailingIcon
+                            : Tooltip(
+                                message: trailingTooltip!,
+                                child: trailingIcon,
+                              ),
                       ),
-                    ),
-                    const SizedBox(height: 26),
-                    const _SettingsSectionTitle('DATOS EN ESTE DISPOSITIVO'),
-                    const SizedBox(height: 10),
-                    _SettingsCard(
-                      child: Column(
-                        children: [
-                          const ListTile(
-                            leading: Icon(Icons.storage_outlined),
-                            title: Text(
-                              'Almacenamiento local',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            subtitle: Text(
-                              'Aquí se guardan las listas y notas que creas '
-                              'como invitado.',
-                            ),
-                          ),
-                          const Divider(height: 1, indent: 56),
-                          ListTile(
-                            key: const ValueKey('clear-local-data-button'),
-                            enabled: !_isClearingData,
-                            leading: _isClearingData
-                                ? const SizedBox.square(
-                                    dimension: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.delete_sweep_outlined),
-                            iconColor: AppTheme.accent,
-                            textColor: AppTheme.accent,
-                            title: const Text(
-                              'Limpiar datos locales',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            subtitle: const Text(
-                              'No elimina las notas guardadas en tu cuenta.',
-                            ),
-                            onTap: _confirmClearLocalData,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 26),
-                    const _SettingsSectionTitle('ACERCA DE'),
-                    const SizedBox(height: 10),
-                    const _SettingsCard(
-                      child: Column(
-                        children: [
-                          ListTile(
-                            leading: Icon(Icons.sticky_note_2_outlined),
-                            title: Text(
-                              'NockNock',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            subtitle: Text(
-                              'Notas y recordatorios colaborativos. Versión 1.0.0',
-                            ),
-                          ),
-                          Divider(height: 1, indent: 56),
-                          ListTile(
-                            leading: Icon(Icons.privacy_tip_outlined),
-                            title: Text(
-                              'Tus datos de invitado',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            subtitle: Text(
-                              'Permanecen en este dispositivo hasta que los '
-                              'elimines desde esta pantalla.',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _changeThemeMode(ThemeMode value) {
-    setState(() => _themeMode = value);
-    widget.themeController.setThemeMode(value);
-  }
-
-  Future<void> _confirmClearLocalData() async {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('¿Limpiar los datos locales?'),
-        content: const Text(
-          'Se eliminarán definitivamente todas las listas y notas creadas '
-          'como invitado en este dispositivo. Los datos de tu cuenta no se '
-          'verán afectados.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
           ),
-          FilledButton(
-            key: const ValueKey('confirm-clear-local-data-button'),
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.accent),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Limpiar datos'),
-          ),
-        ],
-      ),
-    );
-    if (accepted != true || !mounted) return;
-
-    setState(() => _isClearingData = true);
-    final didClear = await widget.onClearLocalData();
-    if (!mounted) return;
-    setState(() => _isClearingData = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          didClear
-              ? 'Los datos locales fueron eliminados.'
-              : 'No pudimos limpiar los datos locales. Inténtalo nuevamente.',
         ),
       ),
-    );
-  }
-}
-
-class _SettingsSectionTitle extends StatelessWidget {
-  const _SettingsSectionTitle(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.52),
-        fontSize: 11,
-        fontWeight: FontWeight.w900,
-        letterSpacing: 1.2,
-      ),
-    );
-  }
-}
-
-class _SettingsCard extends StatelessWidget {
-  const _SettingsCard({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: colorScheme.onSurface.withValues(alpha: 0.08)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: child,
-    );
-  }
-}
-
-class _ThemeModeSetting extends StatelessWidget {
-  const _ThemeModeSetting({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.groupValue,
-    required this.onChanged,
-    super.key,
-  });
-
-  final IconData icon;
-  final String title;
-  final ThemeMode value;
-  final ThemeMode groupValue;
-  final ValueChanged<ThemeMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = value == groupValue;
-    final colorScheme = Theme.of(context).colorScheme;
-    return ListTile(
-      leading: Icon(
-        icon,
-        color: selected ? AppTheme.accent : colorScheme.onSurface,
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-        ),
-      ),
-      trailing: Radio<ThemeMode>(value: value),
-      onTap: () => onChanged(value),
     );
   }
 }
@@ -2435,7 +3597,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
             vertical: 24,
           ),
           backgroundColor: Color.alphaBlend(
-            AppTheme.accent.withValues(alpha: 0.1),
+            colorScheme.primary.withValues(alpha: 0.1),
             colorScheme.surfaceContainerHigh,
           ),
           surfaceTintColor: Colors.transparent,
@@ -2514,7 +3676,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                         end: Alignment.bottomRight,
                         colors: [
                           colorScheme.primary.withValues(alpha: 0.14),
-                          AppTheme.accent.withValues(alpha: 0.08),
+                          colorScheme.primary.withValues(alpha: 0.08),
                         ],
                       ),
                       borderRadius: BorderRadius.circular(20),
@@ -2802,7 +3964,9 @@ class _CollaboratorAvatar extends StatelessWidget {
     final photoUrl = person.photoUrl?.trim();
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
     return CircleAvatar(
-      backgroundColor: AppTheme.accent.withValues(alpha: 0.13),
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.primary.withValues(alpha: 0.13),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -2845,38 +4009,151 @@ class _CreateListDialogState extends State<_CreateListDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Nueva lista'),
-      content: Form(
-        key: _formKey,
-        child: TextFormField(
-          key: const ValueKey('list-name-field'),
-          controller: _controller,
-          autofocus: true,
-          maxLength: 50,
-          textCapitalization: TextCapitalization.sentences,
-          inputFormatters: const [InitialUppercaseTextFormatter()],
-          decoration: const InputDecoration(
-            labelText: 'Nombre de la lista',
-            hintText: 'Ej. Trabajo, Viaje o Casa',
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(32);
+
+    return Dialog(
+      key: const ValueKey('create-list-glass-dialog'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      shadowColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      child: SizedBox(
+        width: 620,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(
+                  alpha: isDark ? 0.42 : 0.28,
+                ),
+                blurRadius: 38,
+                offset: const Offset(0, 18),
+              ),
+              BoxShadow(
+                color: colorScheme.primary.withValues(alpha: 0.12),
+                blurRadius: 28,
+              ),
+            ],
           ),
-          validator: (value) => value == null || value.trim().isEmpty
-              ? 'Escribe un nombre para la lista'
-              : null,
-          onFieldSubmitted: (_) => _submit(),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              key: const ValueKey('create-list-dialog-glass-blur'),
+              filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: DecoratedBox(
+                key: const ValueKey('create-list-dialog-glass-surface'),
+                decoration: BoxDecoration(
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.24 : 0.56),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: isDark ? 0.12 : 0.38),
+                      colorScheme.surfaceContainerHigh.withValues(
+                        alpha: isDark ? 0.68 : 0.62,
+                      ),
+                    ],
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(30, 28, 30, 26),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Nueva lista',
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 24),
+                        TextFormField(
+                          key: const ValueKey('list-name-field'),
+                          controller: _controller,
+                          autofocus: true,
+                          maxLength: 50,
+                          textCapitalization: TextCapitalization.sentences,
+                          inputFormatters: const [
+                            InitialUppercaseTextFormatter(),
+                          ],
+                          decoration: InputDecoration(
+                            labelText: 'Nombre de la lista',
+                            hintText: 'Ej. Trabajo, Viaje o Casa',
+                            filled: true,
+                            fillColor: colorScheme.surface.withValues(
+                              alpha: isDark ? 0.28 : 0.34,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.24),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide(
+                                color: Colors.white.withValues(
+                                  alpha: isDark ? 0.22 : 0.48,
+                                ),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide(
+                                color: colorScheme.primary,
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? 'Escribe un nombre para la lista'
+                              : null,
+                          onFieldSubmitted: (_) => _submit(),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Cancelar'),
+                            ),
+                            const SizedBox(width: 12),
+                            FilledButton(
+                              key: const ValueKey('create-list-confirm-button'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 16,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                              onPressed: _submit,
+                              child: const Text('Crear lista'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton(
-          key: const ValueKey('create-list-confirm-button'),
-          onPressed: _submit,
-          child: const Text('Crear lista'),
-        ),
-      ],
     );
   }
 
@@ -3061,19 +4338,11 @@ class _BoardHeader extends StatelessWidget {
                       icon: const Icon(Icons.person_add_alt_1_rounded),
                       label: Text(list!.isShared ? 'Personas' : 'Compartir'),
                     ),
-                  FilledButton.icon(
+                  GlassNewNoteButton(
                     key: const ValueKey('new-note-button'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colorScheme.primary,
-                      foregroundColor: colorScheme.onPrimary,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                    ),
                     onPressed: onAdd,
-                    icon: const Icon(Icons.add_rounded),
-                    label: const Text('Nueva nota'),
+                    backgroundColor: colorScheme.primary,
+                    foregroundColor: colorScheme.onPrimary,
                   ),
                 ],
               ),
@@ -3092,7 +4361,7 @@ class _BoardHeader extends StatelessWidget {
                   _BoardMetaChip(
                     icon: Icons.sticky_note_2_outlined,
                     label: '$noteCount ${noteCount == 1 ? 'nota' : 'notas'}',
-                    color: AppTheme.accent,
+                    color: colorScheme.primary,
                   ),
                 ],
               ),
@@ -3124,8 +4393,9 @@ class _BoardHeader extends StatelessWidget {
                 width: 480,
                 child: _BoardControlGroup<NoteFilter>(
                   key: const ValueKey('note-filter-selector'),
+                  keyPrefix: 'desktop-filter-mode',
                   selected: filter,
-                  selectedColor: AppTheme.accent,
+                  selectedColor: colorScheme.primary,
                   onChanged: onFilterChanged,
                   options: const [
                     _BoardControlOption(
@@ -3151,6 +4421,7 @@ class _BoardHeader extends StatelessWidget {
                 width: 430,
                 child: _BoardControlGroup<BoardViewMode>(
                   key: const ValueKey('view-mode-selector'),
+                  keyPrefix: 'desktop-view-mode',
                   selected: viewMode,
                   selectedColor: colorScheme.primary,
                   onChanged: onViewModeChanged,
@@ -3178,7 +4449,7 @@ class _BoardHeader extends StatelessWidget {
   }
 }
 
-class _CollaboratorAvatarStack extends StatelessWidget {
+class _CollaboratorAvatarStack extends StatefulWidget {
   const _CollaboratorAvatarStack({required this.collaborators});
 
   static const _avatarSize = 28.0;
@@ -3188,37 +4459,161 @@ class _CollaboratorAvatarStack extends StatelessWidget {
   final List<ListCollaborator> collaborators;
 
   @override
+  State<_CollaboratorAvatarStack> createState() =>
+      _CollaboratorAvatarStackState();
+}
+
+class _CollaboratorAvatarStackState extends State<_CollaboratorAvatarStack>
+    with SingleTickerProviderStateMixin {
+  static const _floatDuration = Duration(milliseconds: 4200);
+  static const _restDuration = Duration(milliseconds: 180);
+
+  late final AnimationController _floatController = AnimationController(
+    vsync: this,
+    duration: _floatDuration,
+  )..addStatusListener(_handleAnimationStatus);
+  Timer? _restartTimer;
+  bool? _reduceMotion;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    _restartTimer?.cancel();
+
+    if (reduceMotion) {
+      _floatController
+        ..stop()
+        ..value = 0;
+    } else {
+      _floatController.forward(from: 0);
+    }
+  }
+
+  void _handleAnimationStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed || _reduceMotion != false) return;
+    _restartTimer?.cancel();
+    _restartTimer = Timer(_restDuration, () {
+      if (mounted && _reduceMotion == false) {
+        _floatController.forward(from: 0);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _restartTimer?.cancel();
+    _floatController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visibleCollaborators = collaborators
-        .take(_maxVisibleAvatars)
+    final visibleCollaborators = widget.collaborators
+        .take(_CollaboratorAvatarStack._maxVisibleAvatars)
         .toList(growable: false);
     final width =
-        _avatarSize + (_visibleWidth * (visibleCollaborators.length - 1));
+        _CollaboratorAvatarStack._avatarSize +
+        (_CollaboratorAvatarStack._visibleWidth *
+            (visibleCollaborators.length - 1));
     final colorScheme = Theme.of(context).colorScheme;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
     return Semantics(
-      label: 'Personas involucradas: ${collaborators.length}',
-      child: SizedBox(
-        key: const ValueKey('collaborator-avatar-stack'),
-        width: width,
-        height: _avatarSize,
-        child: Stack(
-          children: [
-            for (final indexed in visibleCollaborators.indexed)
-              Positioned(
-                left: indexed.$1 * _visibleWidth,
-                child: Container(
-                  width: _avatarSize,
-                  height: _avatarSize,
-                  padding: const EdgeInsets.all(1.5),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    shape: BoxShape.circle,
-                  ),
-                  child: _CollaboratorAvatar(person: indexed.$2),
-                ),
+      label: 'Personas involucradas: ${widget.collaborators.length}',
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _floatController,
+          builder: (context, _) {
+            final easedProgress = Curves.easeInOutSine.transform(
+              _floatController.value,
+            );
+            final orbit = easedProgress * math.pi * 2;
+            return SizedBox(
+              key: const ValueKey('collaborator-avatar-stack'),
+              width: width,
+              height: _CollaboratorAvatarStack._avatarSize,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  for (final indexed in visibleCollaborators.indexed)
+                    Positioned(
+                      left: indexed.$1 * _CollaboratorAvatarStack._visibleWidth,
+                      child: _FloatingCollaboratorAvatar(
+                        index: indexed.$1,
+                        orbit: orbit,
+                        reduceMotion: reduceMotion,
+                        colorScheme: colorScheme,
+                        person: indexed.$2,
+                      ),
+                    ),
+                ],
               ),
-          ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingCollaboratorAvatar extends StatelessWidget {
+  const _FloatingCollaboratorAvatar({
+    required this.index,
+    required this.orbit,
+    required this.reduceMotion,
+    required this.colorScheme,
+    required this.person,
+  });
+
+  final int index;
+  final double orbit;
+  final bool reduceMotion;
+  final ColorScheme colorScheme;
+  final ListCollaborator person;
+
+  @override
+  Widget build(BuildContext context) {
+    final phase = index * 2.05;
+    final verticalTravel = 1.8 + ((index % 3) * 0.4);
+    final horizontalTravel = 0.45 + ((index % 2) * 0.25);
+    final floatOffset = reduceMotion
+        ? Offset.zero
+        : Offset(
+            math.cos(orbit + phase) * horizontalTravel,
+            math.sin(orbit + phase) * verticalTravel,
+          );
+    final rotation = reduceMotion
+        ? 0.0
+        : math.sin(orbit + phase + (math.pi / 3)) * 0.016;
+    final scale = reduceMotion ? 1.0 : 1 + (math.cos(orbit + phase) * 0.012);
+
+    return Transform.translate(
+      key: ValueKey('collaborator-avatar-float-$index'),
+      offset: floatOffset,
+      child: Transform.rotate(
+        angle: rotation,
+        child: Transform.scale(
+          scale: scale,
+          child: Container(
+            width: _CollaboratorAvatarStack._avatarSize,
+            height: _CollaboratorAvatarStack._avatarSize,
+            padding: const EdgeInsets.all(1.5),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.shadow.withValues(alpha: 0.18),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: _CollaboratorAvatar(person: person),
+          ),
         ),
       ),
     );
@@ -3298,8 +4693,26 @@ class _ListMenuButton extends StatelessWidget {
     return PopupMenuButton<_ListMenuAction>(
       key: const ValueKey('list-options-button'),
       tooltip: 'Opciones de la lista',
+      enableFeedback: false,
+      onOpened: _playBoardTapSound,
       padding: EdgeInsets.zero,
       enabled: !isSaving,
+      elevation: 0,
+      color: Colors.transparent,
+      shadowColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      menuPadding: EdgeInsets.zero,
+      clipBehavior: Clip.none,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+      constraints: const BoxConstraints(minWidth: 280, maxWidth: 280),
+      popUpAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : const AnimationStyle(
+              duration: Duration(milliseconds: 240),
+              reverseDuration: Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
+            ),
       onSelected: (action) {
         switch (action) {
           case _ListMenuAction.background:
@@ -3311,42 +4724,11 @@ class _ListMenuButton extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
-        PopupMenuItem(
-          key: const ValueKey('customize-background-menu-item'),
-          value: _ListMenuAction.background,
-          enabled: onCustomizeBackground != null,
-          child: const ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.wallpaper_rounded),
-            title: Text('Cambiar fondo'),
-          ),
+        _GlassListMenuEntry(
+          backgroundEnabled: onCustomizeBackground != null,
+          showRename: onRenameList != null,
+          showDelete: onDeleteList != null,
         ),
-        if (onRenameList != null)
-          const PopupMenuItem(
-            key: ValueKey('rename-list-menu-item'),
-            value: _ListMenuAction.rename,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.edit_outlined),
-              title: Text('Editar nombre'),
-            ),
-          ),
-        if (onDeleteList != null)
-          PopupMenuItem(
-            key: const ValueKey('delete-list-menu-item'),
-            value: _ListMenuAction.delete,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                Icons.delete_outline_rounded,
-                color: colorScheme.error,
-              ),
-              title: Text(
-                'Eliminar lista',
-                style: TextStyle(color: colorScheme.error),
-              ),
-            ),
-          ),
       ],
       style: IconButton.styleFrom(
         minimumSize: const Size.square(36),
@@ -3364,6 +4746,184 @@ class _ListMenuButton extends StatelessWidget {
   }
 }
 
+class _GlassListMenuEntry extends PopupMenuEntry<_ListMenuAction> {
+  const _GlassListMenuEntry({
+    required this.backgroundEnabled,
+    required this.showRename,
+    required this.showDelete,
+  });
+
+  final bool backgroundEnabled;
+  final bool showRename;
+  final bool showDelete;
+
+  int get itemCount => 1 + (showRename ? 1 : 0) + (showDelete ? 1 : 0);
+
+  @override
+  double get height => 28 + (itemCount * 62);
+
+  @override
+  bool represents(_ListMenuAction? value) => false;
+
+  @override
+  State<_GlassListMenuEntry> createState() => _GlassListMenuEntryState();
+}
+
+class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(26);
+    return SizedBox(
+      width: 280,
+      height: widget.height,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(alpha: 0.28),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            key: const ValueKey('list-options-glass-menu'),
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              key: const ValueKey('list-options-glass-blur'),
+              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: DecoratedBox(
+                key: const ValueKey('list-options-glass-surface'),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: isDark ? 0.14 : 0.54),
+                      colorScheme.surface.withValues(
+                        alpha: isDark ? 0.58 : 0.62,
+                      ),
+                    ],
+                  ),
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.2 : 0.62),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _GlassListMenuTile(
+                        key: const ValueKey('customize-background-menu-item'),
+                        icon: Icons.wallpaper_rounded,
+                        label: 'Cambiar fondo',
+                        enabled: widget.backgroundEnabled,
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_ListMenuAction.background),
+                      ),
+                      if (widget.showRename)
+                        _GlassListMenuTile(
+                          key: const ValueKey('rename-list-menu-item'),
+                          icon: Icons.edit_outlined,
+                          label: 'Editar nombre',
+                          onTap: () =>
+                              Navigator.of(context).pop(_ListMenuAction.rename),
+                        ),
+                      if (widget.showDelete)
+                        _GlassListMenuTile(
+                          key: const ValueKey('delete-list-menu-item'),
+                          icon: Icons.delete_outline_rounded,
+                          label: 'Eliminar lista',
+                          color: colorScheme.error,
+                          onTap: () =>
+                              Navigator.of(context).pop(_ListMenuAction.delete),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassListMenuTile extends StatelessWidget {
+  const _GlassListMenuTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.enabled = true,
+    this.color,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool enabled;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final foreground = enabled
+        ? color ?? colorScheme.onSurface
+        : colorScheme.onSurface.withValues(alpha: 0.34);
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: enabled ? onTap : null,
+          child: SizedBox(
+            height: 62,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: foreground.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(icon, size: 21, color: foreground),
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BoardControlOption<T> {
   const _BoardControlOption({
     required this.value,
@@ -3376,6 +4936,117 @@ class _BoardControlOption<T> {
   final String label;
   final IconData icon;
   final String? tooltip;
+}
+
+class _GlassSelectorSurface extends StatelessWidget {
+  const _GlassSelectorSurface({
+    required this.borderRadius,
+    required this.padding,
+    required this.child,
+    this.blurKey,
+  });
+
+  final BorderRadius borderRadius;
+  final EdgeInsetsGeometry padding;
+  final Widget child;
+  final Key? blurKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withValues(alpha: 0.2),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          key: blurKey,
+          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: isDark ? 0.13 : 0.48),
+                  colorScheme.surface.withValues(alpha: isDark ? 0.42 : 0.5),
+                ],
+              ),
+              borderRadius: borderRadius,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.58),
+              ),
+            ),
+            child: Padding(padding: padding, child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SlidingSelectorHighlight extends StatelessWidget {
+  const _SlidingSelectorHighlight({
+    required this.keyPrefix,
+    required this.selectedIndex,
+    required this.itemCount,
+    required this.size,
+    required this.color,
+    required this.borderRadius,
+  });
+
+  final String keyPrefix;
+  final int selectedIndex;
+  final int itemCount;
+  final Size size;
+  final Color color;
+  final BorderRadius borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final alignment = itemCount <= 1
+        ? Alignment.center
+        : Alignment(-1 + (2 * selectedIndex / (itemCount - 1)), 0);
+    return AnimatedAlign(
+      key: ValueKey('$keyPrefix-selection-indicator'),
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+      alignment: alignment,
+      child: SizedBox.fromSize(
+        size: size,
+        child: DecoratedBox(
+          key: ValueKey('$keyPrefix-selection-pill'),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: isDark ? 0.78 : 0.7),
+            borderRadius: borderRadius,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.42),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.2),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _CompactBoardControls extends StatelessWidget {
@@ -3402,7 +5073,7 @@ class _CompactBoardControls extends StatelessWidget {
             key: const ValueKey('compact-filter-selector'),
             keyPrefix: 'filter-mode',
             selected: filter,
-            selectedColor: AppTheme.accent,
+            selectedColor: colorScheme.primary,
             onChanged: onFilterChanged,
             options: const [
               _BoardControlOption(
@@ -3473,84 +5144,112 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
+    final selectedIndex = options.indexWhere(
+      (option) => option.value == selected,
+    );
+    return SizedBox(
       height: 56,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: colorScheme.onSurface.withValues(alpha: 0.08),
-        ),
-      ),
-      child: Row(
-        children: options.map((option) {
-          final isSelected = option.value == selected;
-          final selectedForeground =
-              ThemeData.estimateBrightnessForColor(selectedColor) ==
-                  Brightness.dark
-              ? Colors.white
-              : Colors.black87;
-          return Expanded(
-            child: Tooltip(
-              message: option.tooltip ?? option.label,
-              child: Semantics(
-                button: true,
-                selected: isSelected,
-                label: option.tooltip ?? option.label,
-                child: AnimatedContainer(
-                  key: ValueKey('$keyPrefix-${option.value.name}'),
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
-                  decoration: BoxDecoration(
-                    color: isSelected ? selectedColor : Colors.transparent,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(18),
-                      onTap: isSelected ? null : () => onChanged(option.value),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              option.icon,
-                              size: 17,
-                              color: isSelected
-                                  ? selectedForeground
-                                  : colorScheme.onSurface.withValues(
-                                      alpha: 0.62,
-                                    ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              option.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.fade,
-                              softWrap: false,
-                              style: TextStyle(
-                                color: isSelected
-                                    ? selectedForeground
-                                    : colorScheme.onSurface.withValues(
-                                        alpha: 0.62,
+      child: _GlassSelectorSurface(
+        blurKey: ValueKey('$keyPrefix-glass-blur'),
+        borderRadius: BorderRadius.circular(24),
+        padding: const EdgeInsets.all(4),
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            children: [
+              _SlidingSelectorHighlight(
+                keyPrefix: keyPrefix,
+                selectedIndex: selectedIndex,
+                itemCount: options.length,
+                size: Size(
+                  constraints.maxWidth / options.length,
+                  constraints.maxHeight,
+                ),
+                color: selectedColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              Row(
+                children: options.map((option) {
+                  final isSelected = option.value == selected;
+                  final selectedForeground =
+                      ThemeData.estimateBrightnessForColor(selectedColor) ==
+                          Brightness.dark
+                      ? Colors.white
+                      : Colors.black87;
+                  final foreground = isSelected
+                      ? selectedForeground
+                      : colorScheme.onSurface.withValues(alpha: 0.74);
+                  return Expanded(
+                    child: Tooltip(
+                      message: option.tooltip ?? option.label,
+                      child: Semantics(
+                        button: true,
+                        selected: isSelected,
+                        label: option.tooltip ?? option.label,
+                        child: AnimatedContainer(
+                          key: ValueKey('$keyPrefix-${option.value.name}'),
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(20),
+                              enableFeedback: false,
+                              onTap: isSelected
+                                  ? null
+                                  : () => onChanged(option.value),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TweenAnimationBuilder<Color?>(
+                                      duration: const Duration(
+                                        milliseconds: 220,
                                       ),
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                height: 1,
+                                      tween: ColorTween(end: foreground),
+                                      builder: (context, color, child) => Icon(
+                                        option.icon,
+                                        size: 17,
+                                        color: color ?? foreground,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    AnimatedDefaultTextStyle(
+                                      duration: const Duration(
+                                        milliseconds: 220,
+                                      ),
+                                      curve: Curves.easeOutCubic,
+                                      style: TextStyle(
+                                        color: foreground,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1,
+                                      ),
+                                      child: Text(
+                                        option.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.fade,
+                                        softWrap: false,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                }).toList(),
               ),
-            ),
-          );
-        }).toList(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3558,6 +5257,7 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
 
 class _BoardControlGroup<T> extends StatelessWidget {
   const _BoardControlGroup({
+    required this.keyPrefix,
     required this.options,
     required this.selected,
     required this.selectedColor,
@@ -3566,6 +5266,7 @@ class _BoardControlGroup<T> extends StatelessWidget {
     super.key,
   });
 
+  final String keyPrefix;
   final List<_BoardControlOption<T>> options;
   final T selected;
   final Color selectedColor;
@@ -3574,38 +5275,47 @@ class _BoardControlGroup<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
+    final selectedIndex = options.indexWhere(
+      (option) => option.value == selected,
+    );
+    return SizedBox(
       height: 48,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: colorScheme.onSurface.withValues(alpha: 0.08),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.shadow.withValues(alpha: 0.12),
-            blurRadius: 16,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Row(
-        children: options
-            .map(
-              (option) => Expanded(
-                child: _BoardControlItem<T>(
-                  option: option,
-                  selected: option.value == selected,
-                  selectedColor: selectedColor,
-                  showIcon: showIcons,
-                  onTap: () => onChanged(option.value),
+      child: _GlassSelectorSurface(
+        borderRadius: BorderRadius.circular(19),
+        padding: const EdgeInsets.all(4),
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            children: [
+              _SlidingSelectorHighlight(
+                keyPrefix: keyPrefix,
+                selectedIndex: selectedIndex,
+                itemCount: options.length,
+                size: Size(
+                  constraints.maxWidth / options.length,
+                  constraints.maxHeight,
                 ),
+                color: selectedColor,
+                borderRadius: BorderRadius.circular(13),
               ),
-            )
-            .toList(),
+              Row(
+                children: options
+                    .map(
+                      (option) => Expanded(
+                        child: _BoardControlItem<T>(
+                          option: option,
+                          selected: option.value == selected,
+                          selectedColor: selectedColor,
+                          showIcon: showIcons,
+                          onTap: () => onChanged(option.value),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3642,22 +5352,14 @@ class _BoardControlItem<T> extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
-          color: selected ? selectedColor : Colors.transparent,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(13),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: selectedColor.withValues(alpha: 0.2),
-                    blurRadius: 9,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : null,
         ),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(13),
+            enableFeedback: false,
             onTap: selected ? null : onTap,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 5),

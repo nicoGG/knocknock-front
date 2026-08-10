@@ -7,6 +7,8 @@ import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
 
 enum PostItCardLayout { grid, compact, large }
 
@@ -21,6 +23,10 @@ class PostItCard extends StatelessWidget {
     this.authorPhotoUrl,
     this.originListName,
     this.layout = PostItCardLayout.grid,
+    this.currentUserId,
+    this.reactionAuthorNames = const {},
+    this.isSavingReaction = false,
+    this.onToggleReaction,
     super.key,
   });
 
@@ -33,6 +39,10 @@ class PostItCard extends StatelessWidget {
   final String? authorPhotoUrl;
   final String? originListName;
   final PostItCardLayout layout;
+  final String? currentUserId;
+  final Map<String, String> reactionAuthorNames;
+  final bool isSavingReaction;
+  final Future<void> Function(String emoji)? onToggleReaction;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +57,12 @@ class PostItCard extends StatelessWidget {
     final completionDuration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 260);
+    final reactionAnimationDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 380);
+    final reactionFingerprint = note.reactions
+        .map((reaction) => '${reaction.emoji}:${reaction.count}')
+        .join('|');
     final borderRadius = switch (layout) {
       PostItCardLayout.grid => 10.0,
       PostItCardLayout.compact => 10.0,
@@ -110,6 +126,7 @@ class PostItCard extends StatelessWidget {
               elevation: 0,
               child: InkWell(
                 key: ValueKey('note-${note.id}'),
+                enableFeedback: false,
                 onTap: onOpen,
                 borderRadius: BorderRadius.circular(borderRadius),
                 child: Ink(
@@ -180,6 +197,10 @@ class PostItCard extends StatelessWidget {
                         contentMaxLines: 7,
                         foregroundColor: foregroundColor,
                         onChecklistToggle: onChecklistToggle,
+                        currentUserId: currentUserId,
+                        reactionAuthorNames: reactionAuthorNames,
+                        isSavingReaction: isSavingReaction,
+                        onToggleReaction: onToggleReaction,
                       ),
                     },
                   ),
@@ -187,8 +208,47 @@ class PostItCard extends StatelessWidget {
               ),
             ),
           ),
+          if (layout == PostItCardLayout.grid)
+            Positioned(
+              top: -3,
+              left: 10,
+              right: 46,
+              child: IgnorePointer(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: AnimatedSwitcher(
+                    duration: reactionAnimationDuration,
+                    reverseDuration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 240),
+                    layoutBuilder: (currentChild, previousChildren) => Stack(
+                      alignment: Alignment.topLeft,
+                      children: [...previousChildren, ?currentChild],
+                    ),
+                    transitionBuilder: (child, animation) =>
+                        _FloatingReactionTransition(
+                          animation: animation,
+                          child: child,
+                        ),
+                    child: note.reactions.isEmpty
+                        ? SizedBox.shrink(
+                            key: ValueKey('no-reactions-${note.id}'),
+                          )
+                        : NoteReactionsSummary(
+                            key: ValueKey(
+                              'floating-reactions-${note.id}-$reactionFingerprint',
+                            ),
+                            note: note,
+                            foregroundColor: foregroundColor,
+                            maxVisible: 2,
+                            floating: true,
+                          ),
+                  ),
+                ),
+              ),
+            ),
           Positioned(
-            top: layout == PostItCardLayout.grid ? -6 : 0,
+            top: layout == PostItCardLayout.grid ? -5 : 0,
             right: 0,
             child: _FloatingPinButton(
               note: note,
@@ -198,6 +258,38 @@ class PostItCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FloatingReactionTransition extends StatelessWidget {
+  const _FloatingReactionTransition({
+    required this.animation,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    );
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.32),
+          end: Offset.zero,
+        ).animate(curved),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.7, end: 1).animate(curved),
+          child: child,
+        ),
       ),
     );
   }
@@ -216,6 +308,16 @@ class _InteractivePostItState extends State<_InteractivePostIt> {
   bool _isHovered = false;
   bool _isPressed = false;
 
+  void _setHovered(bool value) {
+    if (!mounted) return;
+    setState(() => _isHovered = value);
+  }
+
+  void _setPressed(bool value) {
+    if (!mounted) return;
+    setState(() => _isPressed = value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scale = _isPressed ? 0.985 : (_isHovered ? 1.015 : 1.0);
@@ -227,15 +329,18 @@ class _InteractivePostItState extends State<_InteractivePostIt> {
         : const Duration(milliseconds: 180);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() {
-        _isHovered = false;
-        _isPressed = false;
-      }),
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) {
+        if (!mounted) return;
+        setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        });
+      },
       child: Listener(
-        onPointerDown: (_) => setState(() => _isPressed = true),
-        onPointerUp: (_) => setState(() => _isPressed = false),
-        onPointerCancel: (_) => setState(() => _isPressed = false),
+        onPointerDown: (_) => _setPressed(true),
+        onPointerUp: (_) => _setPressed(false),
+        onPointerCancel: (_) => _setPressed(false),
         child: AnimatedSlide(
           offset: offset,
           duration: duration,
@@ -285,6 +390,7 @@ class _FloatingPinButton extends StatelessWidget {
           ),
           child: InkWell(
             key: ValueKey('pin-note-${note.id}'),
+            enableFeedback: false,
             onTap: onPressed,
             customBorder: const CircleBorder(),
             child: SizedBox.square(
@@ -325,6 +431,10 @@ class _NoteBody extends StatelessWidget {
     required this.contentMaxLines,
     required this.foregroundColor,
     required this.onChecklistToggle,
+    required this.currentUserId,
+    required this.reactionAuthorNames,
+    required this.isSavingReaction,
+    required this.onToggleReaction,
   });
 
   final Note note;
@@ -336,11 +446,16 @@ class _NoteBody extends StatelessWidget {
   final int contentMaxLines;
   final Color foregroundColor;
   final ValueChanged<NoteChecklistItem> onChecklistToggle;
+  final String? currentUserId;
+  final Map<String, String> reactionAuthorNames;
+  final bool isSavingReaction;
+  final Future<void> Function(String emoji)? onToggleReaction;
 
   @override
   Widget build(BuildContext context) {
     final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
     final showMetadata = !isGrid || hasBody;
+    final showReactionControls = !isGrid && onToggleReaction != null;
     final visibleOriginListName = showMetadata ? originListName : null;
     final visibleReminder = showMetadata ? note.reminderAt : null;
     final titleRow = Row(
@@ -368,7 +483,9 @@ class _NoteBody extends StatelessWidget {
         ),
       ],
     );
-    if (isGrid && !hasBody && assignee == null) return titleRow;
+    if (isGrid && !hasBody && assignee == null) {
+      return titleRow;
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -424,12 +541,21 @@ class _NoteBody extends StatelessWidget {
                 )
               : note.content.isEmpty
               ? const SizedBox.shrink()
-              : Text(
+              : isGrid
+              ? Text(
                   note.content,
                   maxLines: contentMaxLines,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: foregroundColor.withValues(alpha: 0.9),
+                  ),
+                )
+              : SingleChildScrollView(
+                  child: NoteRichTextViewer(
+                    key: ValueKey('preview-rich-content-${note.id}'),
+                    plainText: note.content,
+                    deltaJson: note.contentDelta,
+                    foregroundColor: foregroundColor.withValues(alpha: 0.9),
                   ),
                 ),
         ),
@@ -458,6 +584,19 @@ class _NoteBody extends StatelessWidget {
           ),
           SizedBox(height: isGrid ? 4 : 8),
         ],
+        if (showReactionControls) ...[
+          NoteReactionsBar(
+            note: note,
+            currentUserId: currentUserId,
+            reactionAuthorNames: reactionAuthorNames,
+            isSaving: isSavingReaction,
+            onToggle: onToggleReaction!,
+          ),
+          const SizedBox(height: 10),
+        ] else if (!isGrid && note.reactions.isNotEmpty) ...[
+          NoteReactionsSummary(note: note, foregroundColor: foregroundColor),
+          SizedBox(height: isGrid ? 6 : 10),
+        ],
         if (isGrid && hasBody && assignee != null) const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -471,6 +610,13 @@ class _NoteBody extends StatelessWidget {
                 );
               }
               if (!hasBody) return const SizedBox.shrink();
+            } else {
+              return _LargeNotePeopleFooter(
+                note: note,
+                authorPhotoUrl: authorPhotoUrl,
+                assignee: assignee,
+                foregroundColor: foregroundColor,
+              );
             }
             return Row(
               children: [
@@ -502,6 +648,86 @@ class _NoteBody extends StatelessWidget {
             );
           },
         ),
+      ],
+    );
+  }
+}
+
+class _LargeNotePeopleFooter extends StatelessWidget {
+  const _LargeNotePeopleFooter({
+    required this.note,
+    required this.authorPhotoUrl,
+    required this.assignee,
+    required this.foregroundColor,
+  });
+
+  final Note note;
+  final String? authorPhotoUrl;
+  final ListCollaborator? assignee;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = TextStyle(
+      color: foregroundColor.withValues(alpha: 0.62),
+      fontSize: 9.5,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.2,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Creado por',
+                key: ValueKey('preview-created-by-${note.id}'),
+                style: labelStyle,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  _AuthorAvatar(
+                    note: note,
+                    photoUrl: authorPhotoUrl,
+                    foregroundColor: foregroundColor,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      note.authorName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: foregroundColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (assignee case final person?) ...[
+          const SizedBox(width: 12),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Asignado a',
+                key: ValueKey('preview-assigned-to-${note.id}'),
+                style: labelStyle,
+              ),
+              const SizedBox(height: 4),
+              _AssigneeIndicator(noteId: note.id, person: person),
+            ],
+          ),
+        ],
       ],
     );
   }

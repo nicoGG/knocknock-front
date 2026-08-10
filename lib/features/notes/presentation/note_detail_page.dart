@@ -10,6 +10,8 @@ import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
+import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 
 class NoteDetailPage extends StatelessWidget {
@@ -41,6 +43,15 @@ class NoteDetailPage extends StatelessWidget {
         final currentListName = currentList?.name ?? listName;
         final assignees =
             currentList?.collaborators ?? const <ListCollaborator>[];
+        final signedInUserId = currentUserId;
+        final reactionAuthorNames = <String, String>{
+          for (final person in assignees)
+            person.uid: person.displayName.trim().isNotEmpty
+                ? person.displayName.trim()
+                : person.email.trim(),
+          ?signedInUserId: 'Tú',
+          localNoteReactionUserId: 'Tú',
+        };
         final assignee = assignees
             .where((person) => person.uid == note.assigneeUid)
             .firstOrNull;
@@ -68,9 +79,10 @@ class NoteDetailPage extends StatelessWidget {
           key: const ValueKey('note-detail-page'),
           appBar: AppBar(
             leading: IconButton(
-              tooltip: 'Volver',
+              key: const ValueKey('detail-close-button'),
+              tooltip: 'Cerrar',
               onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.arrow_back_rounded),
+              icon: const Icon(Icons.close_rounded, size: 23),
             ),
             title: Text(
               currentListName,
@@ -92,6 +104,8 @@ class NoteDetailPage extends StatelessWidget {
             assignee: assignee,
             assigneePhotoUrl: assigneePhotoUrl,
             authorPhotoUrl: authorPhotoUrl,
+            currentUserId: currentUserId,
+            reactionAuthorNames: reactionAuthorNames,
             heroTag: heroTag ?? noteHeroTag(note.id),
             isSaving: state.isSaving,
             onToggle: () => context.read<NotesCubit>().toggleNote(note),
@@ -106,6 +120,9 @@ class NoteDetailPage extends StatelessWidget {
                 context.read<NotesCubit>().updateChecklist(note, items),
             onEditChecklist: () => _edit(context, note),
             onEditAssignee: () => _editAssignee(context, note),
+            onToggleReaction: (emoji) => context
+                .read<NotesCubit>()
+                .toggleReaction(note, emoji, currentUserId),
           ),
           bottomNavigationBar: _DetailFooter(
             note: note,
@@ -118,7 +135,11 @@ class NoteDetailPage extends StatelessWidget {
   }
 
   Note? _noteFrom(NotesState state) {
-    for (final note in [...state.notes, ...state.pinnedNotes]) {
+    for (final note in [
+      ...state.notes,
+      ...state.pinnedNotes,
+      ...state.reminderNotes,
+    ]) {
       if (note.id == noteId) return note;
     }
     return null;
@@ -134,6 +155,7 @@ class NoteDetailPage extends StatelessWidget {
       context,
       note: note,
       defaultAuthorName: defaultAuthorName,
+      showAuthorField: currentUserId == null,
       assignees:
           _listFrom(cubit.state, note)?.collaborators ??
           const <ListCollaborator>[],
@@ -223,29 +245,12 @@ class NoteDetailPage extends StatelessWidget {
   }
 
   Future<void> _editReminder(BuildContext context, Note note) async {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final currentReminder = note.reminderAt;
-    final initialDate =
-        currentReminder != null && !currentReminder.isBefore(today)
-        ? currentReminder
-        : today;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: today,
-      lastDate: now.add(const Duration(days: 730)),
+    final reminder = await showReminderPicker(
+      context,
+      currentReminder: note.reminderAt,
     );
-    if (date == null || !context.mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(currentReminder ?? now),
-    );
-    if (time == null || !context.mounted) return;
-    await context.read<NotesCubit>().updateNoteReminder(
-      note,
-      DateTime(date.year, date.month, date.day, time.hour, time.minute),
-    );
+    if (reminder == null || !context.mounted) return;
+    await context.read<NotesCubit>().updateNoteReminder(note, reminder);
   }
 
   Future<void> _removeReminder(BuildContext context, Note note) async {
@@ -311,6 +316,8 @@ class _DetailBody extends StatelessWidget {
     required this.assignee,
     required this.assigneePhotoUrl,
     required this.authorPhotoUrl,
+    required this.currentUserId,
+    required this.reactionAuthorNames,
     required this.heroTag,
     required this.isSaving,
     required this.onToggle,
@@ -323,12 +330,15 @@ class _DetailBody extends StatelessWidget {
     required this.onChecklistChanged,
     required this.onEditChecklist,
     required this.onEditAssignee,
+    required this.onToggleReaction,
   });
 
   final Note note;
   final ListCollaborator? assignee;
   final String? assigneePhotoUrl;
   final String? authorPhotoUrl;
+  final String? currentUserId;
+  final Map<String, String> reactionAuthorNames;
   final Object heroTag;
   final bool isSaving;
   final VoidCallback onToggle;
@@ -341,6 +351,7 @@ class _DetailBody extends StatelessWidget {
   final ValueChanged<List<NoteChecklistItem>> onChecklistChanged;
   final VoidCallback onEditChecklist;
   final VoidCallback onEditAssignee;
+  final Future<void> Function(String emoji) onToggleReaction;
 
   @override
   Widget build(BuildContext context) {
@@ -424,6 +435,13 @@ class _DetailBody extends StatelessWidget {
                             onToggle: onToggle,
                             onSaveTitle: onSaveTitle,
                           ),
+                          _ExpandableContentRow(
+                            key: const ValueKey('detail-content-row'),
+                            note: note,
+                            isSaving: isSaving,
+                            foregroundColor: noteForeground,
+                            onSave: onSaveContent,
+                          ),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             child: Divider(
@@ -438,6 +456,7 @@ class _DetailBody extends StatelessWidget {
                             onEdit: onEditChecklist,
                             backgroundColor: Colors.transparent,
                             foregroundColor: noteForeground,
+                            dragProxyColor: noteColor,
                             borderRadius: BorderRadius.zero,
                           ),
                         ],
@@ -445,15 +464,17 @@ class _DetailBody extends StatelessWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: 14),
+                NoteReactionsBar(
+                  note: note,
+                  currentUserId: currentUserId,
+                  reactionAuthorNames: reactionAuthorNames,
+                  isSaving: isSaving,
+                  onToggle: onToggleReaction,
+                ),
                 const SizedBox(height: 22),
                 _DetailGroup(
                   children: [
-                    _ExpandableContentRow(
-                      key: const ValueKey('detail-content-row'),
-                      note: note,
-                      isSaving: isSaving,
-                      onSave: onSaveContent,
-                    ),
                     _DetailRow(
                       key: const ValueKey('detail-assignee-row'),
                       icon: Icons.assignment_ind_outlined,
@@ -748,6 +769,11 @@ class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
       height: 1.15,
       decoration: widget.note.isCompleted ? TextDecoration.lineThrough : null,
     );
+    final actionIconColor =
+        ThemeData.estimateBrightnessForColor(widget.foregroundColor) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black87;
     return InkWell(
       onTap: _startEditing,
       child: Padding(
@@ -796,6 +822,8 @@ class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
                         inputFormatters: const [
                           InitialUppercaseTextFormatter(),
                         ],
+                        minLines: 1,
+                        maxLines: null,
                         textInputAction: TextInputAction.done,
                         onSubmitted: (_) => _saveTitle(),
                         style: titleStyle,
@@ -809,19 +837,77 @@ class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
                             10,
                           ),
                           filled: true,
-                          fillColor: Colors.white.withValues(alpha: 0.18),
+                          fillColor: widget.foregroundColor.withValues(
+                            alpha: 0.08,
+                          ),
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(16),
                             borderSide: BorderSide(
                               color: widget.foregroundColor.withValues(
-                                alpha: 0.3,
+                                alpha: 0.18,
                               ),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                              color: widget.foregroundColor.withValues(
+                                alpha: 0.18,
+                              ),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                              color: widget.foregroundColor.withValues(
+                                alpha: 0.58,
+                              ),
+                              width: 1.5,
                             ),
                           ),
                         ),
                       )
                     else
                       Text(widget.note.title, style: titleStyle),
+                    if (_isEditing) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            key: const ValueKey('cancel-detail-title-button'),
+                            tooltip: 'Cancelar',
+                            onPressed: widget.isSaving ? null : _cancelEditing,
+                            color: widget.foregroundColor,
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size(40, 40),
+                              maximumSize: const Size(40, 40),
+                              backgroundColor: widget.foregroundColor
+                                  .withValues(alpha: 0.08),
+                              side: BorderSide(
+                                color: widget.foregroundColor.withValues(
+                                  alpha: 0.16,
+                                ),
+                              ),
+                            ),
+                            icon: const Icon(Icons.close_rounded, size: 21),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            key: const ValueKey('save-detail-title-button'),
+                            tooltip: 'Guardar título',
+                            onPressed: widget.isSaving ? null : _saveTitle,
+                            color: actionIconColor,
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size(40, 40),
+                              maximumSize: const Size(40, 40),
+                              backgroundColor: widget.foregroundColor,
+                            ),
+                            icon: const Icon(Icons.check_rounded, size: 21),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -846,22 +932,6 @@ class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
                 ),
               ),
             ),
-            if (_isEditing) ...[
-              IconButton(
-                key: const ValueKey('cancel-detail-title-button'),
-                tooltip: 'Cancelar',
-                onPressed: widget.isSaving ? null : _cancelEditing,
-                color: widget.foregroundColor,
-                icon: const Icon(Icons.close_rounded),
-              ),
-              IconButton(
-                key: const ValueKey('save-detail-title-button'),
-                tooltip: 'Guardar título',
-                onPressed: widget.isSaving ? null : _saveTitle,
-                color: widget.foregroundColor,
-                icon: const Icon(Icons.check_rounded),
-              ),
-            ],
           ],
         ),
       ),
@@ -873,12 +943,14 @@ class _ExpandableContentRow extends StatefulWidget {
   const _ExpandableContentRow({
     required this.note,
     required this.isSaving,
+    required this.foregroundColor,
     required this.onSave,
     super.key,
   });
 
   final Note note;
   final bool isSaving;
+  final Color foregroundColor;
   final Future<void> Function(NoteRichContent content) onSave;
 
   @override
@@ -932,7 +1004,11 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final actionForeground =
+        ThemeData.estimateBrightnessForColor(widget.foregroundColor) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black87;
     return AnimatedSize(
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
@@ -942,61 +1018,43 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
           InkWell(
             onTap: _toggle,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 17, 18, 17),
+              padding: const EdgeInsets.fromLTRB(20, 14, 18, 14),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
                     Icons.subject_rounded,
                     size: 24,
-                    color: colorScheme.onSurface.withValues(alpha: 0.68),
+                    color: widget.foregroundColor.withValues(alpha: 0.72),
                   ),
                   const SizedBox(width: 18),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Nota',
-                          style: Theme.of(context).textTheme.labelLarge
-                              ?.copyWith(
-                                color: colorScheme.onSurface.withValues(
-                                  alpha: 0.58,
-                                ),
-                              ),
-                        ),
-                        const SizedBox(height: 4),
-                        if (widget.note.content.isEmpty)
-                          Text(
-                            'Agregar una nota',
+                    child: widget.note.content.isEmpty
+                        ? Text(
+                            'Agregar contenido',
                             style: Theme.of(context).textTheme.bodyLarge
                                 ?.copyWith(
-                                  color: colorScheme.onSurface.withValues(
+                                  color: widget.foregroundColor.withValues(
                                     alpha: 0.52,
                                   ),
                                 ),
                           )
-                        else
-                          NoteRichTextViewer(
+                        : NoteRichTextViewer(
                             key: ValueKey(
                               widget.note.contentDelta ?? widget.note.content,
                             ),
                             plainText: widget.note.content,
                             deltaJson: widget.note.contentDelta,
+                            foregroundColor: widget.foregroundColor,
                           ),
-                      ],
-                    ),
                   ),
                   const SizedBox(width: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: AnimatedRotation(
-                      turns: _isExpanded ? 0.25 : 0,
-                      duration: const Duration(milliseconds: 220),
-                      child: Icon(
-                        Icons.chevron_right_rounded,
-                        color: colorScheme.onSurface.withValues(alpha: 0.38),
-                      ),
+                  AnimatedRotation(
+                    turns: _isExpanded ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: widget.foregroundColor.withValues(alpha: 0.48),
                     ),
                   ),
                 ],
@@ -1007,7 +1065,8 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
             Divider(
               height: 1,
               indent: 62,
-              color: colorScheme.onSurface.withValues(alpha: 0.08),
+              endIndent: 20,
+              color: widget.foregroundColor.withValues(alpha: 0.16),
             ),
             Padding(
               key: const ValueKey('detail-content-field'),
@@ -1020,6 +1079,8 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
                 autoFocus: true,
                 minEditorHeight: 150,
                 maxEditorHeight: 260,
+                foregroundColor: widget.foregroundColor,
+                backgroundColor: widget.foregroundColor.withValues(alpha: 0.08),
                 onChanged: (content) => _content = content,
               ),
             ),
@@ -1031,12 +1092,19 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
                   TextButton(
                     key: const ValueKey('collapse-detail-content-button'),
                     onPressed: widget.isSaving ? null : _collapse,
+                    style: TextButton.styleFrom(
+                      foregroundColor: widget.foregroundColor,
+                    ),
                     child: const Text('Cancelar'),
                   ),
                   const SizedBox(width: 8),
                   FilledButton(
                     key: const ValueKey('save-detail-content-button'),
                     onPressed: widget.isSaving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: widget.foregroundColor,
+                      foregroundColor: actionForeground,
+                    ),
                     child: const Text('Guardar'),
                   ),
                 ],

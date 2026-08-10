@@ -231,6 +231,10 @@ class _TrackingNotesRepository
       throw UnimplementedError();
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) =>
+      throw UnimplementedError();
+
+  @override
   Future<void> deleteList(String listId) => throw UnimplementedError();
 
   @override
@@ -254,11 +258,18 @@ class _TrackingNotesRepository
   Future<List<Note>> fetchPinnedNotes() => throw UnimplementedError();
 
   @override
+  Future<List<Note>> fetchReminderNotes() => throw UnimplementedError();
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) =>
       throw UnimplementedError();
 
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) =>
       throw UnimplementedError();
 
   @override

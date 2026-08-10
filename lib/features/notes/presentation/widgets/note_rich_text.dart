@@ -73,6 +73,8 @@ class NoteRichTextEditor extends StatefulWidget {
     this.minEditorHeight = 118,
     this.maxEditorHeight = 170,
     this.editorKey,
+    this.foregroundColor,
+    this.backgroundColor,
     super.key,
   });
 
@@ -83,6 +85,8 @@ class NoteRichTextEditor extends StatefulWidget {
   final double minEditorHeight;
   final double maxEditorHeight;
   final Key? editorKey;
+  final Color? foregroundColor;
+  final Color? backgroundColor;
 
   @override
   State<NoteRichTextEditor> createState() => _NoteRichTextEditorState();
@@ -177,6 +181,11 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final foregroundColor = widget.foregroundColor ?? colorScheme.onSurface;
+    final backgroundColor =
+        widget.backgroundColor ??
+        Theme.of(context).inputDecorationTheme.fillColor ??
+        colorScheme.surfaceContainerHighest;
     final isOverLimit = _characterCount > noteContentMaxLength;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -184,7 +193,7 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
       children: [
         Container(
           decoration: BoxDecoration(
-            color: Theme.of(context).inputDecorationTheme.fillColor,
+            color: backgroundColor,
             borderRadius: BorderRadius.circular(16),
             border: isOverLimit
                 ? Border.all(color: colorScheme.error, width: 1.5)
@@ -193,26 +202,32 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
           clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
-              QuillEditor.basic(
-                key: widget.editorKey,
-                controller: _controller,
-                focusNode: _focusNode,
-                scrollController: _scrollController,
-                config: QuillEditorConfig(
-                  autoFocus: widget.autoFocus,
-                  minHeight: widget.minEditorHeight,
-                  maxHeight: widget.maxEditorHeight,
-                  padding: const EdgeInsets.fromLTRB(16, 15, 16, 12),
-                  placeholder: 'Agrega contexto, pasos o una lista breve…',
-                  textCapitalization: TextCapitalization.sentences,
-                  scrollBottomInset: 24,
+              DefaultTextStyle.merge(
+                style: TextStyle(color: foregroundColor),
+                child: QuillEditor.basic(
+                  key: widget.editorKey,
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  scrollController: _scrollController,
+                  config: QuillEditorConfig(
+                    autoFocus: widget.autoFocus,
+                    minHeight: widget.minEditorHeight,
+                    maxHeight: widget.maxEditorHeight,
+                    padding: const EdgeInsets.fromLTRB(16, 15, 16, 12),
+                    placeholder: 'Agrega contexto, pasos o una lista breve…',
+                    textCapitalization: TextCapitalization.sentences,
+                    scrollBottomInset: 24,
+                  ),
                 ),
               ),
               Divider(
                 height: 1,
-                color: colorScheme.onSurface.withValues(alpha: 0.1),
+                color: foregroundColor.withValues(alpha: 0.14),
               ),
-              _NoteFormatToolbar(controller: _controller),
+              _NoteFormatToolbar(
+                controller: _controller,
+                foregroundColor: foregroundColor,
+              ),
             ],
           ),
         ),
@@ -224,7 +239,7 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: isOverLimit
                   ? colorScheme.error
-                  : colorScheme.onSurface.withValues(alpha: 0.56),
+                  : foregroundColor.withValues(alpha: 0.64),
             ),
           ),
         ),
@@ -234,13 +249,16 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
 }
 
 class _NoteFormatToolbar extends StatelessWidget {
-  const _NoteFormatToolbar({required this.controller});
+  const _NoteFormatToolbar({
+    required this.controller,
+    required this.foregroundColor,
+  });
 
   final QuillController controller;
+  final Color foregroundColor;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
@@ -256,18 +274,21 @@ class _NoteFormatToolbar extends StatelessWidget {
                 _FormatButton(
                   tooltip: 'Título grande',
                   label: 'H1',
+                  foregroundColor: foregroundColor,
                   isSelected: headerValue == Attribute.h1.value,
                   onPressed: () => _formatBlock(Attribute.h1),
                 ),
                 _FormatButton(
                   tooltip: 'Título mediano',
                   label: 'H2',
+                  foregroundColor: foregroundColor,
                   isSelected: headerValue == Attribute.h2.value,
                   onPressed: () => _formatBlock(Attribute.h2),
                 ),
                 _FormatButton(
                   tooltip: 'Texto normal',
                   label: 'Aa',
+                  foregroundColor: foregroundColor,
                   isSelected: headerValue == null,
                   onPressed: () => _formatBlock(Attribute.header),
                 ),
@@ -275,29 +296,33 @@ class _NoteFormatToolbar extends StatelessWidget {
                   width: 1,
                   height: 26,
                   margin: const EdgeInsets.symmetric(horizontal: 5),
-                  color: colorScheme.onSurface.withValues(alpha: 0.14),
+                  color: foregroundColor.withValues(alpha: 0.18),
                 ),
                 _FormatButton(
                   tooltip: 'Negrita',
                   icon: Icons.format_bold_rounded,
+                  foregroundColor: foregroundColor,
                   isSelected: attributes.containsKey(Attribute.bold.key),
                   onPressed: () => _toggleInline(Attribute.bold),
                 ),
                 _FormatButton(
                   tooltip: 'Cursiva',
                   icon: Icons.format_italic_rounded,
+                  foregroundColor: foregroundColor,
                   isSelected: attributes.containsKey(Attribute.italic.key),
                   onPressed: () => _toggleInline(Attribute.italic),
                 ),
                 _FormatButton(
                   tooltip: 'Subrayado',
                   icon: Icons.format_underlined_rounded,
+                  foregroundColor: foregroundColor,
                   isSelected: attributes.containsKey(Attribute.underline.key),
                   onPressed: () => _toggleInline(Attribute.underline),
                 ),
                 _FormatButton(
                   tooltip: 'Tachado',
                   icon: Icons.format_strikethrough_rounded,
+                  foregroundColor: foregroundColor,
                   isSelected: attributes.containsKey(
                     Attribute.strikeThrough.key,
                   ),
@@ -367,6 +392,7 @@ class _FormatButton extends StatelessWidget {
     required this.tooltip,
     required this.isSelected,
     required this.onPressed,
+    required this.foregroundColor,
     this.label,
     this.icon,
   }) : assert(label != null || icon != null);
@@ -374,19 +400,19 @@ class _FormatButton extends StatelessWidget {
   final String tooltip;
   final bool isSelected;
   final VoidCallback onPressed;
+  final Color foregroundColor;
   final String? label;
   final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: tooltip,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Material(
           color: isSelected
-              ? colorScheme.onSurface.withValues(alpha: 0.12)
+              ? foregroundColor.withValues(alpha: 0.14)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(18),
           child: InkWell(
@@ -400,12 +426,12 @@ class _FormatButton extends StatelessWidget {
                     ? Text(
                         label!,
                         style: TextStyle(
-                          color: colorScheme.onSurface,
+                          color: foregroundColor,
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
                         ),
                       )
-                    : Icon(icon, size: 22, color: colorScheme.onSurface),
+                    : Icon(icon, size: 22, color: foregroundColor),
               ),
             ),
           ),
@@ -419,11 +445,13 @@ class NoteRichTextViewer extends StatefulWidget {
   const NoteRichTextViewer({
     required this.plainText,
     this.deltaJson,
+    this.foregroundColor,
     super.key,
   });
 
   final String plainText;
   final String? deltaJson;
+  final Color? foregroundColor;
 
   @override
   State<NoteRichTextViewer> createState() => _NoteRichTextViewerState();
@@ -461,13 +489,16 @@ class _NoteRichTextViewerState extends State<NoteRichTextViewer> {
 
   @override
   Widget build(BuildContext context) {
-    return QuillEditor.basic(
-      controller: _controller,
-      config: const QuillEditorConfig(
-        scrollable: false,
-        padding: EdgeInsets.zero,
-        enableInteractiveSelection: true,
-        showCursor: false,
+    return DefaultTextStyle.merge(
+      style: TextStyle(color: widget.foregroundColor),
+      child: QuillEditor.basic(
+        controller: _controller,
+        config: const QuillEditorConfig(
+          scrollable: false,
+          padding: EdgeInsets.zero,
+          enableInteractiveSelection: true,
+          showCursor: false,
+        ),
       ),
     );
   }

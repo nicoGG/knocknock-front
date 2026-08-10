@@ -36,6 +36,55 @@ void main() {
       expect(unauthorized.body, 'Abre NockNock para ver el recordatorio.');
     },
   );
+
+  test(
+    'shows who assigned an encrypted task without exposing its title',
+    () async {
+      final storage = _MemorySecureStore();
+      final keyStore = E2eeKeyStore(storage: storage);
+      final cipher = E2eeCipher();
+      final key = await cipher.newListKey();
+      await keyStore.writeListKey('user-1', 'list-1', key);
+      final encryptedTitle = await cipher.encryptString(
+        'Comprar pan',
+        key,
+        field: e2eeNoteTitleField,
+      );
+      final resolver = EncryptedNotificationContentResolver(
+        keyStore: keyStore,
+        cipher: cipher,
+      );
+      final payload = {
+        'boardId': 'list-1',
+        'encryptedPreview': encryptedTitle,
+        'previewField': 'noteTitle',
+        'assignedByName': 'Nico',
+        'displayTitle': 'Te asignaron una tarea',
+        'displayBody': 'Abre NockNock para ver la tarea.',
+      };
+
+      final authorized = await resolver.resolve(payload, userId: 'user-1');
+      final unauthorized = await resolver.resolve(payload, userId: 'user-2');
+
+      expect(authorized.title, 'Te asignaron una tarea');
+      expect(authorized.body, 'Nico te asignó “Comprar pan”.');
+      expect(unauthorized.body, 'Nico te asignó una tarea.');
+    },
+  );
+
+  test('returns generic content when system previews are disabled', () async {
+    final content = await resolveRemoteNotificationContent(
+      data: const {
+        'displayTitle': 'Te asignaron una tarea',
+        'displayBody': 'Comprar pan',
+      },
+      userId: 'user-1',
+      previewsEnabled: false,
+    );
+
+    expect(content.title, 'NockNock');
+    expect(content.body, 'Tienes una nueva notificación.');
+  });
 }
 
 class _MemorySecureStore implements SecureKeyValueStore {

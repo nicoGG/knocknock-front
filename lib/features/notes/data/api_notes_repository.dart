@@ -51,6 +51,15 @@ class ApiNotesRepository
         'connection:error',
         (_) => _events.add(const RealtimeConnectionChanged(false)),
       )
+      ..onReconnectAttempt(
+        (_) => _events.add(const RealtimeConnectionAttemptStarted()),
+      )
+      ..onConnectError(
+        (_) => _events.add(const RealtimeConnectionChanged(false)),
+      )
+      ..onReconnectFailed(
+        (_) => _events.add(const RealtimeConnectionChanged(false)),
+      )
       ..onDisconnect((_) => _events.add(const RealtimeConnectionChanged(false)))
       ..on('note:created', _onNoteChanged)
       ..on('note:updated', _onNoteChanged)
@@ -106,8 +115,18 @@ class ApiNotesRepository
       }
       _socket.emit('board:join', boardId);
     } else {
-      final token = await _accessTokenProvider();
-      if (token == null || token.isEmpty) return;
+      _events.add(const RealtimeConnectionAttemptStarted());
+      final String? token;
+      try {
+        token = await _accessTokenProvider();
+      } on Object {
+        _events.add(const RealtimeConnectionChanged(false));
+        rethrow;
+      }
+      if (token == null || token.isEmpty) {
+        _events.add(const RealtimeConnectionChanged(false));
+        return;
+      }
       _socket.auth = {'token': token};
       _socket.connect();
     }
@@ -224,6 +243,19 @@ class ApiNotesRepository
   }
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) async {
+    final response = await _dio.patch<List<dynamic>>(
+      '/lists/reorder',
+      data: {'orderedIds': orderedIds},
+    );
+    return (response.data ?? const [])
+        .map(
+          (item) => NoteList.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  @override
   Future<void> deleteList(String listId) => _dio.delete<void>('/lists/$listId');
 
   @override
@@ -279,6 +311,14 @@ class ApiNotesRepository
   }
 
   @override
+  Future<List<Note>> fetchReminderNotes() async {
+    final response = await _dio.get<List<dynamic>>('/notes/reminders');
+    return (response.data ?? const [])
+        .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/notes',
@@ -293,6 +333,15 @@ class ApiNotesRepository
     final response = await _dio.patch<Map<String, dynamic>>(
       '/notes/$id',
       data: changes,
+    );
+    return Note.fromJson(response.data!);
+  }
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    final response = await _dio.put<Map<String, dynamic>>(
+      '/notes/$id/reactions',
+      data: {'emoji': emoji, 'active': active},
     );
     return Note.fromJson(response.data!);
   }
@@ -358,6 +407,13 @@ class ApiNotesRepository
                 'positionY': note.positionY,
                 if (note.reminderAt != null)
                   'reminderAt': note.reminderAt!.toIso8601String(),
+                'reactions': note.reactions
+                    .where(
+                      (reaction) =>
+                          reaction.isSelectedBy(localNoteReactionUserId),
+                    )
+                    .map((reaction) => reaction.emoji)
+                    .toList(),
                 'createdAt': note.createdAt.toIso8601String(),
                 'updatedAt': note.updatedAt.toIso8601String(),
               },

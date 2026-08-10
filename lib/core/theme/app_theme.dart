@@ -1,19 +1,49 @@
 import 'package:flutter/material.dart';
 
+enum AppColorTheme {
+  sunset(seedColor: Color(0xFFEC5B3F), secondaryColor: Color(0xFFF3A94C)),
+  ocean(seedColor: Color(0xFF356FD6), secondaryColor: Color(0xFF2AB7B8)),
+  forest(seedColor: Color(0xFF2F8A62), secondaryColor: Color(0xFF83A94A)),
+  violet(seedColor: Color(0xFF7657C8), secondaryColor: Color(0xFFD05E9B)),
+  cherry(seedColor: Color(0xFFD24F83), secondaryColor: Color(0xFFF08A9D)),
+  amber(seedColor: Color(0xFFC77700), secondaryColor: Color(0xFFF3B53D)),
+  mint(seedColor: Color(0xFF168F8A), secondaryColor: Color(0xFF58C7A5)),
+  midnight(seedColor: Color(0xFF344C8A), secondaryColor: Color(0xFF7768C5)),
+  coral(seedColor: Color(0xFFD85645), secondaryColor: Color(0xFFF08B72)),
+  gold(seedColor: Color(0xFFB98500), secondaryColor: Color(0xFFE8C34E)),
+  lime(seedColor: Color(0xFF5F8E25), secondaryColor: Color(0xFFA6C957)),
+  turquoise(seedColor: Color(0xFF007F84), secondaryColor: Color(0xFF56C7C1)),
+  sky(seedColor: Color(0xFF287FB8), secondaryColor: Color(0xFF72BFE1)),
+  indigo(seedColor: Color(0xFF4A5AB5), secondaryColor: Color(0xFF7F8FE0)),
+  lavender(seedColor: Color(0xFF8D5DB7), secondaryColor: Color(0xFFC594D8)),
+  graphite(seedColor: Color(0xFF586571), secondaryColor: Color(0xFF8D9AA6));
+
+  const AppColorTheme({required this.seedColor, required this.secondaryColor});
+
+  final Color seedColor;
+  final Color secondaryColor;
+}
+
 abstract final class AppTheme {
   static const ink = Color(0xFF282621);
   static const canvas = Color(0xFFF7F3EA);
   static const accent = Color(0xFFEC5B3F);
   static const darkCanvas = Color(0xFF171714);
 
-  static ThemeData get light => _build(Brightness.light);
+  static ThemeData get light => lightFor(AppColorTheme.sunset);
 
-  static ThemeData get dark => _build(Brightness.dark);
+  static ThemeData get dark => darkFor(AppColorTheme.sunset);
 
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData lightFor(AppColorTheme colorTheme) =>
+      _build(Brightness.light, colorTheme);
+
+  static ThemeData darkFor(AppColorTheme colorTheme) =>
+      _build(Brightness.dark, colorTheme);
+
+  static ThemeData _build(Brightness brightness, AppColorTheme colorTheme) {
     final isDark = brightness == Brightness.dark;
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: accent,
+      seedColor: colorTheme.seedColor,
       brightness: brightness,
       surface: isDark ? darkCanvas : canvas,
     );
@@ -54,7 +84,7 @@ abstract final class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: accent, width: 1.5),
+          borderSide: BorderSide(color: colorTheme.seedColor, width: 1.5),
         ),
       ),
       snackBarTheme: SnackBarThemeData(

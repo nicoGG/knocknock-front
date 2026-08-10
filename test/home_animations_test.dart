@@ -71,6 +71,202 @@ void main() {
     expect(tester.widget<HeroMode>(find.byType(HeroMode)).enabled, isTrue);
   });
 
+  testWidgets('the large preview card reacts without opening the note', (
+    tester,
+  ) async {
+    var note = _note();
+    var openCalls = 0;
+
+    await tester.pumpWidget(
+      StatefulBuilder(
+        builder: (context, setState) => MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 360,
+                height: 560,
+                child: PostItCard(
+                  note: note,
+                  layout: PostItCardLayout.large,
+                  currentUserId: 'owner-1',
+                  reactionAuthorNames: const {'owner-1': 'Tú'},
+                  onToggleReaction: (emoji) async {
+                    setState(
+                      () => note = note.copyWith(
+                        reactions: [
+                          NoteReaction(
+                            emoji: emoji,
+                            userUids: const ['owner-1'],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                  onToggle: () {},
+                  onPin: () {},
+                  onOpen: () => openCalls += 1,
+                  onChecklistToggle: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('add-note-reaction-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reaction-option-🔥')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-🚀')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-😡')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reaction-option-🔥')));
+    await tester.pumpAndSettle();
+
+    final reaction = find.byKey(const ValueKey('note-reaction-note-1-🔥'));
+    expect(reaction, findsOneWidget);
+    expect(openCalls, 0);
+
+    await tester.longPress(reaction);
+    await tester.pumpAndSettle();
+    expect(find.text('🔥  Tú'), findsOneWidget);
+    expect(openCalls, 0);
+  });
+
+  testWidgets('grid reactions float above the note without overflowing', (
+    tester,
+  ) async {
+    var openCalls = 0;
+    final note = _note().copyWith(
+      reactions: const [
+        NoteReaction(emoji: '❤️', userUids: ['user-1']),
+        NoteReaction(emoji: '😮', userUids: ['user-2']),
+        NoteReaction(emoji: '😢', userUids: ['user-3']),
+        NoteReaction(emoji: '🎉', userUids: ['user-4']),
+        NoteReaction(emoji: '🔥', userUids: ['user-5']),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _cardHarness(
+        note: note,
+        width: 190,
+        height: 270,
+        onOpen: () => openCalls += 1,
+      ),
+    );
+
+    final summary = find.byKey(const ValueKey('note-reactions-summary-note-1'));
+    final surface = find.byKey(const ValueKey('note-surface-note-1'));
+    final pin = find.byKey(const ValueKey('pin-note-note-1'));
+    final summaryRect = tester.getRect(summary);
+    final surfaceRect = tester.getRect(surface);
+    final firstFloatingReaction = find.byKey(
+      const ValueKey('floating-reaction-content-❤️'),
+    );
+    final animatedEmoji = find.byKey(
+      const ValueKey('animated-emoji-transform-floating-note-1-❤️'),
+    );
+    final initialReactionTop = tester.getTopLeft(firstFloatingReaction).dy;
+    final initialEmojiTransform = List<double>.of(
+      tester.widget<Transform>(animatedEmoji).transform.storage,
+    );
+
+    expect(find.text('+3'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: summary,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is TweenAnimationBuilder<double>,
+        ),
+      ),
+      findsNWidgets(5),
+    );
+    expect(summaryRect.top, lessThan(surfaceRect.top));
+    expect(summaryRect.bottom, lessThanOrEqualTo(surfaceRect.top + 14));
+    expect(summaryRect.right, lessThan(tester.getRect(pin).left));
+    expect(find.descendant(of: surface, matching: summary), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pump(const Duration(milliseconds: 140));
+    final movingReactionTop = tester.getTopLeft(firstFloatingReaction).dy;
+    final movingEmojiTransform = List<double>.of(
+      tester.widget<Transform>(animatedEmoji).transform.storage,
+    );
+    expect((movingReactionTop - initialReactionTop).abs(), greaterThan(0.1));
+    expect(movingEmojiTransform, isNot(equals(initialEmojiTransform)));
+    await tester.pump(const Duration(milliseconds: 700));
+
+    await tester.tapAt(summaryRect.center);
+    await tester.pump();
+    expect(openCalls, 1);
+  });
+
+  testWidgets('grid reaction badges animate in and out', (tester) async {
+    var note = _note();
+    late StateSetter updateCard;
+    await tester.pumpWidget(
+      StatefulBuilder(
+        builder: (context, setState) {
+          updateCard = setState;
+          return _cardHarness(note: note, width: 190, height: 270);
+        },
+      ),
+    );
+    final summary = find.byKey(const ValueKey('note-reactions-summary-note-1'));
+    expect(summary, findsNothing);
+
+    updateCard(
+      () => note = note.copyWith(
+        reactions: const [
+          NoteReaction(emoji: '🔥', userUids: ['user-1']),
+        ],
+      ),
+    );
+    await tester.pump();
+    expect(summary, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600));
+
+    updateCard(() => note = note.copyWith(reactions: const []));
+    await tester.pump();
+    expect(summary, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(summary, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('floating reactions honor reduced motion', (tester) async {
+    final note = _note().copyWith(
+      reactions: const [
+        NoteReaction(emoji: '🔥', userUids: ['user-1']),
+      ],
+    );
+    await tester.pumpWidget(
+      _cardHarness(
+        note: note,
+        width: 190,
+        height: 270,
+        disableAnimations: true,
+      ),
+    );
+
+    final summary = find.byKey(const ValueKey('note-reactions-summary-note-1'));
+    expect(summary, findsOneWidget);
+    expect(
+      find.descendant(
+        of: summary,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is TweenAnimationBuilder<double>,
+        ),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('animated-emoji-transform-floating-note-1-🔥')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('app pages enter softly and honor reduced motion', (
     tester,
   ) async {
@@ -115,6 +311,12 @@ void main() {
       ),
       findsNWidgets(4),
     );
+    final loadingNoteHeights = List.generate(
+      4,
+      (index) =>
+          tester.getSize(find.byKey(ValueKey('loading-note-$index'))).height,
+    );
+    expect(loadingNoteHeights.toSet(), hasLength(4));
 
     final firstDecoration = tester.widget<DecoratedBox>(
       find.byKey(const ValueKey('loading-note-0')),
@@ -155,18 +357,31 @@ void main() {
   });
 }
 
-Widget _cardHarness({required Note note, VoidCallback? onPin}) {
+Widget _cardHarness({
+  required Note note,
+  VoidCallback? onPin,
+  VoidCallback? onOpen,
+  double width = 300,
+  double height = 270,
+  bool disableAnimations = false,
+}) {
   return MaterialApp(
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(disableAnimations: disableAnimations),
+      child: child!,
+    ),
     home: Scaffold(
       body: Center(
         child: SizedBox(
-          width: 300,
-          height: 270,
+          width: width,
+          height: height,
           child: PostItCard(
             note: note,
             onToggle: () {},
             onPin: onPin ?? () {},
-            onOpen: () {},
+            onOpen: onOpen ?? () {},
             onChecklistToggle: (_) {},
           ),
         ),

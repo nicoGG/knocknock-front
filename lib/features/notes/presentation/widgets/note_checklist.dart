@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:uuid/uuid.dart';
 
@@ -86,6 +87,13 @@ class _NoteChecklistEditorState extends State<NoteChecklistEditor> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             buildDefaultDragHandles: false,
+            proxyDecorator: (child, index, animation) => _ChecklistDragProxy(
+              key: const ValueKey('checklist-editor-drag-proxy'),
+              animation: animation,
+              backgroundColor: colorScheme.surfaceContainerHigh,
+              foregroundColor: colorScheme.onSurface,
+              child: child,
+            ),
             itemCount: items.length,
             onReorderStart: (_) {
               // Selection handles cannot follow a field while its row moves
@@ -227,6 +235,7 @@ class _ChecklistEditorRow extends StatelessWidget {
                 focusNode: focusNode,
                 maxLength: 120,
                 textCapitalization: TextCapitalization.sentences,
+                inputFormatters: const [InitialUppercaseTextFormatter()],
                 textInputAction: TextInputAction.next,
                 autofocus: item.text.isEmpty,
                 decoration: const InputDecoration(
@@ -235,8 +244,11 @@ class _ChecklistEditorRow extends StatelessWidget {
                   border: InputBorder.none,
                   filled: false,
                 ),
-                onChanged: (text) => onChanged(item.copyWith(text: text)),
-                onFieldSubmitted: onSubmitted,
+                onChanged: (text) => onChanged(
+                  item.copyWith(text: capitalizeInitialLetter(text)),
+                ),
+                onFieldSubmitted: (text) =>
+                    onSubmitted(capitalizeInitialLetter(text)),
               ),
             ),
             PopupMenuButton<String>(
@@ -400,6 +412,7 @@ class NoteChecklistDetail extends StatefulWidget {
     required this.onEdit,
     this.backgroundColor,
     this.foregroundColor,
+    this.dragProxyColor,
     this.borderRadius = const BorderRadius.all(Radius.circular(20)),
     super.key,
   });
@@ -410,6 +423,7 @@ class NoteChecklistDetail extends StatefulWidget {
   final VoidCallback onEdit;
   final Color? backgroundColor;
   final Color? foregroundColor;
+  final Color? dragProxyColor;
   final BorderRadius borderRadius;
 
   @override
@@ -450,25 +464,20 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
-                  Icon(Icons.checklist_rounded, color: effectiveForeground),
-                  const SizedBox(width: 10),
+                  Icon(
+                    Icons.checklist_rounded,
+                    size: 20,
+                    color: effectiveForeground,
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Subtareas',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: effectiveForeground,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  TextButton.icon(
-                    onPressed: widget.isSaving
-                        ? null
-                        : () => _newItemFocusNode.requestFocus(),
-                    style: TextButton.styleFrom(
-                      foregroundColor: effectiveForeground,
-                    ),
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    label: const Text('Agregar'),
                   ),
                 ],
               ),
@@ -478,6 +487,14 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               buildDefaultDragHandles: false,
+              proxyDecorator: (child, index, animation) => _ChecklistDragProxy(
+                key: const ValueKey('detail-checklist-drag-proxy'),
+                animation: animation,
+                backgroundColor:
+                    widget.dragProxyColor ?? colorScheme.surfaceContainerHigh,
+                foregroundColor: effectiveForeground,
+                child: child,
+              ),
               itemCount: widget.items.length,
               onReorderItem: widget.isSaving ? (_, _) {} : _reorder,
               itemBuilder: (context, index) {
@@ -530,13 +547,29 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
                               ),
                         ),
                       ),
+                      IconButton(
+                        key: ValueKey(
+                          'delete-detail-checklist-item-${item.id}',
+                        ),
+                        tooltip: 'Eliminar subtarea',
+                        onPressed: widget.isSaving
+                            ? null
+                            : () => _confirmRemove(item),
+                        color: effectiveForeground.withValues(alpha: 0.74),
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(40, 40),
+                          maximumSize: const Size(40, 40),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                      ),
                     ],
                   ),
                 );
               },
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
+              padding: const EdgeInsets.fromLTRB(8, 10, 8, 4),
               child: TextField(
                 key: const ValueKey('detail-new-checklist-item'),
                 controller: _newItemController,
@@ -544,17 +577,103 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
                 enabled: !widget.isSaving,
                 maxLength: 120,
                 textCapitalization: TextCapitalization.sentences,
+                inputFormatters: const [InitialUppercaseTextFormatter()],
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
                   hintText: 'Agregar subtarea',
+                  hintStyle: TextStyle(
+                    color: effectiveForeground.withValues(alpha: 0.62),
+                  ),
                   counterText: '',
-                  border: InputBorder.none,
+                  filled: true,
+                  fillColor: effectiveForeground.withValues(alpha: 0.08),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 15,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide(
+                      color: effectiveForeground.withValues(alpha: 0.14),
+                    ),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide(
+                      color: effectiveForeground.withValues(alpha: 0.14),
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide(
+                      color: effectiveForeground.withValues(alpha: 0.58),
+                      width: 1.5,
+                    ),
+                  ),
                   prefixIcon: Icon(
                     Icons.add_rounded,
                     color: effectiveForeground,
                   ),
+                  suffixIconConstraints: const BoxConstraints(
+                    minWidth: 88,
+                    minHeight: 40,
+                  ),
+                  suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _newItemController,
+                    builder: (context, value, child) {
+                      final hasText = value.text.trim().isNotEmpty;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              key: const ValueKey(
+                                'cancel-detail-new-checklist-item',
+                              ),
+                              tooltip: 'Cancelar subtarea',
+                              onPressed: widget.isSaving
+                                  ? null
+                                  : _cancelNewItem,
+                              color: effectiveForeground,
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(36, 36),
+                                maximumSize: const Size(36, 36),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              icon: const Icon(Icons.close_rounded, size: 20),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              key: const ValueKey(
+                                'confirm-detail-new-checklist-item',
+                              ),
+                              tooltip: 'Agregar subtarea',
+                              onPressed: widget.isSaving || !hasText
+                                  ? null
+                                  : _submitNewItem,
+                              color: checkboxCheckColor,
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(36, 36),
+                                maximumSize: const Size(36, 36),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                backgroundColor: effectiveForeground,
+                                disabledBackgroundColor: effectiveForeground
+                                    .withValues(alpha: 0.14),
+                              ),
+                              icon: const Icon(Icons.check_rounded, size: 20),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ),
-                style: TextStyle(color: effectiveForeground),
+                cursorColor: effectiveForeground,
+                style: TextStyle(
+                  color: effectiveForeground,
+                  fontWeight: FontWeight.w600,
+                ),
                 onSubmitted: (_) => _submitNewItem(),
               ),
             ),
@@ -577,8 +696,47 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
     widget.onChanged(updated);
   }
 
+  Future<void> _confirmRemove(NoteChecklistItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: ValueKey('delete-detail-checklist-dialog-${item.id}'),
+        icon: Icon(
+          Icons.delete_outline_rounded,
+          color: Theme.of(dialogContext).colorScheme.error,
+        ),
+        title: const Text('¿Eliminar subtarea?'),
+        content: Text(
+          'Se eliminará “${item.text}”. Esta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('cancel-delete-detail-checklist-item'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-delete-detail-checklist-item'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || widget.isSaving) return;
+    final updated = widget.items
+        .where((candidate) => candidate.id != item.id)
+        .toList();
+    if (updated.length == widget.items.length) return;
+    widget.onChanged(updated);
+  }
+
   void _submitNewItem() {
-    final text = _newItemController.text.trim();
+    final text = capitalizeInitialLetter(_newItemController.text.trim());
     if (text.isEmpty || widget.isSaving) return;
     widget.onChanged([
       ...widget.items,
@@ -586,5 +744,66 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
     ]);
     _newItemController.clear();
     _newItemFocusNode.requestFocus();
+  }
+
+  void _cancelNewItem() {
+    _newItemController.clear();
+    _newItemFocusNode.unfocus();
+  }
+}
+
+class _ChecklistDragProxy extends StatelessWidget {
+  const _ChecklistDragProxy({
+    required this.animation,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.child,
+    super.key,
+  });
+
+  final Animation<double> animation;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final lift = disableAnimations
+            ? 1.0
+            : Curves.easeOutCubic.transform(
+                animation.value.clamp(0.0, 1.0).toDouble(),
+              );
+        final proxyColor = Color.alphaBlend(
+          foregroundColor.withValues(alpha: 0.06),
+          backgroundColor,
+        );
+        return Transform.scale(
+          scale: 1 + (0.018 * lift),
+          child: Material(
+            key: const ValueKey('checklist-drag-proxy-surface'),
+            color: proxyColor,
+            surfaceTintColor: Colors.transparent,
+            elevation: 12 * lift,
+            shadowColor: Colors.black.withValues(alpha: 0.34),
+            borderRadius: BorderRadius.circular(18),
+            clipBehavior: Clip.antiAlias,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: foregroundColor.withValues(alpha: 0.2),
+                ),
+              ),
+              child: child,
+            ),
+          ),
+        );
+      },
+    );
   }
 }

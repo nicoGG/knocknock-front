@@ -70,6 +70,10 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.updateList(listId, name));
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) =>
+      _whenReady((repository) => repository.reorderLists(orderedIds));
+
+  @override
   Future<void> deleteList(String listId) =>
       _whenReady((repository) => repository.deleteList(listId));
 
@@ -107,6 +111,10 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.fetchPinnedNotes());
 
   @override
+  Future<List<Note>> fetchReminderNotes() =>
+      _whenReady((repository) => repository.fetchReminderNotes());
+
+  @override
   Future<NotesCacheSnapshot?> readCache() async {
     await _authTransition;
     if (!_isSignedIn || remoteRepository is! NotesCacheReader) return null;
@@ -120,6 +128,10 @@ class AuthAwareNotesRepository
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) =>
       _whenReady((repository) => repository.updateNote(id, changes));
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) =>
+      _whenReady((repository) => repository.setNoteReaction(id, emoji, active));
 
   @override
   Future<List<Note>> reorderNotes(String boardId, List<String> orderedIds) =>

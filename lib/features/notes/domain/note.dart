@@ -15,6 +15,51 @@ enum NoteCategory {
   ideas,
 }
 
+const supportedNoteReactionEmojis = [
+  '👍',
+  '❤️',
+  '😂',
+  '😮',
+  '😢',
+  '🎉',
+  '👏',
+  '🙌',
+  '😍',
+  '🤔',
+  '🔥',
+  '👀',
+  '🤯',
+  '💯',
+  '🚀',
+  '😡',
+];
+const localNoteReactionUserId = 'local-device';
+
+class NoteReaction extends Equatable {
+  const NoteReaction({required this.emoji, this.userUids = const []});
+
+  factory NoteReaction.fromJson(Map<String, dynamic> json) => NoteReaction(
+    emoji: json['emoji'] as String,
+    userUids: (json['userUids'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toSet()
+        .toList(),
+  );
+
+  final String emoji;
+  final List<String> userUids;
+
+  int get count => userUids.length;
+
+  bool isSelectedBy(String? userUid) =>
+      userUids.contains(userUid ?? localNoteReactionUserId);
+
+  Map<String, dynamic> toJson() => {'emoji': emoji, 'userUids': userUids};
+
+  @override
+  List<Object?> get props => [emoji, userUids];
+}
+
 class NoteChecklistItem extends Equatable {
   const NoteChecklistItem({
     required this.id,
@@ -102,6 +147,7 @@ class Note extends Equatable {
     this.sortOrder = 0,
     this.category = NoteCategory.general,
     this.checklist = const [],
+    this.reactions = const [],
     this.assigneeUid,
     this.reminderAt,
     this.contentDelta,
@@ -134,6 +180,13 @@ class Note extends Equatable {
             ),
           )
           .toList(),
+      reactions: (json['reactions'] as List<dynamic>? ?? const [])
+          .map(
+            (item) =>
+                NoteReaction.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .where((reaction) => reaction.count > 0)
+          .toList(),
       positionX: (json['positionX'] as num?)?.toDouble() ?? 0,
       positionY: (json['positionY'] as num?)?.toDouble() ?? 0,
       reminderAt: DateTime.tryParse(json['reminderAt'] as String? ?? ''),
@@ -155,6 +208,7 @@ class Note extends Equatable {
   final int sortOrder;
   final NoteCategory category;
   final List<NoteChecklistItem> checklist;
+  final List<NoteReaction> reactions;
   final double positionX;
   final double positionY;
   final DateTime? reminderAt;
@@ -175,6 +229,7 @@ class Note extends Equatable {
     'sortOrder': sortOrder,
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
+    'reactions': reactions.map((reaction) => reaction.toJson()).toList(),
     'positionX': positionX,
     'positionY': positionY,
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
@@ -188,6 +243,7 @@ class Note extends Equatable {
     int? sortOrder,
     NoteCategory? category,
     List<NoteChecklistItem>? checklist,
+    List<NoteReaction>? reactions,
     DateTime? updatedAt,
   }) => Note(
     id: id,
@@ -203,6 +259,7 @@ class Note extends Equatable {
     sortOrder: sortOrder ?? this.sortOrder,
     category: category ?? this.category,
     checklist: checklist ?? this.checklist,
+    reactions: reactions ?? this.reactions,
     positionX: positionX,
     positionY: positionY,
     reminderAt: reminderAt,
@@ -225,6 +282,7 @@ class Note extends Equatable {
     sortOrder,
     category,
     checklist,
+    reactions,
     positionX,
     positionY,
     reminderAt,

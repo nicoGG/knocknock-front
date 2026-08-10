@@ -127,7 +127,9 @@ class _GooglePlayUpdatePromptState extends State<GooglePlayUpdatePrompt> {
 
   bool get _isEnabled =>
       widget.enabled ??
-      (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
+      (!kDebugMode &&
+          !kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.android);
 
   @override
   void initState() {

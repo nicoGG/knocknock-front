@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -14,6 +17,24 @@ import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+List<MethodCall> _captureSystemSoundCalls(WidgetTester tester) {
+  final calls = <MethodCall>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (call) async {
+      if (call.method == 'SystemSound.play') calls.add(call);
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return calls;
+}
 
 void main() {
   setUpAll(() async {
@@ -45,6 +66,97 @@ void main() {
     expect(find.byKey(const ValueKey('share-list-button')), findsOneWidget);
   });
 
+  testWidgets('collaborator avatars float softly with staggered movement', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(withInvitedPeople: true),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstAvatar = find.byKey(
+      const ValueKey('collaborator-avatar-float-0'),
+    );
+    final secondAvatar = find.byKey(
+      const ValueKey('collaborator-avatar-float-1'),
+    );
+    expect(firstAvatar, findsOneWidget);
+    expect(secondAvatar, findsOneWidget);
+
+    final initialFirstOffset = tester
+        .widget<Transform>(firstAvatar)
+        .transform
+        .getTranslation();
+    final initialSecondOffset = tester
+        .widget<Transform>(secondAvatar)
+        .transform
+        .getTranslation();
+
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 900));
+
+    final movedFirstOffset = tester
+        .widget<Transform>(firstAvatar)
+        .transform
+        .getTranslation();
+    final movedSecondOffset = tester
+        .widget<Transform>(secondAvatar)
+        .transform
+        .getTranslation();
+    expect((movedFirstOffset.y - initialFirstOffset.y).abs(), greaterThan(0.1));
+    expect(
+      (movedSecondOffset.y - initialSecondOffset.y).abs(),
+      greaterThan(0.1),
+    );
+    expect(movedFirstOffset.y, isNot(closeTo(movedSecondOffset.y, 0.1)));
+  });
+
+  testWidgets('collaborator avatars stay still with reduced motion', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(withInvitedPeople: true),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstAvatar = find.byKey(
+      const ValueKey('collaborator-avatar-float-0'),
+    );
+    final initialOffset = tester
+        .widget<Transform>(firstAvatar)
+        .transform
+        .getTranslation();
+    await tester.pump(const Duration(seconds: 5));
+    final laterOffset = tester
+        .widget<Transform>(firstAvatar)
+        .transform
+        .getTranslation();
+
+    expect(initialOffset.x, 0);
+    expect(initialOffset.y, 0);
+    expect(laterOffset.x, 0);
+    expect(laterOffset.y, 0);
+  });
+
   testWidgets('shows the board and can open the note editor', (tester) async {
     final repository = _FakeNotesRepository();
     await tester.pumpWidget(
@@ -61,6 +173,34 @@ void main() {
       find.byKey(const ValueKey('disconnected-status-indicator')),
       findsOneWidget,
     );
+    await tester.tap(find.byKey(const ValueKey('connection-status-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Estado de NockNock'), findsOneWidget);
+    final statusDialog = find.byKey(const ValueKey('connection-status-dialog'));
+    expect(
+      find.descendant(of: statusDialog, matching: find.byType(BackdropFilter)),
+      findsOneWidget,
+    );
+    final glassSurface = tester.widget<Container>(
+      find.byKey(const ValueKey('connection-status-glass-surface')),
+    );
+    expect((glassSurface.decoration! as BoxDecoration).gradient, isNotNull);
+    expect(tester.getSize(statusDialog).width, greaterThan(500));
+    expect(find.text('Backend'), findsOneWidget);
+    expect(find.text('Sin conexión'), findsOneWidget);
+    expect(find.text('Canal en tiempo real'), findsOneWidget);
+    expect(find.text('Inactivo'), findsOneWidget);
+    expect(find.text('Sincronización'), findsOneWidget);
+    expect(find.text('Solo en este dispositivo'), findsOneWidget);
+    expect(find.text('1 nota cargada'), findsOneWidget);
+    expect(find.text('Cifrado de lista y notas'), findsOneWidget);
+    expect(find.text('Disponible al iniciar sesión'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('close-connection-status-dialog')),
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('profile-avatar-button')), findsOneWidget);
     expect(find.text('Mis notas'), findsOneWidget);
     expect(find.text('Comprar café'), findsOneWidget);
@@ -73,7 +213,7 @@ void main() {
     final cardRect = tester.getRect(
       find.byKey(const ValueKey('note-surface-note-1')),
     );
-    expect(pinRect.center.dy, lessThan(cardRect.top));
+    expect(pinRect.center.dy, closeTo(cardRect.top, 0.5));
     expect(pinRect.bottom, greaterThan(cardRect.top));
 
     await tester.tap(find.byKey(const ValueKey('pin-note-note-1')));
@@ -91,6 +231,363 @@ void main() {
     expect(find.text('Nueva nota'), findsNWidgets(2));
     expect(find.byKey(const ValueKey('note-title-field')), findsOneWidget);
   });
+
+  testWidgets('long press previews a note in grid and list modes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          withInvitedPeople: true,
+          initialContent: 'Texto importante para mañana',
+          initialContentDelta:
+              '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(
+      tester
+          .widget<Material>(
+            find.byKey(const ValueKey('note-preview-transparent-shell')),
+          )
+          .type,
+      MaterialType.transparency,
+    );
+    expect(find.text('Vista previa'), findsNothing);
+    expect(find.byIcon(Icons.visibility_rounded), findsNothing);
+    expect(
+      find.byKey(const ValueKey('note-preview-scale-transition')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('note-preview-card')),
+        matching: find.text('Comprar café'),
+      ),
+      findsOneWidget,
+    );
+    final previewCard = find.byKey(const ValueKey('note-preview-card'));
+    final richContent = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('preview-rich-content-note-1')),
+    );
+    expect(richContent, findsOneWidget);
+    final richEditor = tester.widget<QuillEditor>(
+      find.descendant(of: richContent, matching: find.byType(QuillEditor)),
+    );
+    expect(
+      richEditor.controller.document.toDelta().toJson().first['attributes'],
+      containsPair('bold', true),
+    );
+    final createdBy = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('preview-created-by-note-1')),
+    );
+    final assignedTo = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('preview-assigned-to-note-1')),
+    );
+    final authorAvatar = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('author-avatar-note-1')),
+    );
+    final assigneeAvatar = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('assignee-avatar-note-1')),
+    );
+    expect(createdBy, findsOneWidget);
+    expect(assignedTo, findsOneWidget);
+    expect(authorAvatar, findsOneWidget);
+    expect(assigneeAvatar, findsOneWidget);
+    expect(
+      tester.getRect(createdBy).bottom,
+      lessThan(tester.getRect(authorAvatar).top),
+    );
+    expect(
+      tester.getRect(assignedTo).bottom,
+      lessThan(tester.getRect(assigneeAvatar).top),
+    );
+    expect(
+      find.byKey(const ValueKey('open-note-from-preview-button')),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
+    await tester.pumpAndSettle();
+
+    final dragGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('note-note-1'))),
+    );
+    await tester.pump(const Duration(milliseconds: 520));
+    await dragGesture.moveBy(const Offset(0, 32));
+    await tester.pump(const Duration(milliseconds: 100));
+    await dragGesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+
+    await tester.tap(find.text('Lista'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
+
+    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('open-note-from-preview-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+  });
+
+  testWidgets('reacts without leaving the quick preview', (tester) async {
+    final repository = _FakeNotesRepository(withInvitedPeople: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'owner-1',
+            displayName: 'Nico',
+            email: 'nico@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    final preview = find.byKey(const ValueKey('note-preview-dialog'));
+    expect(preview, findsOneWidget);
+
+    await tester.tap(
+      find.descendant(
+        of: preview,
+        matching: find.byKey(const ValueKey('add-note-reaction-button')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reaction-option-🎉')));
+    await tester.pumpAndSettle();
+
+    final reactionChip = find.descendant(
+      of: preview,
+      matching: find.byKey(const ValueKey('note-reaction-note-1-🎉')),
+    );
+    expect(reactionChip, findsOneWidget);
+    expect(repository._note.reactions.single.userUids, ['owner-1']);
+    expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
+
+    await tester.longPress(reactionChip);
+    await tester.pumpAndSettle();
+    expect(find.text('🎉  Tú'), findsOneWidget);
+    expect(repository._note.reactions.single.userUids, ['owner-1']);
+  });
+
+  testWidgets('aligns floating reactions with the pin', (tester) async {
+    final repository = _FakeNotesRepository(
+      reactions: const [
+        NoteReaction(emoji: '❤️', userUids: ['owner-1']),
+        NoteReaction(emoji: '😮', userUids: ['person-ana']),
+        NoteReaction(emoji: '👍', userUids: ['person-luis']),
+      ],
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final reactionsRect = tester.getRect(
+      find.byKey(const ValueKey('note-reactions-summary-note-1')),
+    );
+    final pinRect = tester.getRect(
+      find.byKey(const ValueKey('pin-note-note-1')),
+    );
+
+    expect(pinRect.center.dy, closeTo(reactionsRect.center.dy, 0.5));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('plays board action sounds and distinguishes a long press', (
+    tester,
+  ) async {
+    final systemSoundCalls = _captureSystemSoundCalls(tester);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('pin-note-note-1')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(1));
+    expect(
+      systemSoundCalls.single,
+      isMethodCall('SystemSound.play', arguments: 'SystemSoundType.click'),
+    );
+    await tester.pumpAndSettle();
+
+    systemSoundCalls.clear();
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(1));
+    Navigator.of(tester.element(find.text('Cambiar fondo'))).pop();
+    await tester.pumpAndSettle();
+
+    systemSoundCalls.clear();
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(1));
+    await tester.pumpAndSettle();
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('note-detail-page'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    systemSoundCalls.clear();
+    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(systemSoundCalls, hasLength(2));
+    expect(
+      systemSoundCalls,
+      everyElement(
+        isMethodCall('SystemSound.play', arguments: 'SystemSoundType.click'),
+      ),
+    );
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('note-preview-dialog'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    systemSoundCalls.clear();
+    await tester.tap(find.byKey(const ValueKey('new-note-button')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(1));
+  });
+
+  testWidgets(
+    'quick edits title, content and reordered subtasks inside the preview',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const checklist = [
+        NoteChecklistItem(id: 'quick-task-1', text: 'Primera subtarea'),
+        NoteChecklistItem(id: 'quick-task-2', text: 'Segunda subtarea'),
+      ];
+      final repository = _FakeNotesRepository(checklist: checklist);
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('quick-edit-note-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Edición rápida'), findsOneWidget);
+      expect(find.byKey(const ValueKey('quick-note-editor')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('quick-edit-title-field')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('quick-edit-content-editor')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('quick-edit-title-field')),
+        'comprar café y té',
+      );
+      final contentEditor = tester.widget<QuillEditor>(
+        find.byKey(const ValueKey('quick-edit-content-editor')),
+      );
+      final replaceLength = contentEditor.controller.document.length - 1;
+      const updatedContent = 'Contenido actualizado desde la vista rápida';
+      contentEditor.controller.replaceText(
+        0,
+        replaceLength,
+        updatedContent,
+        const TextSelection.collapsed(offset: updatedContent.length),
+      );
+      await tester.pump();
+
+      final checklistEditor = find.byKey(
+        const ValueKey('quick-edit-checklist-editor'),
+      );
+      final addItem = find.descendant(
+        of: checklistEditor,
+        matching: find.byKey(const ValueKey('add-checklist-item')),
+      );
+      await tester.ensureVisible(addItem);
+      await tester.tap(addItem);
+      await tester.pump();
+
+      final checklistFields = find.descendant(
+        of: checklistEditor,
+        matching: find.byType(TextFormField),
+      );
+      expect(checklistFields, findsNWidgets(3));
+      await tester.enterText(checklistFields.last, 'Tercera subtarea');
+      await tester.pump();
+
+      final reorderable = tester.widget<ReorderableListView>(
+        find.descendant(
+          of: checklistEditor,
+          matching: find.byType(ReorderableListView),
+        ),
+      );
+      reorderable.onReorderItem!(0, 2);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('save-quick-edit-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      expect(
+        repository.lastChanges,
+        containsPair('title', 'Comprar café y té'),
+      );
+      expect(repository.lastChanges, containsPair('content', updatedContent));
+      final savedChecklist =
+          repository.lastChanges!['checklist'] as List<dynamic>;
+      expect(savedChecklist.map((item) => (item as Map)['text']), [
+        'Segunda subtarea',
+        'Tercera subtarea',
+        'Primera subtarea',
+      ]);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('note-preview-card')),
+          matching: find.text('Comprar café y té'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('changes a list background and blur from the board', (
     tester,
@@ -208,6 +705,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('new-note-button')));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('note-author-field')), findsOneWidget);
     final titleField = find.byKey(const ValueKey('note-title-field'));
     final contentField = find.byKey(const ValueKey('note-content-editor'));
     expect(find.byTooltip('Título grande'), findsOneWidget);
@@ -253,6 +751,88 @@ void main() {
     expect(repository.createdDraft?.contentDelta, contains('"bold":true'));
     expect(repository.createdDraft?.contentDelta, contains('"header":1'));
   });
+
+  testWidgets(
+    'new note editor is glass and uses the signed-in author automatically',
+    (tester) async {
+      const user = AppUser(
+        id: 'google-user',
+        displayName: 'Nico Galdames',
+        email: 'nico@example.com',
+      );
+      final repository = _FakeNotesRepository();
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(user: user),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('new-note-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('note-editor-glass-blur')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('note-editor-glass-surface')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('note-author-field')), findsNothing);
+      expect(find.text('Tu nombre'), findsNothing);
+
+      final reminder = find.byKey(const ValueKey('note-reminder-button'));
+      await tester.ensureVisible(reminder);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('note-reminder-glass-surface')),
+        findsOneWidget,
+      );
+      final sheetWidth = tester
+          .getSize(find.byKey(const ValueKey('note-editor-glass-surface')))
+          .width;
+      expect(tester.getSize(reminder).width, closeTo(sheetWidth - 48, 0.1));
+
+      final beforePreset = DateTime.now();
+      await tester.tap(reminder);
+      await tester.pumpAndSettle();
+      expect(find.text('Dentro de 1 día'), findsOneWidget);
+      expect(find.text('Dentro de 1 semana'), findsOneWidget);
+      expect(find.text('Dentro de 1 mes'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reminder-preset-day')));
+      await tester.pumpAndSettle();
+      final afterPreset = DateTime.now();
+
+      final titleField = find.byKey(const ValueKey('note-title-field'));
+      await tester.ensureVisible(titleField);
+      await tester.enterText(titleField, 'nota con autor');
+      final saveButton = find.byKey(const ValueKey('save-note-button'));
+      await tester.ensureVisible(saveButton);
+      await tester.tap(saveButton);
+      await tester.pumpAndSettle();
+
+      expect(repository.createdDraft?.authorName, 'Nico Galdames');
+      final createdReminder = repository.createdDraft!.reminderAt!;
+      final earliestReminder = DateTime(
+        beforePreset.year,
+        beforePreset.month,
+        beforePreset.day,
+        beforePreset.hour,
+        beforePreset.minute,
+      ).add(const Duration(days: 1));
+      final latestReminder = DateTime(
+        afterPreset.year,
+        afterPreset.month,
+        afterPreset.day,
+        afterPreset.hour,
+        afterPreset.minute,
+      ).add(const Duration(days: 1));
+      expect(createdReminder.isBefore(earliestReminder), isFalse);
+      expect(createdReminder.isAfter(latestReminder), isFalse);
+    },
+  );
 
   testWidgets('keeps focus in the detail while typing', (tester) async {
     await tester.pumpWidget(
@@ -326,8 +906,8 @@ void main() {
       of: checklistEditor,
       matching: find.byType(TextFormField),
     );
-    await tester.enterText(fields.at(0), 'Preparar pauta');
-    await tester.enterText(fields.at(1), 'Confirmar asistentes');
+    await tester.enterText(fields.at(0), 'preparar pauta');
+    await tester.enterText(fields.at(1), 'confirmar asistentes');
 
     final menus = find.descendant(
       of: checklistEditor,
@@ -496,6 +1076,10 @@ void main() {
       tester.widget<Text>(find.text('Subtareas')).style?.color,
       NoteCategoryStyle.foregroundColor(NoteCategory.travel),
     );
+    expect(
+      find.descendant(of: checklistDetail, matching: find.text('Agregar')),
+      findsNothing,
+    );
     final reorderable = tester.widget<ReorderableListView>(
       find.byType(ReorderableListView),
     );
@@ -505,9 +1089,77 @@ void main() {
     expect(reordered.map((item) => item['id']), ['task-2', 'task-3', 'task-1']);
     expect(reordered.first['indent'], 0);
 
+    final deleteTask = find.byKey(
+      const ValueKey('delete-detail-checklist-item-task-1'),
+    );
+    expect(deleteTask, findsOneWidget);
+    await tester.tap(deleteTask);
+    await tester.pumpAndSettle();
+    expect(find.text('¿Eliminar subtarea?'), findsOneWidget);
+    expect(
+      find.text('Se eliminará “Pasaporte”. Esta acción no se puede deshacer.'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('cancel-delete-detail-checklist-item')),
+    );
+    await tester.pumpAndSettle();
+    expect(deleteTask, findsOneWidget);
+
+    await tester.tap(deleteTask);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('confirm-delete-detail-checklist-item')),
+    );
+    await tester.pumpAndSettle();
+    expect(deleteTask, findsNothing);
+    final checklistAfterDelete =
+        repository.lastChanges?['checklist'] as List<dynamic>;
+    expect(checklistAfterDelete.map((item) => item['id']), [
+      'task-2',
+      'task-3',
+    ]);
+
     final directAdd = find.byKey(const ValueKey('detail-new-checklist-item'));
-    await tester.enterText(directAdd, 'Comprar adaptador');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+    final directAddDecoration = tester.widget<TextField>(directAdd).decoration!;
+    expect(directAddDecoration.filled, isTrue);
+    expect(
+      (directAddDecoration.border! as OutlineInputBorder)
+          .borderRadius
+          .topLeft
+          .x,
+      18,
+    );
+    final cancelDirectAdd = find.byKey(
+      const ValueKey('cancel-detail-new-checklist-item'),
+    );
+    final confirmDirectAdd = find.byKey(
+      const ValueKey('confirm-detail-new-checklist-item'),
+    );
+    expect(cancelDirectAdd, findsOneWidget);
+    expect(confirmDirectAdd, findsOneWidget);
+    expect(tester.widget<IconButton>(confirmDirectAdd).onPressed, isNull);
+    final directAddRect = tester.getRect(directAdd);
+    expect(
+      tester.getCenter(cancelDirectAdd).dx,
+      lessThan(tester.getCenter(confirmDirectAdd).dx),
+    );
+    expect(
+      tester.getRect(confirmDirectAdd).right,
+      lessThanOrEqualTo(directAddRect.right),
+    );
+
+    await tester.enterText(directAdd, 'Descartar subtarea');
+    await tester.pump();
+    expect(tester.widget<IconButton>(confirmDirectAdd).onPressed, isNotNull);
+    await tester.tap(cancelDirectAdd);
+    await tester.pump();
+    expect(tester.widget<TextField>(directAdd).controller?.text, isEmpty);
+    expect(tester.widget<TextField>(directAdd).focusNode?.hasFocus, isFalse);
+
+    await tester.enterText(directAdd, 'comprar adaptador');
+    await tester.pump();
+    await tester.tap(confirmDirectAdd);
     await tester.pumpAndSettle();
 
     final checklistAfterAdd =
@@ -515,6 +1167,24 @@ void main() {
     expect(checklistAfterAdd.last['text'], 'Comprar adaptador');
     expect(find.text('Comprar adaptador'), findsOneWidget);
     expect(tester.widget<TextField>(directAdd).focusNode?.hasFocus, isTrue);
+
+    final dragProxy = reorderable.proxyDecorator!(
+      const SizedBox(width: 260, height: 64),
+      0,
+      const AlwaysStoppedAnimation<double>(1),
+    );
+    await tester.pumpWidget(MaterialApp(home: Center(child: dragProxy)));
+
+    expect(
+      find.byKey(const ValueKey('detail-checklist-drag-proxy')),
+      findsOneWidget,
+    );
+    final proxySurface = tester.widget<Material>(
+      find.byKey(const ValueKey('checklist-drag-proxy-surface')),
+    );
+    expect(proxySurface.borderRadius, BorderRadius.circular(18));
+    expect(proxySurface.elevation, 12);
+    expect(proxySurface.color, isNot(Colors.black));
   });
 
   testWidgets('opens a useful note detail before editing', (tester) async {
@@ -541,20 +1211,49 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+    final closeButton = find.byKey(const ValueKey('detail-close-button'));
+    expect(closeButton, findsOneWidget);
+    expect(
+      find.descendant(
+        of: closeButton,
+        matching: find.byIcon(Icons.close_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.arrow_back_rounded), findsNothing);
     expect(find.text('Mis notas'), findsOneWidget);
     expect(find.text('Comprar café'), findsOneWidget);
+    final taskContainer = find.byKey(const ValueKey('note-task-container'));
+    final contentRow = find.byKey(const ValueKey('detail-content-row'));
+    expect(
+      find.descendant(of: taskContainer, matching: contentRow),
+      findsOneWidget,
+    );
     final contentViewer = tester.widget<NoteRichTextViewer>(
       find.byType(NoteRichTextViewer),
     );
     expect(contentViewer.plainText, 'Para la reunión de mañana');
+    expect(contentViewer.foregroundColor, isNotNull);
+    expect(find.text('Descripción'), findsNothing);
+    final subtasksText = find.text('Subtareas');
+    final subtasksStyle = tester.widget<Text>(subtasksText).style!;
+    final detailTheme = Theme.of(tester.element(subtasksText));
+    expect(
+      subtasksStyle.fontSize,
+      lessThan(detailTheme.textTheme.titleMedium!.fontSize!),
+    );
     expect(find.text('Agregar recordatorio'), findsOneWidget);
     expect(find.text('Creada por'), findsOneWidget);
     expect(find.text('Nico'), findsNWidgets(2));
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('detail-content-row'))).dy,
-      lessThan(
-        tester.getTopLeft(find.byKey(const ValueKey('detail-assignee-row'))).dy,
+      tester.getTopLeft(contentRow).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const ValueKey('note-detail-header'))).dy,
       ),
+    );
+    expect(
+      tester.getBottomLeft(contentRow).dy,
+      lessThan(tester.getTopLeft(find.text('Subtareas')).dy),
     );
     expect(
       find.text('Creada el 1 de enero de 2026 a las 00:00'),
@@ -593,6 +1292,95 @@ void main() {
     expect(find.byKey(const ValueKey('note-title-field')), findsOneWidget);
   });
 
+  testWidgets('adds, summarizes, and removes an emoji reaction', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository();
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'owner-1',
+            displayName: 'Nico',
+            email: 'nico@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    final reactionsBar = find.byKey(const ValueKey('note-reactions-bar'));
+    expect(reactionsBar, findsOneWidget);
+    expect(tester.widget(reactionsBar), isA<Wrap>());
+    expect(
+      find.descendant(of: reactionsBar, matching: find.text('Reacciones')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('add-note-reaction-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Reaccionar a la nota'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reaction-option-🎉')));
+    await tester.pumpAndSettle();
+
+    final reactionChip = find.byKey(const ValueKey('note-reaction-note-1-🎉'));
+    expect(reactionChip, findsOneWidget);
+    expect(repository._note.reactions.single.emoji, '🎉');
+    expect(repository._note.reactions.single.userUids, ['owner-1']);
+
+    await tester.tap(find.byTooltip('Cerrar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('note-reactions-summary-note-1')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(reactionChip);
+    await tester.pumpAndSettle();
+    expect(repository._note.reactions, isEmpty);
+    expect(reactionChip, findsNothing);
+  });
+
+  testWidgets('shows who reacted after a subtle long press', (tester) async {
+    final repository = _FakeNotesRepository(
+      withInvitedPeople: true,
+      reactions: const [
+        NoteReaction(emoji: '🎉', userUids: ['owner-1', 'person-ana']),
+      ],
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'owner-1',
+            displayName: 'Nico',
+            email: 'nico@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    final reactionChip = find.byKey(const ValueKey('note-reaction-note-1-🎉'));
+
+    await tester.longPress(reactionChip);
+    await tester.pumpAndSettle();
+
+    expect(find.text('🎉  Tú y Ana Torres'), findsOneWidget);
+    expect(repository._note.reactions.single.userUids, [
+      'owner-1',
+      'person-ana',
+    ]);
+  });
+
   testWidgets('edits the title directly in the note header card', (
     tester,
   ) async {
@@ -615,8 +1403,23 @@ void main() {
 
     final titleField = find.byKey(const ValueKey('detail-title-field'));
     expect(titleField, findsOneWidget);
+    expect(tester.widget<TextField>(titleField).maxLines, isNull);
+    final cancelTitle = find.byKey(
+      const ValueKey('cancel-detail-title-button'),
+    );
+    final saveTitle = find.byKey(const ValueKey('save-detail-title-button'));
+    final titleFieldRect = tester.getRect(titleField);
+    expect(
+      tester.getRect(cancelTitle).top,
+      greaterThanOrEqualTo(titleFieldRect.bottom),
+    );
+    expect(
+      tester.getRect(saveTitle).top,
+      greaterThanOrEqualTo(titleFieldRect.bottom),
+    );
+    expect(tester.getRect(saveTitle).right, closeTo(titleFieldRect.right, 1));
     await tester.enterText(titleField, 'Comprar té');
-    await tester.tap(find.byKey(const ValueKey('save-detail-title-button')));
+    await tester.tap(saveTitle);
     await tester.pumpAndSettle();
 
     expect(repository.lastChanges, containsPair('title', 'Comprar té'));
@@ -648,6 +1451,9 @@ void main() {
 
     expect(find.byType(Dialog), findsNothing);
     expect(find.byKey(const ValueKey('detail-content-editor')), findsOneWidget);
+    expect(find.text('H1'), findsOneWidget);
+    expect(find.text('H2'), findsOneWidget);
+    expect(find.byIcon(Icons.format_italic_rounded), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('collapse-detail-content-button')),
@@ -734,6 +1540,37 @@ void main() {
     await tester.ensureVisible(reminderRow);
     await tester.pumpAndSettle();
     await tester.tap(reminderRow);
+    await tester.pumpAndSettle();
+    expect(find.text('Dentro de 1 día'), findsOneWidget);
+    expect(find.text('Dentro de 1 semana'), findsOneWidget);
+    expect(find.text('Dentro de 1 mes'), findsOneWidget);
+    final beforePreset = DateTime.now();
+    await tester.tap(find.byKey(const ValueKey('reminder-preset-week')));
+    await tester.pumpAndSettle();
+    final afterPreset = DateTime.now();
+    final savedPreset = DateTime.parse(
+      repository.lastChanges!['reminderAt'] as String,
+    );
+    final earliestReminder = DateTime(
+      beforePreset.year,
+      beforePreset.month,
+      beforePreset.day,
+      beforePreset.hour,
+      beforePreset.minute,
+    ).add(const Duration(days: 7));
+    final latestReminder = DateTime(
+      afterPreset.year,
+      afterPreset.month,
+      afterPreset.day,
+      afterPreset.hour,
+      afterPreset.minute,
+    ).add(const Duration(days: 7));
+    expect(savedPreset.isBefore(earliestReminder), isFalse);
+    expect(savedPreset.isAfter(latestReminder), isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('detail-reminder-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reminder-custom-date')));
     await tester.pumpAndSettle();
     final datePicker = find.byType(DatePickerDialog);
     expect(datePicker, findsOneWidget);
@@ -865,7 +1702,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('detail-assignee-row')));
+    final assigneeRow = find.byKey(const ValueKey('detail-assignee-row'));
+    await tester.ensureVisible(assigneeRow);
+    await tester.pumpAndSettle();
+    await tester.tap(assigneeRow);
     await tester.pumpAndSettle();
 
     expect(find.text('Asignar responsable'), findsOneWidget);
@@ -879,7 +1719,9 @@ void main() {
     expect(repository.lastChanges, containsPair('assigneeUid', null));
     expect(find.text('Sin responsable'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('detail-assignee-row')));
+    await tester.ensureVisible(assigneeRow);
+    await tester.pumpAndSettle();
+    await tester.tap(assigneeRow);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('assignee-option-person-ana')));
     await tester.pumpAndSettle();
@@ -1220,6 +2062,7 @@ void main() {
   testWidgets('compact filters stay visible on a narrow screen', (
     tester,
   ) async {
+    final systemSoundCalls = _captureSystemSoundCalls(tester);
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     tester.platformDispatcher.textScaleFactorTestValue = 1.25;
@@ -1243,6 +2086,58 @@ void main() {
     expect(find.text('Mosaico'), findsOneWidget);
     expect(find.text('Lista'), findsOneWidget);
     expect(find.text('Grande'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('filter-mode-glass-blur')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('view-mode-glass-blur')), findsOneWidget);
+    final filterIndicator = find.byKey(
+      const ValueKey('filter-mode-selection-indicator'),
+    );
+    final filterPill = find.byKey(const ValueKey('filter-mode-selection-pill'));
+    expect(filterIndicator, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('view-mode-selection-indicator')),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<AnimatedAlign>(filterIndicator).duration,
+      const Duration(milliseconds: 300),
+    );
+    final selectedFilterDecoration =
+        tester.widget<DecoratedBox>(filterPill).decoration as BoxDecoration;
+    expect(
+      selectedFilterDecoration.color?.a,
+      allOf(greaterThan(0), lessThan(1)),
+    );
+    expect(selectedFilterDecoration.borderRadius, BorderRadius.circular(20));
+    expect(selectedFilterDecoration.border, isNotNull);
+
+    final startX = tester.getCenter(filterPill).dx;
+    final pendingX = tester
+        .getCenter(find.byKey(const ValueKey('filter-mode-pending')))
+        .dx;
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pump();
+    expect(
+      systemSoundCalls,
+      contains(
+        isMethodCall('SystemSound.play', arguments: 'SystemSoundType.click'),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 120));
+    final middleX = tester.getCenter(filterPill).dx;
+    expect(middleX, allOf(greaterThan(startX), lessThan(pendingX)));
+    await tester.pumpAndSettle();
+    expect(tester.getCenter(filterPill).dx, closeTo(pendingX, 1));
+
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(1));
+
+    await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+    await tester.pump();
+    expect(systemSoundCalls, hasLength(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -1428,6 +2323,16 @@ void main() {
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('app-drawer-glass-blur')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('drawer-profile-glass-surface')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('drawer-selected-tile-glass')),
+      findsOneWidget,
+    );
+    expect(tester.getSize(find.byType(Drawer)).width, lessThanOrEqualTo(336));
     expect(find.byKey(const ValueKey('drawer-profile-button')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('drawer-google-sign-in-suggestion')),
@@ -1438,7 +2343,8 @@ void main() {
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('drawer-profile-button')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsOneWidget);
@@ -1457,6 +2363,21 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('add-list-button')));
     await tester.pumpAndSettle();
+
+    final createListDialog = find.byKey(
+      const ValueKey('create-list-glass-dialog'),
+    );
+    expect(createListDialog, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-list-dialog-glass-blur')),
+      findsOneWidget,
+    );
+    expect(tester.getSize(createListDialog).width, greaterThan(560));
+
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+    expect(createListDialog, findsOneWidget);
+
     await tester.enterText(
       find.byKey(const ValueKey('list-name-field')),
       'trabajo',
@@ -1467,6 +2388,91 @@ void main() {
 
     expect(find.text('Trabajo'), findsOneWidget);
     expect(find.text('Tu lista está lista'), findsOneWidget);
+  });
+
+  testWidgets('reorders lists from the button beside the add action', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final repository = _FakeNotesRepository(withPinnedAcrossLists: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+
+    final reorderButton = find.byKey(const ValueKey('reorder-lists-button'));
+    final addButton = find.byKey(const ValueKey('add-list-button'));
+    expect(reorderButton, findsOneWidget);
+    expect(addButton, findsOneWidget);
+    expect(
+      tester.getCenter(reorderButton).dx,
+      lessThan(tester.getCenter(addButton).dx),
+    );
+    expect(
+      tester.getCenter(reorderButton).dy,
+      closeTo(tester.getCenter(addButton).dy, 0.5),
+    );
+    expect(tester.getSize(reorderButton), tester.getSize(addButton));
+
+    await tester.tap(reorderButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reorder-lists-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('reorder-lists-glass-blur')),
+      findsOneWidget,
+    );
+    final glassSurface = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('reorder-lists-glass-surface')),
+    );
+    final glassDecoration = glassSurface.decoration as BoxDecoration;
+    expect(glassDecoration.gradient, isNotNull);
+    expect(glassDecoration.border, isNotNull);
+    expect(find.text('Ordenar listas'), findsOneWidget);
+    final saveButton = find.byKey(const ValueKey('save-list-order-button'));
+    final cancelButton = find.widgetWithText(OutlinedButton, 'Cancelar');
+    final saveLabel = tester.widget<Text>(find.text('Guardar orden'));
+    expect(saveLabel.maxLines, 1);
+    expect(saveLabel.softWrap, isFalse);
+    expect(tester.getSize(saveButton).height, greaterThanOrEqualTo(54));
+    expect(
+      tester.getSize(saveButton).width,
+      greaterThan(tester.getSize(cancelButton).width),
+    );
+    final dragGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('reorder-list-handle-work'))),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await dragGesture.moveTo(
+      tester.getCenter(find.byKey(const ValueKey('reorder-list-item-home'))),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    await dragGesture.up();
+    await tester.pumpAndSettle();
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    expect(repository.reorderedListIds, ['work', 'home']);
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('list-work'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('list-home'))).dy),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('renames and deletes a list from the three-dot menu', (
@@ -1496,6 +2502,27 @@ void main() {
     expect(find.text('Cambiar fondo'), findsOneWidget);
     expect(find.text('Editar nombre'), findsOneWidget);
     expect(find.text('Eliminar lista'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('list-options-glass-blur')),
+      findsOneWidget,
+    );
+    final glassMenu = tester.widget<ClipRRect>(
+      find.byKey(const ValueKey('list-options-glass-menu')),
+    );
+    expect(glassMenu.borderRadius, BorderRadius.circular(26));
+    final glassSurface =
+        tester
+                .widget<DecoratedBox>(
+                  find.byKey(const ValueKey('list-options-glass-surface')),
+                )
+                .decoration
+            as BoxDecoration;
+    final glassGradient = glassSurface.gradient! as LinearGradient;
+    expect(
+      glassGradient.colors.every((color) => color.a > 0 && color.a < 1),
+      isTrue,
+    );
+    expect(glassSurface.border, isNotNull);
     await tester.tap(find.byKey(const ValueKey('rename-list-menu-item')));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -1572,6 +2599,69 @@ void main() {
     expect(find.byKey(const ValueKey('settings-view-grid')), findsNothing);
     expect(find.byKey(const ValueKey('settings-view-list')), findsNothing);
     expect(find.text('DATOS EN ESTE DISPOSITIVO'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-ambient-background')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-overview-card')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-appearance-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('notification-previews-setting')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-licenses-button')),
+      findsNothing,
+    );
+    expect(find.text('Licencias de código abierto'), findsNothing);
+  });
+
+  testWidgets('persists private notification previews from settings', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-menu-button')));
+    await tester.pumpAndSettle();
+
+    final previewSwitch = find.byKey(
+      const ValueKey('notification-previews-switch'),
+    );
+    await Scrollable.ensureVisible(
+      tester.element(previewSwitch),
+      alignment: 0.5,
+      duration: Duration.zero,
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(previewSwitch).value, isTrue);
+
+    await tester.tap(previewSwitch);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<Switch>(previewSwitch).value, isFalse);
+    final preferences = await SharedPreferences.getInstance();
+    expect(
+      preferences.getBool('nocknock.notification_previews_enabled.v1'),
+      isFalse,
+    );
+    expect(
+      find.text('Oculta títulos y contenido fuera de NockNock.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('shows notes assigned to the current user from the menu', (
@@ -1707,6 +2797,47 @@ void main() {
     expect(find.text('Trabajo'), findsOneWidget);
   });
 
+  testWidgets('shows notes with reminders below pinned in the menu', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          withRemindersAcrossLists: true,
+          initialReminderAt: DateTime(2026, 8, 12, 9),
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+
+    final pinnedMenu = find.byKey(const ValueKey('pinned-menu-button'));
+    final reminderMenu = find.byKey(
+      const ValueKey('with-reminder-menu-button'),
+    );
+    expect(pinnedMenu, findsOneWidget);
+    expect(reminderMenu, findsOneWidget);
+    expect(
+      tester.getTopLeft(reminderMenu).dy,
+      greaterThan(tester.getTopLeft(pinnedMenu).dy),
+    );
+
+    await tester.tap(reminderMenu);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Con recordatorio'), findsOneWidget);
+    expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('Recordar lanzamiento'), findsOneWidget);
+    expect(find.text('Mis notas'), findsOneWidget);
+    expect(find.text('Trabajo'), findsOneWidget);
+    expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
+    expect(find.byKey(const ValueKey('new-note-fab')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('hides notes assigned to another person from the menu', (
     tester,
   ) async {
@@ -1736,7 +2867,7 @@ void main() {
     );
   });
 
-  testWidgets('changes the whole app to dark mode from settings', (
+  testWidgets('keeps appearance controls in the profile instead of settings', (
     tester,
   ) async {
     final themeController = AppThemeController();
@@ -1755,15 +2886,93 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-menu-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('APARIENCIA'), findsOneWidget);
-    expect(find.text('Usar configuración del sistema'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('theme-mode-dark')));
-    await tester.pumpAndSettle();
+    expect(find.text('APARIENCIA'), findsNothing);
+    expect(find.byKey(const ValueKey('theme-mode-system')), findsNothing);
+    expect(find.byKey(const ValueKey('theme-mode-light')), findsNothing);
+    expect(find.byKey(const ValueKey('theme-mode-dark')), findsNothing);
+    expect(find.text('CUENTA'), findsOneWidget);
 
-    expect(themeController.themeMode, ThemeMode.dark);
+    await tester.tap(find.byKey(const ValueKey('settings-profile-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('TEMA DE COLOR'), findsOneWidget);
+    expect(find.text('MODO'), findsOneWidget);
+    expect(find.byKey(const ValueKey('profile-theme-dark')), findsOneWidget);
+  });
+
+  testWidgets('changes the whole app color theme from the profile', (
+    tester,
+  ) async {
+    final themeController = AppThemeController();
+    addTearDown(themeController.dispose);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+        themeController: themeController,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('TEMA DE COLOR'), findsOneWidget);
+    expect(find.text('MODO'), findsOneWidget);
     expect(
-      Theme.of(tester.element(find.text('Modo oscuro'))).brightness,
-      Brightness.dark,
+      find.byKey(const ValueKey('profile-color-theme-sunset')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-color-theme-ocean')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-color-theme-forest')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-color-theme-violet')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-color-theme-cherry')).hitTestable(),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('profile-theme-system')), findsOneWidget);
+    expect(find.byKey(const ValueKey('profile-theme-light')), findsOneWidget);
+    expect(find.byKey(const ValueKey('profile-theme-dark')), findsOneWidget);
+
+    final initialPrimary = Theme.of(
+      tester.element(find.text('Atardecer')),
+    ).colorScheme.primary;
+    for (var page = 0; page < 3; page++) {
+      await tester.drag(
+        find.byKey(const ValueKey('profile-color-theme-list')),
+        const Offset(-600, 0),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      find.byKey(const ValueKey('profile-color-theme-graphite')).hitTestable(),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('profile-color-theme-graphite')).hitTestable(),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final graphitePrimary = Theme.of(
+      tester.element(find.text('Grafito')),
+    ).colorScheme.primary;
+    expect(themeController.colorTheme, AppColorTheme.graphite);
+    expect(graphitePrimary, isNot(initialPrimary));
+    expect(
+      graphitePrimary,
+      AppTheme.lightFor(AppColorTheme.graphite).colorScheme.primary,
     );
   });
 
@@ -1861,7 +3070,7 @@ void main() {
     );
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(isConnected: true),
+        repository: _FakeNotesRepository(isConnected: true, isEncrypted: true),
         authRepository: _FakeAuthRepository(user: user),
       ),
     );
@@ -1872,10 +3081,38 @@ void main() {
       find.byKey(const ValueKey('connected-status-indicator')),
       findsOneWidget,
     );
+    final connectionIcon = tester.getRect(
+      find.byKey(const ValueKey('connected-status-indicator')),
+    );
+    final lockBadge = tester.getRect(
+      find.byKey(const ValueKey('encryption-lock-badge')),
+    );
+    expect(lockBadge.center.dx, greaterThan(connectionIcon.center.dx));
+    expect(lockBadge.center.dy, greaterThan(connectionIcon.center.dy));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('encryption-lock-badge')),
+        matching: find.byIcon(Icons.lock_rounded),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('En vivo'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
+    await tester.tap(find.byKey(const ValueKey('connection-status-button')));
     await tester.pumpAndSettle();
+    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Al día'), findsOneWidget);
+    expect(find.text('Activo en esta lista'), findsOneWidget);
+    expect(find.text('AES-256-GCM'), findsOneWidget);
+    expect(find.text('Protegidas por dispositivo'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('close-connection-status-dialog')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.text('Nico Galdames'), findsOneWidget);
@@ -1889,7 +3126,139 @@ void main() {
       ),
       findsOneWidget,
     );
+    final floatingNote = find.byKey(
+      const ValueKey('profile-floating-icon-note'),
+    );
+    expect(floatingNote, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('profile-floating-icon-list')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-floating-icon-lock')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-floating-icon-cloud')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-floating-icon-shield')),
+      findsOneWidget,
+    );
+    final initialTransform = tester
+        .widget<Transform>(floatingNote)
+        .transform
+        .storage
+        .toList();
+    await tester.pump(const Duration(milliseconds: 700));
+    final movedTransform = tester
+        .widget<Transform>(floatingNote)
+        .transform
+        .storage
+        .toList();
+    expect(movedTransform, isNot(equals(initialTransform)));
+    final heroCenterX = tester
+        .getCenter(find.byKey(const ValueKey('profile-hero-card')))
+        .dx;
+    for (final centeredElement in [
+      find.byKey(const ValueKey('profile-photo')),
+      find.text('Nico Galdames'),
+      find.text('nico@example.com'),
+      find.byKey(const ValueKey('profile-connection-badge')),
+    ]) {
+      expect(tester.getCenter(centeredElement).dx, closeTo(heroCenterX, 1));
+    }
     expect(find.text('ZONA DE RIESGO'), findsOneWidget);
+  });
+
+  testWidgets('profile app bar fades into the content while scrolling', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'profile-user',
+            displayName: 'Nicolás Galdames',
+            email: 'nico@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final fade = find.byKey(const ValueKey('profile-appbar-bottom-fade'));
+    final background = find.byKey(const ValueKey('profile-appbar-background'));
+    expect(
+      find.byKey(const ValueKey('profile-ambient-background')),
+      findsOneWidget,
+    );
+    expect(fade, findsOneWidget);
+    expect(background, findsOneWidget);
+    final initialAlpha = tester.widget<ColoredBox>(background).color.a;
+
+    await tester.drag(
+      find.byKey(const ValueKey('profile-scroll-view')),
+      const Offset(0, -140),
+    );
+    await tester.pump();
+
+    final scrolledAlpha = tester.widget<ColoredBox>(background).color.a;
+    expect(scrolledAlpha, greaterThan(initialAlpha));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('updates the open connection dialog in real time', (
+    tester,
+  ) async {
+    const user = AppUser(
+      id: 'google-user',
+      displayName: 'Nico Galdames',
+      email: 'nico@example.com',
+    );
+    final repository = _FakeNotesRepository(isEncrypted: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(user: user),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('connection-status-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sin conexión'), findsOneWidget);
+
+    final syncCard = tester.getRect(
+      find.byKey(const ValueKey('sync-status-row')),
+    );
+    final syncDetails = tester.getRect(
+      find.byKey(const ValueKey('sync-status-details')),
+    );
+    expect(syncDetails.left, closeTo(syncCard.left + 14, 1));
+    expect(syncDetails.right, closeTo(syncCard.right - 14, 1));
+
+    repository.emitRealtime(const RealtimeConnectionAttemptStarted());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Conectando…'), findsOneWidget);
+    expect(find.text('Estableciendo…'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('connection-status-dialog')),
+      findsOneWidget,
+    );
+
+    repository.emitRealtime(const RealtimeConnectionChanged(true));
+    await tester.pumpAndSettle();
+    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Activo'), findsOneWidget);
+    expect(find.text('Al día'), findsOneWidget);
   });
 
   testWidgets('keeps account deletion inside profile, not in the menu', (
@@ -1915,7 +3284,8 @@ void main() {
     expect(find.byKey(const ValueKey('delete-account-button')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('drawer-profile-button')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.byKey(const ValueKey('delete-account-button')), findsOneWidget);
@@ -1938,14 +3308,16 @@ void main() {
     );
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('profile-avatar-button')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     final deleteAccountButton = find.byKey(
       const ValueKey('delete-account-button'),
     );
     await tester.ensureVisible(deleteAccountButton);
-    await tester.pumpAndSettle();
+    await tester.pump();
     await tester.tap(deleteAccountButton);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('¿Eliminar tu cuenta?'), findsOneWidget);
     expect(authRepository.didDeleteAccount, isFalse);
@@ -1953,7 +3325,8 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('confirm-delete-account-button')),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(authRepository.didDeleteAccount, isTrue);
   });
@@ -2218,24 +3591,30 @@ class _FakeAuthRepository implements AuthRepository {
 class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   _FakeNotesRepository({
     this.isConnected = false,
+    this.isEncrypted = false,
     this.withInvitedPeople = false,
     this.initiallyCompleted = false,
     this.noteCount = 1,
     this.collaboratorPhotoUrl,
     this.initialAssigneeUid,
     this.withPinnedAcrossLists = false,
+    this.withRemindersAcrossLists = false,
     this.initialContent = 'Para la reunión de mañana',
+    String? initialContentDelta,
     NoteCategory category = NoteCategory.general,
     List<NoteChecklistItem> checklist = const [],
+    List<NoteReaction> reactions = const [],
     DateTime? initialReminderAt,
   }) : _note = Note(
          id: 'note-1',
          boardId: 'home',
          title: 'Comprar café',
          content: initialContent,
+         contentDelta: initialContentDelta,
          color: NoteColor.yellow,
          category: category,
          checklist: checklist,
+         reactions: reactions,
          authorName: 'Nico',
          assigneeUid:
              initialAssigneeUid ?? (withInvitedPeople ? 'person-ana' : null),
@@ -2280,8 +3659,11 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
                    ),
                  ]
                : const [],
+           encryption: isEncrypted
+               ? const ListEncryption(version: 1)
+               : const ListEncryption(),
          ),
-         if (withPinnedAcrossLists)
+         if (withPinnedAcrossLists || withRemindersAcrossLists)
            NoteList(
              id: 'work',
              name: 'Trabajo',
@@ -2291,13 +3673,16 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
        ];
 
   final bool isConnected;
+  final bool isEncrypted;
   final bool withInvitedPeople;
   final bool initiallyCompleted;
   final int noteCount;
   final String? collaboratorPhotoUrl;
   final String? initialAssigneeUid;
   final bool withPinnedAcrossLists;
+  final bool withRemindersAcrossLists;
   final String initialContent;
+  final _realtimeController = StreamController<NotesRealtimeEvent>.broadcast();
 
   Note _note;
   final List<NoteList> _lists;
@@ -2305,6 +3690,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   String? invitedEmail;
   String? removedCollaboratorUid;
   Map<String, dynamic>? lastChanges;
+  List<String>? reorderedListIds;
   NoteDraft? createdDraft;
   ListAppearance? lastAppearance;
 
@@ -2312,9 +3698,12 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   bool get isLocalDataActive => true;
 
   @override
-  Stream<NotesRealtimeEvent> get realtimeEvents => isConnected
-      ? Stream.value(const RealtimeConnectionChanged(true))
-      : const Stream.empty();
+  Stream<NotesRealtimeEvent> get realtimeEvents async* {
+    if (isConnected) yield const RealtimeConnectionChanged(true);
+    yield* _realtimeController.stream;
+  }
+
+  void emitRealtime(NotesRealtimeEvent event) => _realtimeController.add(event);
 
   @override
   Future<void> connect(String boardId) async {}
@@ -2346,6 +3735,22 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
     );
     _lists[index] = updated;
     return updated;
+  }
+
+  @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) async {
+    final listsById = {for (final list in _lists) list.id: list};
+    if (orderedIds.length != _lists.length ||
+        orderedIds.toSet().length != orderedIds.length ||
+        !listsById.keys.toSet().containsAll(orderedIds)) {
+      throw const NotesPersistenceFailure();
+    }
+    reorderedListIds = List.of(orderedIds);
+    final reordered = orderedIds.map((id) => listsById[id]!).toList();
+    _lists
+      ..clear()
+      ..addAll(reordered);
+    return List.of(_lists);
   }
 
   @override
@@ -2440,6 +3845,29 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   }
 
   @override
+  Future<List<Note>> fetchReminderNotes() async {
+    if (didClearLocalData) return const [];
+    return [
+      if (_note.reminderAt != null) _note,
+      if (withRemindersAcrossLists)
+        Note(
+          id: 'note-reminder-work',
+          boardId: 'work',
+          title: 'Recordar lanzamiento',
+          content: 'Revisar la publicación',
+          color: NoteColor.blue,
+          authorName: 'Nico',
+          isCompleted: false,
+          positionX: 0,
+          positionY: 0,
+          reminderAt: DateTime(2026, 8, 20, 9),
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026, 1, 2),
+        ),
+    ];
+  }
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     createdDraft = draft;
     return _note;
@@ -2487,6 +3915,7 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
                   ),
                 )
                 .toList(),
+      reactions: existing.reactions,
       authorName: changes['authorName'] as String? ?? existing.authorName,
       assigneeUid: changes.containsKey('assigneeUid')
           ? changes['assigneeUid'] as String?
@@ -2508,5 +3937,28 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   }
 
   @override
-  void dispose() {}
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    const userUid = 'owner-1';
+    final reactions = [..._note.reactions];
+    final index = reactions.indexWhere((reaction) => reaction.emoji == emoji);
+    final users = index == -1 ? <String>{} : reactions[index].userUids.toSet();
+    active ? users.add(userUid) : users.remove(userUid);
+    if (users.isEmpty) {
+      if (index != -1) reactions.removeAt(index);
+    } else {
+      final reaction = NoteReaction(emoji: emoji, userUids: users.toList());
+      if (index == -1) {
+        reactions.add(reaction);
+      } else {
+        reactions[index] = reaction;
+      }
+    }
+    _note = _note.copyWith(reactions: reactions, updatedAt: DateTime.now());
+    return _note;
+  }
+
+  @override
+  void dispose() {
+    unawaited(_realtimeController.close());
+  }
 }

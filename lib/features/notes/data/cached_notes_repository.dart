@@ -79,6 +79,9 @@ class CachedNotesRepository
         cache.pinnedNotes?.removeWhere(
           (note) => !validIds.contains(note.boardId),
         );
+        cache.reminderNotes?.removeWhere(
+          (note) => !validIds.contains(note.boardId),
+        );
       }),
     );
     return lists;
@@ -175,6 +178,18 @@ class CachedNotesRepository
   }
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) async {
+    final userId = _userIdProvider();
+    final lists = await _repository.reorderLists(orderedIds);
+    unawaited(
+      _updateCache(userId, (cache) {
+        cache.lists = List.of(lists);
+      }),
+    );
+    return lists;
+  }
+
+  @override
   Future<void> deleteList(String listId) async {
     final userId = _userIdProvider();
     await _repository.deleteList(listId);
@@ -218,6 +233,8 @@ class CachedNotesRepository
     unawaited(
       _updateCache(userId, (cache) {
         cache.notesByBoard[boardId] = _sortedNotes(notes);
+        _replaceKnownPinnedNotes(cache, notes);
+        _replaceKnownReminderNotes(cache, notes);
       }),
     );
     return notes;
@@ -230,6 +247,18 @@ class CachedNotesRepository
     unawaited(
       _updateCache(userId, (cache) {
         cache.pinnedNotes = _sortedPinnedNotes(notes);
+      }),
+    );
+    return notes;
+  }
+
+  @override
+  Future<List<Note>> fetchReminderNotes() async {
+    final userId = _userIdProvider();
+    final notes = await _repository.fetchReminderNotes();
+    unawaited(
+      _updateCache(userId, (cache) {
+        cache.reminderNotes = _sortedReminderNotes(notes);
       }),
     );
     return notes;
@@ -252,6 +281,14 @@ class CachedNotesRepository
   }
 
   @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    final userId = _userIdProvider();
+    final note = await _repository.setNoteReaction(id, emoji, active);
+    unawaited(_updateCache(userId, (cache) => _upsertNote(cache, note)));
+    return note;
+  }
+
+  @override
   Future<List<Note>> reorderNotes(
     String boardId,
     List<String> orderedIds,
@@ -262,6 +299,7 @@ class CachedNotesRepository
       _updateCache(userId, (cache) {
         cache.notesByBoard[boardId] = _sortedNotes(notes);
         _replaceKnownPinnedNotes(cache, notes);
+        _replaceKnownReminderNotes(cache, notes);
       }),
     );
     return notes;
@@ -288,7 +326,8 @@ class CachedNotesRepository
       cache
         ..lists = []
         ..notesByBoard.clear()
-        ..pinnedNotes = null;
+        ..pinnedNotes = null
+        ..reminderNotes = null;
     });
     return result;
   }
@@ -305,6 +344,7 @@ class CachedNotesRepository
           _updateCache(userId, (cache) {
             cache.notesByBoard[boardId] = _sortedNotes(notes);
             _replaceKnownPinnedNotes(cache, notes);
+            _replaceKnownReminderNotes(cache, notes);
           }),
         );
       case ListAppearanceChanged(:final listId, :final appearance):
@@ -321,6 +361,7 @@ class CachedNotesRepository
       case ListAccessRemoved(:final listId):
         unawaited(_updateCache(userId, (cache) => _removeList(cache, listId)));
       case RealtimeConnectionChanged() ||
+          RealtimeConnectionAttemptStarted() ||
           NotesSourceChanged() ||
           GuestDataSyncStarted() ||
           GuestDataSyncCompleted() ||
@@ -387,6 +428,7 @@ class CachedNotesRepository
     cache.lists.removeWhere((list) => list.id == listId);
     cache.notesByBoard.remove(listId);
     cache.pinnedNotes?.removeWhere((note) => note.boardId == listId);
+    cache.reminderNotes?.removeWhere((note) => note.boardId == listId);
   }
 
   static void _upsertNote(_AccountNotesCache cache, Note note) {
@@ -402,18 +444,36 @@ class CachedNotesRepository
     }
 
     final pinnedNotes = cache.pinnedNotes;
-    if (pinnedNotes == null) return;
-    final pinnedIndex = pinnedNotes.indexWhere((item) => item.id == note.id);
-    if (note.isPinned) {
-      if (pinnedIndex == -1) {
-        pinnedNotes.add(note);
-      } else {
-        pinnedNotes[pinnedIndex] = note;
+    if (pinnedNotes != null) {
+      final pinnedIndex = pinnedNotes.indexWhere((item) => item.id == note.id);
+      if (note.isPinned) {
+        if (pinnedIndex == -1) {
+          pinnedNotes.add(note);
+        } else {
+          pinnedNotes[pinnedIndex] = note;
+        }
+      } else if (pinnedIndex != -1) {
+        pinnedNotes.removeAt(pinnedIndex);
       }
-    } else if (pinnedIndex != -1) {
-      pinnedNotes.removeAt(pinnedIndex);
+      pinnedNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     }
-    pinnedNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+    final reminderNotes = cache.reminderNotes;
+    if (reminderNotes != null) {
+      final reminderIndex = reminderNotes.indexWhere(
+        (item) => item.id == note.id,
+      );
+      if (note.reminderAt != null) {
+        if (reminderIndex == -1) {
+          reminderNotes.add(note);
+        } else {
+          reminderNotes[reminderIndex] = note;
+        }
+      } else if (reminderIndex != -1) {
+        reminderNotes.removeAt(reminderIndex);
+      }
+      reminderNotes.sort(_compareReminderNotes);
+    }
   }
 
   static void _replaceKnownPinnedNotes(
@@ -426,11 +486,22 @@ class CachedNotesRepository
     }
   }
 
+  static void _replaceKnownReminderNotes(
+    _AccountNotesCache cache,
+    List<Note> notes,
+  ) {
+    if (cache.reminderNotes == null) return;
+    for (final note in notes) {
+      _upsertNote(cache, note);
+    }
+  }
+
   static void _removeNote(_AccountNotesCache cache, String id) {
     for (final notes in cache.notesByBoard.values) {
       notes.removeWhere((note) => note.id == id);
     }
     cache.pinnedNotes?.removeWhere((note) => note.id == id);
+    cache.reminderNotes?.removeWhere((note) => note.id == id);
   }
 
   static List<Note> _sortedNotes(Iterable<Note> notes) =>
@@ -438,6 +509,9 @@ class CachedNotesRepository
 
   static List<Note> _sortedPinnedNotes(Iterable<Note> notes) =>
       List<Note>.of(notes)..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+  static List<Note> _sortedReminderNotes(Iterable<Note> notes) =>
+      List<Note>.of(notes)..sort(_compareReminderNotes);
 
   @override
   void dispose() {
@@ -453,6 +527,7 @@ class _AccountNotesCache {
     List<NoteList>? lists,
     Map<String, List<Note>>? notesByBoard,
     this.pinnedNotes,
+    this.reminderNotes,
   }) : lists = lists ?? [],
        notesByBoard = notesByBoard ?? {};
 
@@ -461,6 +536,7 @@ class _AccountNotesCache {
       json['notesByBoard'] as Map? ?? const {},
     );
     final rawPinnedNotes = json['pinnedNotes'];
+    final rawReminderNotes = json['reminderNotes'];
     return _AccountNotesCache(
       userId: json['userId'] as String,
       lists: (json['lists'] as List<dynamic>? ?? const [])
@@ -484,6 +560,14 @@ class _AccountNotesCache {
                 )
                 .toList()
           : null,
+      reminderNotes: rawReminderNotes is List
+          ? rawReminderNotes
+                .map(
+                  (item) =>
+                      Note.fromJson(Map<String, dynamic>.from(item as Map)),
+                )
+                .toList()
+          : null,
     );
   }
 
@@ -491,6 +575,7 @@ class _AccountNotesCache {
   List<NoteList> lists;
   final Map<String, List<Note>> notesByBoard;
   List<Note>? pinnedNotes;
+  List<Note>? reminderNotes;
 
   Map<String, dynamic> toJson() => {
     'userId': userId,
@@ -501,5 +586,12 @@ class _AccountNotesCache {
     },
     if (pinnedNotes != null)
       'pinnedNotes': pinnedNotes!.map((note) => note.toJson()).toList(),
+    if (reminderNotes != null)
+      'reminderNotes': reminderNotes!.map((note) => note.toJson()).toList(),
   };
+}
+
+int _compareReminderNotes(Note a, Note b) {
+  final byReminder = a.reminderAt!.compareTo(b.reminderAt!);
+  return byReminder != 0 ? byReminder : b.updatedAt.compareTo(a.updatedAt);
 }

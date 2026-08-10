@@ -70,8 +70,8 @@ class _NockNockAppState extends State<NockNockApp> {
         title: 'NockNock',
         debugShowCheckedModeBanner: false,
         navigatorObservers: widget.navigatorObservers,
-        theme: AppTheme.light,
-        darkTheme: AppTheme.dark,
+        theme: AppTheme.lightFor(_themeController.colorTheme),
+        darkTheme: AppTheme.darkFor(_themeController.colorTheme),
         themeMode: _themeController.themeMode,
         themeAnimationDuration: const Duration(milliseconds: 260),
         localizationsDelegates: const [

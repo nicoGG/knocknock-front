@@ -12,6 +12,28 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  testWidgets('does not check Google Play updates in debug mode', (
+    tester,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final gateway = _FakePlayUpdateGateway(
+      check: const PlayUpdateCheck(
+        updateAvailable: true,
+        flexibleUpdateAllowed: true,
+        downloaded: false,
+      ),
+    );
+    addTearDown(gateway.dispose);
+
+    await tester.pumpWidget(
+      _app(preferences: preferences, gateway: gateway, enabled: null),
+    );
+    await tester.pump();
+
+    expect(gateway.checkCalls, 0);
+    expect(find.text('Hay una nueva versión'), findsNothing);
+  });
+
   testWidgets('offers and starts a flexible Google Play update', (
     tester,
   ) async {
@@ -152,6 +174,7 @@ Widget _app({
   required SharedPreferences preferences,
   required PlayUpdateGateway gateway,
   DateTime Function()? now,
+  bool? enabled = true,
 }) {
   final navigatorKey = GlobalKey<NavigatorState>();
   return MaterialApp(
@@ -161,7 +184,7 @@ Widget _app({
       preferences: preferences,
       navigatorKey: navigatorKey,
       gateway: gateway,
-      enabled: true,
+      enabled: enabled,
       now: now ?? DateTime.now,
       child: child ?? const SizedBox.shrink(),
     ),

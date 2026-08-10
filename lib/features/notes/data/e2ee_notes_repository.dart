@@ -119,6 +119,15 @@ class E2eeNotesRepository
   }
 
   @override
+  Future<List<NoteList>> reorderLists(List<String> orderedIds) async {
+    final rawLists = await _repository.reorderLists(orderedIds);
+    for (final list in rawLists) {
+      _rawLists[list.id] = list;
+    }
+    return Future.wait(rawLists.map(_decryptList));
+  }
+
+  @override
   Future<void> deleteList(String listId) async {
     await _repository.deleteList(listId);
     final userId = _requireUserId();
@@ -198,6 +207,19 @@ class E2eeNotesRepository
   }
 
   @override
+  Future<List<Note>> fetchReminderNotes() async {
+    if (_rawLists.isEmpty) await fetchLists();
+    final rawNotes = await _repository.fetchReminderNotes();
+    final clearNotes = <Note>[];
+    for (final raw in rawNotes) {
+      _noteBoards[raw.id] = raw.boardId;
+      final key = await _listKeyOrNull(raw.boardId);
+      if (key != null) clearNotes.add(await _decryptNote(raw, key));
+    }
+    return clearNotes;
+  }
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     final key = await _requireListKey(boardId);
     final raw = await _repository.createNote(
@@ -215,6 +237,16 @@ class E2eeNotesRepository
     final key = await _requireListKey(boardId);
     final encryptedChanges = await _encryptChanges(changes, key);
     final raw = await _repository.updateNote(id, encryptedChanges);
+    _noteBoards[raw.id] = raw.boardId;
+    return _decryptNote(raw, key);
+  }
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    final boardId = _noteBoards[id];
+    if (boardId == null) throw const EncryptionKeyUnavailableFailure();
+    final key = await _requireListKey(boardId);
+    final raw = await _repository.setNoteReaction(id, emoji, active);
     _noteBoards[raw.id] = raw.boardId;
     return _decryptNote(raw, key);
   }
@@ -686,6 +718,7 @@ class E2eeNotesRepository
     sortOrder: note.sortOrder,
     category: note.category,
     checklist: checklist,
+    reactions: note.reactions,
     positionX: note.positionX,
     positionY: note.positionY,
     reminderAt: note.reminderAt,
@@ -790,6 +823,7 @@ class E2eeNotesRepository
           _events.add(event);
         case NoteRemoved() ||
             RealtimeConnectionChanged() ||
+            RealtimeConnectionAttemptStarted() ||
             NotesSourceChanged() ||
             GuestDataSyncStarted() ||
             GuestDataSyncCompleted() ||

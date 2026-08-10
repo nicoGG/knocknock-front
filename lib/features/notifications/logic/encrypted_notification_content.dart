@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const nockNockNotificationPreviewsEnabledKey =
+    'nocknock.notification_previews_enabled.v1';
 
 const nockNockNotificationChannel = AndroidNotificationChannel(
   'nocknock_notifications',
@@ -43,9 +47,12 @@ class EncryptedNotificationContentResolver {
     Map<String, dynamic> data, {
     required String? userId,
   }) async {
+    final assignedByName = _nonEmpty(data['assignedByName']);
     final fallback = ResolvedNotificationContent(
       title: _nonEmpty(data['displayTitle']) ?? 'NockNock',
-      body: _nonEmpty(data['displayBody']) ?? 'Abre NockNock para ver la nota.',
+      body: assignedByName == null
+          ? _nonEmpty(data['displayBody']) ?? 'Abre NockNock para ver la nota.'
+          : '$assignedByName te asignó una tarea.',
     );
     final boardId = _nonEmpty(data['boardId']);
     final encryptedPreview = _nonEmpty(data['encryptedPreview']);
@@ -74,7 +81,9 @@ class EncryptedNotificationContentResolver {
       if (preview.trim().isEmpty) return fallback;
       return ResolvedNotificationContent(
         title: fallback.title,
-        body: preview.trim(),
+        body: assignedByName == null
+            ? preview.trim()
+            : '$assignedByName te asignó “${preview.trim()}”.',
       );
     } on Object {
       return fallback;
@@ -93,8 +102,13 @@ Future<void> showEncryptedRemoteNotification({
   required String? userId,
   EncryptedNotificationContentResolver? resolver,
 }) async {
-  final content = await (resolver ?? EncryptedNotificationContentResolver())
-      .resolve(message.data, userId: userId);
+  final previewsEnabled = await _notificationPreviewsEnabled();
+  final content = await resolveRemoteNotificationContent(
+    data: message.data,
+    userId: userId,
+    previewsEnabled: previewsEnabled,
+    resolver: resolver,
+  );
   await localNotifications.show(
     id: message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
     title: content.title,
@@ -115,4 +129,33 @@ Future<void> showEncryptedRemoteNotification({
     ),
     payload: jsonEncode(message.data),
   );
+}
+
+Future<ResolvedNotificationContent> resolveRemoteNotificationContent({
+  required Map<String, dynamic> data,
+  required String? userId,
+  required bool previewsEnabled,
+  EncryptedNotificationContentResolver? resolver,
+}) {
+  if (!previewsEnabled) {
+    return Future.value(
+      const ResolvedNotificationContent(
+        title: 'NockNock',
+        body: 'Tienes una nueva notificación.',
+      ),
+    );
+  }
+  return (resolver ?? EncryptedNotificationContentResolver()).resolve(
+    data,
+    userId: userId,
+  );
+}
+
+Future<bool> _notificationPreviewsEnabled() async {
+  try {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(nockNockNotificationPreviewsEnabledKey) ?? true;
+  } catch (_) {
+    return true;
+  }
 }

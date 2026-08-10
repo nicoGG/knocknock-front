@@ -8,7 +8,7 @@
         android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
         tools:node="remove" />
     <application
-        android:label="nocknock"
+        android:label="NockNock"
         android:name="${applicationName}"
         android:allowBackup="false"
         android:fullBackupContent="false"

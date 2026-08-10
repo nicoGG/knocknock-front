@@ -28,7 +28,9 @@ class NotesCubit extends Cubit<NotesState> {
         selectedListId: 'home',
         notes: const [],
         pinnedNotes: const [],
+        reminderNotes: const [],
         isLoadingPinned: false,
+        isLoadingReminderNotes: false,
       ),
     );
     _realtimeSubscription ??= _repository.realtimeEvents.listen(_onRealtime);
@@ -172,6 +174,28 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<void> loadReminderNotes() async {
+    if (state.isLoadingReminderNotes) return;
+    emit(state.copyWith(isLoadingReminderNotes: true));
+    try {
+      final reminderNotes = await _repository.fetchReminderNotes()
+        ..sort(_compareReminderNotes);
+      emit(
+        state.copyWith(
+          reminderNotes: reminderNotes,
+          isLoadingReminderNotes: false,
+        ),
+      );
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isLoadingReminderNotes: false,
+          message: _friendlyMessage(error),
+        ),
+      );
+    }
+  }
+
   Future<void> createList(String name) async {
     emit(state.copyWith(isSavingList: true));
     try {
@@ -195,6 +219,45 @@ class NotesCubit extends Cubit<NotesState> {
       emit(
         state.copyWith(isSavingList: false, message: _friendlyMessage(error)),
       );
+    }
+  }
+
+  Future<bool> reorderLists(List<String> orderedIds) async {
+    final previous = List<NoteList>.of(state.lists);
+    final existingIds = previous.map((list) => list.id).toSet();
+    if (orderedIds.length != previous.length ||
+        orderedIds.toSet().length != orderedIds.length ||
+        !existingIds.containsAll(orderedIds)) {
+      return false;
+    }
+    if (_sameOrder(previous.map((list) => list.id), orderedIds)) return true;
+
+    final listsById = {for (final list in previous) list.id: list};
+    final optimistic = orderedIds.map((id) => listsById[id]!).toList();
+    emit(state.copyWith(lists: optimistic, isSavingList: true));
+    try {
+      final saved = await _repository.reorderLists(orderedIds);
+      if (saved.length != orderedIds.length ||
+          !_sameOrder(saved.map((list) => list.id), orderedIds)) {
+        throw const NotesPersistenceFailure();
+      }
+      emit(
+        state.copyWith(
+          lists: saved,
+          isSavingList: false,
+          message: 'Orden de listas actualizado.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      emit(
+        state.copyWith(
+          lists: previous,
+          isSavingList: false,
+          message: _friendlyMessage(error),
+        ),
+      );
+      return false;
     }
   }
 
@@ -243,6 +306,9 @@ class NotesCubit extends Cubit<NotesState> {
           selectedListId: nextList.id,
           notes: const [],
           pinnedNotes: state.pinnedNotes
+              .where((note) => note.boardId != selected.id)
+              .toList(),
+          reminderNotes: state.reminderNotes
               .where((note) => note.boardId != selected.id)
               .toList(),
           isSavingList: false,
@@ -466,6 +532,57 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void> updateNoteAssignee(Note note, String? assigneeUid) =>
       _updateNoteFields(note, {'assigneeUid': assigneeUid});
 
+  Future<void> toggleReaction(
+    Note note,
+    String emoji,
+    String? currentUserId,
+  ) async {
+    if (!supportedNoteReactionEmojis.contains(emoji)) return;
+    final userUid = currentUserId ?? localNoteReactionUserId;
+    final reactions = [...note.reactions];
+    final reactionIndex = reactions.indexWhere(
+      (reaction) => reaction.emoji == emoji,
+    );
+    final userUids = reactionIndex == -1
+        ? <String>{}
+        : reactions[reactionIndex].userUids.toSet();
+    final active = !userUids.contains(userUid);
+    if (active) {
+      userUids.add(userUid);
+    } else {
+      userUids.remove(userUid);
+    }
+    if (userUids.isEmpty) {
+      if (reactionIndex != -1) reactions.removeAt(reactionIndex);
+    } else {
+      final reaction = NoteReaction(
+        emoji: emoji,
+        userUids: userUids.toList()..sort(),
+      );
+      if (reactionIndex == -1) {
+        reactions.add(reaction);
+      } else {
+        reactions[reactionIndex] = reaction;
+      }
+    }
+    reactions.sort(
+      (a, b) => supportedNoteReactionEmojis
+          .indexOf(a.emoji)
+          .compareTo(supportedNoteReactionEmojis.indexOf(b.emoji)),
+    );
+
+    emit(state.copyWith(isSaving: true));
+    _upsert(note.copyWith(reactions: reactions));
+    try {
+      _upsert(await _repository.setNoteReaction(note.id, emoji, active));
+    } catch (error) {
+      _upsert(note);
+      emit(state.copyWith(message: _friendlyMessage(error)));
+    } finally {
+      emit(state.copyWith(isSaving: false));
+    }
+  }
+
   Future<void> toggleChecklistItem(Note note, NoteChecklistItem item) {
     final checklist = note.checklist
         .map(
@@ -646,12 +763,15 @@ class NotesCubit extends Cubit<NotesState> {
       case NoteChanged(:final note):
         if (note.boardId == state.selectedListId ||
             note.isPinned ||
-            state.pinnedNotes.any((item) => item.id == note.id)) {
+            note.reminderAt != null ||
+            state.pinnedNotes.any((item) => item.id == note.id) ||
+            state.reminderNotes.any((item) => item.id == note.id)) {
           _upsert(note);
         }
       case NoteRemoved(:final id, :final boardId):
         if (boardId == state.selectedListId ||
-            state.pinnedNotes.any((note) => note.id == id)) {
+            state.pinnedNotes.any((note) => note.id == id) ||
+            state.reminderNotes.any((note) => note.id == id)) {
           _remove(id);
         }
       case NotesReordered(:final boardId, :final notes):
@@ -675,7 +795,19 @@ class NotesCubit extends Cubit<NotesState> {
           unawaited(_refreshAfterAccessRemoved());
         }
       case RealtimeConnectionChanged(:final isConnected):
-        emit(state.copyWith(isRealtimeConnected: isConnected));
+        emit(
+          state.copyWith(
+            isRealtimeConnected: isConnected,
+            isRealtimeConnecting: false,
+          ),
+        );
+      case RealtimeConnectionAttemptStarted():
+        emit(
+          state.copyWith(
+            isRealtimeConnected: false,
+            isRealtimeConnecting: true,
+          ),
+        );
       case NotesSourceChanged():
         unawaited(load());
       case GuestDataSyncStarted():
@@ -739,11 +871,27 @@ class NotesCubit extends Cubit<NotesState> {
     }
     pinnedNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
+    final reminderNotes = [...state.reminderNotes];
+    final reminderIndex = reminderNotes.indexWhere(
+      (item) => item.id == note.id,
+    );
+    if (note.reminderAt != null) {
+      if (reminderIndex == -1) {
+        reminderNotes.add(note);
+      } else {
+        reminderNotes[reminderIndex] = note;
+      }
+    } else if (reminderIndex != -1) {
+      reminderNotes.removeAt(reminderIndex);
+    }
+    reminderNotes.sort(_compareReminderNotes);
+
     emit(
       state.copyWith(
         status: NotesStatus.ready,
         notes: notes,
         pinnedNotes: pinnedNotes,
+        reminderNotes: reminderNotes,
       ),
     );
   }
@@ -753,6 +901,9 @@ class NotesCubit extends Cubit<NotesState> {
       state.copyWith(
         notes: state.notes.where((note) => note.id != id).toList(),
         pinnedNotes: state.pinnedNotes.where((note) => note.id != id).toList(),
+        reminderNotes: state.reminderNotes
+            .where((note) => note.id != id)
+            .toList(),
       ),
     );
   }
@@ -773,4 +924,18 @@ class NotesCubit extends Cubit<NotesState> {
     _repository.dispose();
     return super.close();
   }
+}
+
+int _compareReminderNotes(Note a, Note b) {
+  final byReminder = a.reminderAt!.compareTo(b.reminderAt!);
+  return byReminder != 0 ? byReminder : b.updatedAt.compareTo(a.updatedAt);
+}
+
+bool _sameOrder(Iterable<String> current, List<String> expected) {
+  var index = 0;
+  for (final id in current) {
+    if (index >= expected.length || id != expected[index]) return false;
+    index++;
+  }
+  return index == expected.length;
 }
