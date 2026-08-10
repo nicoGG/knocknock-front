@@ -5,6 +5,7 @@ enum AppNotificationType {
   noteCreated,
   noteUpdated,
   noteDeleted,
+  taskAssigned,
   reminder,
 }
 
@@ -55,6 +56,16 @@ class AppNotification extends Equatable {
     body: body,
     data: data,
     readAt: value,
+    createdAt: createdAt,
+  );
+
+  AppNotification copyWith({String? title, String? body}) => AppNotification(
+    id: id,
+    type: type,
+    title: title ?? this.title,
+    body: body ?? this.body,
+    data: data,
+    readAt: readAt,
     createdAt: createdAt,
   );
 

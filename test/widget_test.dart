@@ -1246,6 +1246,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'completed notes move below in all and return to their original place',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(noteCount: 3),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('note-note-1'))).dy,
+        lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('note-note-2'))).dy,
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('view-mode-grid')));
+      await tester.pumpAndSettle();
+      final firstGridCard = find.byKey(const ValueKey('note-note-1'));
+      await tester.tap(
+        find.descendant(of: firstGridCard, matching: find.byType(Checkbox)),
+      );
+      await tester.pumpAndSettle();
+
+      final completedHeader = find.byKey(
+        const ValueKey('completed-section-header'),
+      );
+      expect(completedHeader, findsOneWidget);
+      final headerRect = tester.getRect(completedHeader);
+      expect(
+        headerRect.top,
+        greaterThanOrEqualTo(
+          tester.getRect(find.byKey(const ValueKey('note-note-2'))).bottom,
+        ),
+      );
+      expect(tester.getRect(firstGridCard).top, greaterThan(headerRect.bottom));
+
+      await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.byKey(const ValueKey('note-note-1'))).top,
+        greaterThan(tester.getRect(completedHeader).bottom),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
+      await tester.pumpAndSettle();
+      expect(completedHeader, findsNothing);
+      expect(find.byKey(const ValueKey('note-note-1')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('filter-mode-all')));
+      await tester.pumpAndSettle();
+      expect(completedHeader, findsOneWidget);
+      final completedCard = find.byKey(const ValueKey('note-note-1'));
+      await tester.tap(
+        find.descendant(of: completedCard, matching: find.byType(Checkbox)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(completedHeader, findsNothing);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('note-note-1'))).dy,
+        lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('note-note-2'))).dy,
+        ),
+      );
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('note-note-2'))).dy,
+        lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('note-note-3'))).dy,
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('a completed pending task animates before leaving the list', (
     tester,
   ) async {
@@ -1345,7 +1429,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('drawer-profile-button')), findsOneWidget);
-    expect(find.text('Inicia sesión para sincronizar'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('drawer-google-sign-in-suggestion')),
+      findsOneWidget,
+    );
+    expect(find.text('Inicia sesión con Google'), findsOneWidget);
+    expect(find.text('Sincroniza y protege tus notas'), findsOneWidget);
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('drawer-profile-button')));
@@ -1353,6 +1442,13 @@ void main() {
 
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsOneWidget);
+    expect(find.text('Cifrado de extremo a extremo'), findsOneWidget);
+    expect(
+      find.text(
+        'Al iniciar sesión, tus listas y notas se cifran antes de sincronizarse.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -1786,6 +1882,13 @@ void main() {
     expect(find.text('nico@example.com'), findsOneWidget);
     expect(find.text('CUENTA CONECTADA'), findsOneWidget);
     expect(find.text('Sincronización activa'), findsOneWidget);
+    expect(find.text('Cifrado de extremo a extremo'), findsOneWidget);
+    expect(
+      find.text(
+        'Tus listas y notas se cifran antes de sincronizarse. Solo tú y tus colaboradores autorizados pueden leerlas.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('ZONA DE RIESGO'), findsOneWidget);
   });
 

@@ -16,6 +16,49 @@ enum ListBackgroundPreset {
   custom,
 }
 
+class ListKeyEnvelope extends Equatable {
+  const ListKeyEnvelope({required this.deviceId, required this.envelope});
+
+  factory ListKeyEnvelope.fromJson(Map<String, dynamic> json) =>
+      ListKeyEnvelope(
+        deviceId: json['deviceId'] as String,
+        envelope: json['envelope'] as String,
+      );
+
+  final String deviceId;
+  final String envelope;
+
+  Map<String, dynamic> toJson() => {'deviceId': deviceId, 'envelope': envelope};
+
+  @override
+  List<Object?> get props => [deviceId, envelope];
+}
+
+class ListEncryption extends Equatable {
+  const ListEncryption({this.version = 0, this.keyEnvelopes = const []});
+
+  factory ListEncryption.fromJson(Map<String, dynamic>? json) => ListEncryption(
+    version: (json?['version'] as num?)?.toInt() ?? 0,
+    keyEnvelopes: (json?['keyEnvelopes'] as List<dynamic>? ?? const [])
+        .map(
+          (item) =>
+              ListKeyEnvelope.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(),
+  );
+
+  final int version;
+  final List<ListKeyEnvelope> keyEnvelopes;
+
+  Map<String, dynamic> toJson() => {
+    'version': version,
+    'keyEnvelopes': keyEnvelopes.map((entry) => entry.toJson()).toList(),
+  };
+
+  @override
+  List<Object?> get props => [version, keyEnvelopes];
+}
+
 class ListAppearance extends Equatable {
   const ListAppearance({
     this.backgroundPreset = ListBackgroundPreset.paper,
@@ -90,6 +133,15 @@ class ListCollaborator extends Equatable {
   final ListMemberRole role;
   final DateTime joinedAt;
 
+  Map<String, dynamic> toJson() => {
+    'uid': uid,
+    'email': email,
+    'displayName': displayName,
+    if (photoUrl != null) 'photoUrl': photoUrl,
+    'role': role.name,
+    'joinedAt': joinedAt.toIso8601String(),
+  };
+
   @override
   List<Object?> get props => [
     uid,
@@ -113,6 +165,11 @@ class ListPendingInvitation extends Equatable {
   final String email;
   final DateTime invitedAt;
 
+  Map<String, dynamic> toJson() => {
+    'email': email,
+    'invitedAt': invitedAt.toIso8601String(),
+  };
+
   @override
   List<Object?> get props => [email, invitedAt];
 }
@@ -127,6 +184,7 @@ class NoteList extends Equatable {
     this.collaborators = const [],
     this.pendingInvitations = const [],
     this.appearance = const ListAppearance(),
+    this.encryption = const ListEncryption(),
   });
 
   factory NoteList.fromJson(Map<String, dynamic> json) => NoteList(
@@ -157,6 +215,11 @@ class NoteList extends Equatable {
           ? null
           : Map<String, dynamic>.from(json['appearance'] as Map),
     ),
+    encryption: ListEncryption.fromJson(
+      json['encryption'] == null
+          ? null
+          : Map<String, dynamic>.from(json['encryption'] as Map),
+    ),
   );
 
   final String id;
@@ -167,6 +230,7 @@ class NoteList extends Equatable {
   final List<ListCollaborator> collaborators;
   final List<ListPendingInvitation> pendingInvitations;
   final ListAppearance appearance;
+  final ListEncryption encryption;
 
   bool get canInvite => currentUserRole == ListMemberRole.owner;
   bool get isShared =>
@@ -178,13 +242,19 @@ class NoteList extends Equatable {
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
     'currentUserRole': currentUserRole.name,
+    'collaborators': collaborators.map((person) => person.toJson()).toList(),
+    'pendingInvitations': pendingInvitations
+        .map((invitation) => invitation.toJson())
+        .toList(),
     'appearance': appearance.toJson(),
+    'encryption': encryption.toJson(),
   };
 
   NoteList copyWith({
     String? name,
     DateTime? updatedAt,
     ListAppearance? appearance,
+    ListEncryption? encryption,
   }) => NoteList(
     id: id,
     name: name ?? this.name,
@@ -194,6 +264,7 @@ class NoteList extends Equatable {
     collaborators: collaborators,
     pendingInvitations: pendingInvitations,
     appearance: appearance ?? this.appearance,
+    encryption: encryption ?? this.encryption,
   );
 
   @override
@@ -206,5 +277,6 @@ class NoteList extends Equatable {
     collaborators,
     pendingInvitations,
     appearance,
+    encryption,
   ];
 }

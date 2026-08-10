@@ -360,6 +360,7 @@ class _BoardPageState extends State<BoardPage>
         BoardViewMode.grid => _NotesGrid(
           key: const ValueKey('notes-grid'),
           notes: notes,
+          groupCompleted: _filter == NoteFilter.all,
           showOriginList: _scope == _BoardScope.pinned,
           buildCard: _buildCard,
           onReorder: _reorderNotes,
@@ -367,6 +368,7 @@ class _BoardPageState extends State<BoardPage>
         BoardViewMode.list => _NotesList(
           key: const ValueKey('notes-list'),
           notes: notes,
+          groupCompleted: _filter == NoteFilter.all,
           layout: PostItCardLayout.compact,
           itemHeight: 55,
           maxWidth: 980,
@@ -848,9 +850,89 @@ double _boardBottomScrollPadding(BuildContext context) {
   return MediaQuery.paddingOf(context).bottom + (isCompact ? 124 : 96);
 }
 
+class _CompletedSectionHeader extends StatelessWidget {
+  const _CompletedSectionHeader({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Semantics(
+      header: true,
+      label: 'Completadas, $count ${count == 1 ? 'nota' : 'notas'}',
+      child: Container(
+        key: const ValueKey('completed-section-header'),
+        margin: const EdgeInsets.only(top: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surface.withValues(alpha: 0.86),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.42),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.shadow.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.check_rounded,
+                size: 20,
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Completadas',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            Container(
+              key: const ValueKey('completed-section-count'),
+              constraints: const BoxConstraints(minWidth: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '$count',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _NotesGrid extends StatelessWidget {
   const _NotesGrid({
     required this.notes,
+    required this.groupCompleted,
     required this.showOriginList,
     required this.buildCard,
     required this.onReorder,
@@ -858,6 +940,7 @@ class _NotesGrid extends StatelessWidget {
   });
 
   final List<Note> notes;
+  final bool groupCompleted;
   final bool showOriginList;
   final NoteCardBuilder buildCard;
   final NoteReorderCallback onReorder;
@@ -880,88 +963,130 @@ class _NotesGrid extends StatelessWidget {
         final columnWidth =
             (constraints.maxWidth - (spacing * (columnCount - 1))) /
             columnCount;
-        final columns = List.generate(
-          columnCount,
-          (_) => <({int index, Note note, double height})>[],
-        );
-        final columnHeights = List.filled(columnCount, 0.0);
-
-        for (var index = 0; index < notes.length; index++) {
-          final note = notes[index];
-          final height = _gridNoteHeight(
-            context,
-            note,
-            columnWidth: columnWidth,
-            isCompact: isCompact,
-          );
-          var targetColumn = 0;
-          for (var column = 1; column < columnCount; column++) {
-            if (columnHeights[column] < columnHeights[targetColumn]) {
-              targetColumn = column;
-            }
-          }
-          columns[targetColumn].add((index: index, note: note, height: height));
-          columnHeights[targetColumn] += height + verticalSpacing;
-        }
+        final pendingNotes = groupCompleted
+            ? notes.where((note) => !note.isCompleted).toList()
+            : notes;
+        final completedNotes = groupCompleted
+            ? notes.where((note) => note.isCompleted).toList()
+            : const <Note>[];
 
         return SingleChildScrollView(
           padding: EdgeInsets.only(
             top: 6,
             bottom: _boardBottomScrollPadding(context),
           ),
-          child: Row(
-            key: const ValueKey('masonry-grid-columns'),
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var column = 0; column < columnCount; column++) ...[
-                if (column > 0) SizedBox(width: spacing),
-                Expanded(
-                  child: Column(
-                    key: ValueKey('masonry-grid-column-$column'),
-                    children: [
-                      for (final item in columns[column]) ...[
-                        SizedBox(
-                          height: item.height,
-                          child: _NoteEntrance(
-                            key: ValueKey('note-entrance-${item.note.id}'),
-                            index: item.index,
-                            child: _DraggableGridNote(
-                              key: ValueKey('reorder-grid-${item.note.id}'),
-                              note: item.note,
-                              onDrop: (draggedId) {
-                                final reordered = [...notes];
-                                final oldIndex = reordered.indexWhere(
-                                  (note) => note.id == draggedId,
-                                );
-                                if (oldIndex == -1 || oldIndex == item.index) {
-                                  return;
-                                }
-                                final moved = reordered.removeAt(oldIndex);
-                                final targetIndex = reordered.indexWhere(
-                                  (note) => note.id == item.note.id,
-                                );
-                                reordered.insert(targetIndex, moved);
-                                onReorder(
-                                  reordered.map((note) => note.id).toList(),
-                                );
-                              },
-                              child: buildCard(
-                                item.note,
-                                PostItCardLayout.grid,
-                              ),
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: verticalSpacing),
-                      ],
-                    ],
-                  ),
+              if (pendingNotes.isNotEmpty)
+                _buildMasonryGroup(
+                  context,
+                  notes: pendingNotes,
+                  columnCount: columnCount,
+                  columnWidth: columnWidth,
+                  spacing: spacing,
+                  verticalSpacing: verticalSpacing,
+                  isCompact: isCompact,
+                  keySuffix: '',
+                ),
+              if (completedNotes.isNotEmpty) ...[
+                _CompletedSectionHeader(count: completedNotes.length),
+                const SizedBox(height: 12),
+                _buildMasonryGroup(
+                  context,
+                  notes: completedNotes,
+                  columnCount: columnCount,
+                  columnWidth: columnWidth,
+                  spacing: spacing,
+                  verticalSpacing: verticalSpacing,
+                  isCompact: isCompact,
+                  keySuffix: '-completed',
                 ),
               ],
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMasonryGroup(
+    BuildContext context, {
+    required List<Note> notes,
+    required int columnCount,
+    required double columnWidth,
+    required double spacing,
+    required double verticalSpacing,
+    required bool isCompact,
+    required String keySuffix,
+  }) {
+    final columns = List.generate(
+      columnCount,
+      (_) => <({int index, Note note, double height})>[],
+    );
+    final columnHeights = List.filled(columnCount, 0.0);
+
+    for (var index = 0; index < notes.length; index++) {
+      final note = notes[index];
+      final height = _gridNoteHeight(
+        context,
+        note,
+        columnWidth: columnWidth,
+        isCompact: isCompact,
+      );
+      var targetColumn = 0;
+      for (var column = 1; column < columnCount; column++) {
+        if (columnHeights[column] < columnHeights[targetColumn]) {
+          targetColumn = column;
+        }
+      }
+      columns[targetColumn].add((index: index, note: note, height: height));
+      columnHeights[targetColumn] += height + verticalSpacing;
+    }
+
+    return Row(
+      key: ValueKey('masonry-grid-columns$keySuffix'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var column = 0; column < columnCount; column++) ...[
+          if (column > 0) SizedBox(width: spacing),
+          Expanded(
+            child: Column(
+              key: ValueKey('masonry-grid-column-$column$keySuffix'),
+              children: [
+                for (final item in columns[column]) ...[
+                  SizedBox(
+                    height: item.height,
+                    child: _NoteEntrance(
+                      key: ValueKey('note-entrance-${item.note.id}'),
+                      index: item.index,
+                      child: _DraggableGridNote(
+                        key: ValueKey('reorder-grid-${item.note.id}'),
+                        note: item.note,
+                        onDrop: (draggedId) {
+                          final reordered = [...notes];
+                          final oldIndex = reordered.indexWhere(
+                            (note) => note.id == draggedId,
+                          );
+                          if (oldIndex == -1 || oldIndex == item.index) return;
+                          final moved = reordered.removeAt(oldIndex);
+                          final targetIndex = reordered.indexWhere(
+                            (note) => note.id == item.note.id,
+                          );
+                          reordered.insert(targetIndex, moved);
+                          onReorder(reordered.map((note) => note.id).toList());
+                        },
+                        child: buildCard(item.note, PostItCardLayout.grid),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: verticalSpacing),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -1123,6 +1248,7 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
 class _NotesList extends StatelessWidget {
   const _NotesList({
     required this.notes,
+    required this.groupCompleted,
     required this.layout,
     required this.itemHeight,
     required this.maxWidth,
@@ -1132,6 +1258,7 @@ class _NotesList extends StatelessWidget {
   });
 
   final List<Note> notes;
+  final bool groupCompleted;
   final PostItCardLayout layout;
   final double itemHeight;
   final double maxWidth;
@@ -1140,58 +1267,102 @@ class _NotesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ReorderableListView.builder(
-      padding: EdgeInsets.only(bottom: _boardBottomScrollPadding(context)),
-      itemCount: notes.length,
-      buildDefaultDragHandles: false,
-      proxyDecorator: (child, index, animation) => AnimatedBuilder(
-        animation: animation,
-        builder: (context, _) => Transform.scale(
-          scale: 1 + (animation.value * 0.015),
-          child: Material(
-            color: Colors.transparent,
-            elevation: animation.value * 10,
-            borderRadius: BorderRadius.circular(18),
-            child: child,
+    final pendingNotes = groupCompleted
+        ? notes.where((note) => !note.isCompleted).toList()
+        : notes;
+    final completedNotes = groupCompleted
+        ? notes.where((note) => note.isCompleted).toList()
+        : const <Note>[];
+    if (completedNotes.isEmpty) {
+      return ReorderableListView.builder(
+        padding: EdgeInsets.only(bottom: _boardBottomScrollPadding(context)),
+        itemCount: pendingNotes.length,
+        buildDefaultDragHandles: false,
+        proxyDecorator: _proxyDecorator,
+        onReorderStart: (_) => HapticFeedback.mediumImpact(),
+        onReorderItem: (oldIndex, newIndex) =>
+            _reorder(pendingNotes, oldIndex, newIndex),
+        itemBuilder: (context, index) =>
+            _buildItem(context, pendingNotes, index),
+      );
+    }
+    return CustomScrollView(
+      slivers: [
+        if (pendingNotes.isNotEmpty) _buildSliver(pendingNotes),
+        if (completedNotes.isNotEmpty) ...[
+          SliverToBoxAdapter(
+            child: _CompletedSectionHeader(count: completedNotes.length),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          _buildSliver(completedNotes),
+        ],
+        SliverToBoxAdapter(
+          child: SizedBox(height: _boardBottomScrollPadding(context)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSliver(List<Note> notes) {
+    return SliverReorderableList(
+      itemCount: notes.length,
+      proxyDecorator: _proxyDecorator,
+      onReorderStart: (_) => HapticFeedback.mediumImpact(),
+      onReorderItem: (oldIndex, newIndex) =>
+          _reorder(notes, oldIndex, newIndex),
+      itemBuilder: (context, index) => _buildItem(context, notes, index),
+    );
+  }
+
+  Widget _proxyDecorator(Widget child, int index, Animation<double> animation) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) => Transform.scale(
+        scale: 1 + (animation.value * 0.015),
+        child: Material(
+          color: Colors.transparent,
+          elevation: animation.value * 10,
+          borderRadius: BorderRadius.circular(18),
+          child: child,
         ),
       ),
-      onReorderStart: (_) => HapticFeedback.mediumImpact(),
-      onReorderItem: (oldIndex, newIndex) {
-        if (oldIndex == newIndex) return;
-        final reordered = [...notes];
-        final moved = reordered.removeAt(oldIndex);
-        reordered.insert(newIndex, moved);
-        onReorder(reordered.map((note) => note.id).toList());
-      },
-      itemBuilder: (context, index) {
-        final note = notes[index];
-        return ReorderableDelayedDragStartListener(
-          key: ValueKey('reorder-list-${note.id}'),
+    );
+  }
+
+  void _reorder(List<Note> notes, int oldIndex, int newIndex) {
+    if (oldIndex == newIndex) return;
+    final reordered = [...notes];
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+    onReorder(reordered.map((note) => note.id).toList());
+  }
+
+  Widget _buildItem(BuildContext context, List<Note> notes, int index) {
+    final note = notes[index];
+    return ReorderableDelayedDragStartListener(
+      key: ValueKey('reorder-list-${note.id}'),
+      index: index,
+      child: Semantics(
+        hint: 'Mantén presionada y arrastra para cambiar el orden',
+        child: _NoteEntrance(
           index: index,
-          child: Semantics(
-            hint: 'Mantén presionada y arrastra para cambiar el orden',
-            child: _NoteEntrance(
-              index: index,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  bottom: layout == PostItCardLayout.compact ? 3 : 8,
-                ),
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: maxWidth),
-                    child: SizedBox(
-                      height: itemHeight,
-                      child: buildCard(note, layout),
-                    ),
-                  ),
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: layout == PostItCardLayout.compact ? 3 : 8,
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxWidth),
+                child: SizedBox(
+                  height: itemHeight,
+                  child: buildCard(note, layout),
                 ),
               ),
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -1731,6 +1902,9 @@ class _DrawerProfileSummary extends StatelessWidget {
       builder: (context, snapshot) {
         final user = snapshot.data;
         return Material(
+          key: user == null
+              ? const ValueKey('drawer-google-sign-in-suggestion')
+              : null,
           color: colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(20),
           clipBehavior: Clip.antiAlias,
@@ -1748,7 +1922,7 @@ class _DrawerProfileSummary extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          user?.displayName ?? 'Tu perfil',
+                          user?.displayName ?? 'Inicia sesión con Google',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -1758,7 +1932,7 @@ class _DrawerProfileSummary extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          user?.email ?? 'Inicia sesión para sincronizar',
+                          user?.email ?? 'Sincroniza y protege tus notas',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1780,7 +1954,13 @@ class _DrawerProfileSummary extends StatelessWidget {
                       color: colorScheme.surface.withValues(alpha: 0.5),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.chevron_right_rounded, size: 20),
+                    child: Icon(
+                      user == null
+                          ? Icons.login_rounded
+                          : Icons.chevron_right_rounded,
+                      size: 20,
+                      color: user == null ? AppTheme.accent : null,
+                    ),
                   ),
                 ],
               ),

@@ -8,7 +8,7 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 
 /// Uses device storage for guests and the connected repository after sign-in.
 class AuthAwareNotesRepository
-    implements NotesRepository, LocalNotesDataCleaner {
+    implements NotesRepository, LocalNotesDataCleaner, NotesCacheReader {
   AuthAwareNotesRepository({
     required AuthRepository authRepository,
     required this.localRepository,
@@ -105,6 +105,13 @@ class AuthAwareNotesRepository
   @override
   Future<List<Note>> fetchPinnedNotes() =>
       _whenReady((repository) => repository.fetchPinnedNotes());
+
+  @override
+  Future<NotesCacheSnapshot?> readCache() async {
+    await _authTransition;
+    if (!_isSignedIn || remoteRepository is! NotesCacheReader) return null;
+    return (remoteRepository as NotesCacheReader).readCache();
+  }
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) =>

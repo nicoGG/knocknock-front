@@ -62,12 +62,79 @@ class GuestDataSyncFailed extends NotesRealtimeEvent {
   const GuestDataSyncFailed();
 }
 
+class NotesCacheSnapshot {
+  const NotesCacheSnapshot({required this.lists, required this.notesByBoard});
+
+  final List<NoteList> lists;
+  final Map<String, List<Note>> notesByBoard;
+}
+
+/// Optional capability for repositories that can serve account data from a
+/// device cache before refreshing it from the network.
+abstract interface class NotesCacheReader {
+  Future<NotesCacheSnapshot?> readCache();
+}
+
 class NotesPersistenceFailure implements Exception {
   const NotesPersistenceFailure();
 }
 
 class CollaborationRequiresSignInFailure implements Exception {
   const CollaborationRequiresSignInFailure();
+}
+
+class EncryptionKeyUnavailableFailure implements Exception {
+  const EncryptionKeyUnavailableFailure();
+}
+
+class EncryptionRecipient {
+  const EncryptionRecipient({
+    required this.userUid,
+    required this.deviceId,
+    required this.publicKey,
+    required this.hasEnvelope,
+  });
+
+  factory EncryptionRecipient.fromJson(Map<String, dynamic> json) =>
+      EncryptionRecipient(
+        userUid: json['userUid'] as String,
+        deviceId: json['deviceId'] as String,
+        publicKey: json['publicKey'] as String,
+        hasEnvelope: json['hasEnvelope'] as bool? ?? false,
+      );
+
+  final String userUid;
+  final String deviceId;
+  final String publicKey;
+  final bool hasEnvelope;
+}
+
+abstract interface class E2eeNotesTransport {
+  Future<void> registerEncryptionDevice({
+    required String deviceId,
+    required String publicKey,
+  });
+
+  Future<NoteList> createEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+  });
+
+  Future<NoteList> enableListEncryption({
+    required String listId,
+    required String encryptedName,
+    required String? encryptedCustomBackgroundImage,
+    required ListKeyEnvelope keyEnvelope,
+  });
+
+  Future<List<EncryptionRecipient>> fetchEncryptionRecipients(String listId);
+
+  Future<void> storeListKeyEnvelope({
+    required String listId,
+    required String recipientUid,
+    required String deviceId,
+    required String envelope,
+  });
 }
 
 /// Optional capability for repositories that own guest data on this device.

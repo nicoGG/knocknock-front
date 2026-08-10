@@ -10,7 +10,8 @@ import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
-class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
+class ApiNotesRepository
+    implements NotesRepository, GuestDataSyncTarget, E2eeNotesTransport {
   ApiNotesRepository({
     required String apiBaseUrl,
     required String socketBaseUrl,
@@ -138,6 +139,82 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
   }
 
   @override
+  Future<void> registerEncryptionDevice({
+    required String deviceId,
+    required String publicKey,
+  }) async {
+    await _dio.post<void>(
+      '/encryption/devices',
+      data: {'deviceId': deviceId, 'publicKey': publicKey},
+    );
+  }
+
+  @override
+  Future<NoteList> createEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/lists',
+      data: {
+        'name': encryptedName,
+        'encryptionVersion': 1,
+        'keyEnvelope': keyEnvelope.toJson(),
+      },
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
+  Future<NoteList> enableListEncryption({
+    required String listId,
+    required String encryptedName,
+    required String? encryptedCustomBackgroundImage,
+    required ListKeyEnvelope keyEnvelope,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/lists/$listId/encryption',
+      data: {
+        'name': encryptedName,
+        'customBackgroundImage': ?encryptedCustomBackgroundImage,
+        'keyEnvelope': keyEnvelope.toJson(),
+      },
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
+  Future<List<EncryptionRecipient>> fetchEncryptionRecipients(
+    String listId,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/lists/$listId/encryption/recipients',
+    );
+    return (response.data ?? const [])
+        .map(
+          (item) => EncryptionRecipient.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+  }
+
+  @override
+  Future<void> storeListKeyEnvelope({
+    required String listId,
+    required String recipientUid,
+    required String deviceId,
+    required String envelope,
+  }) => _dio.post<void>(
+    '/lists/$listId/encryption/envelopes',
+    data: {
+      'recipientUid': recipientUid,
+      'deviceId': deviceId,
+      'envelope': envelope,
+    },
+  );
+
+  @override
   Future<NoteList> updateList(String listId, String name) async {
     final response = await _dio.patch<Map<String, dynamic>>(
       '/lists/$listId',
@@ -248,6 +325,8 @@ class ApiNotesRepository implements NotesRepository, GuestDataSyncTarget {
               (list) => {
                 'localId': list.id,
                 'name': list.name,
+                'encryptionVersion': list.encryption.version,
+                'keyEnvelope': list.encryption.keyEnvelopes.single.toJson(),
                 if (list.id != 'home' ||
                     list.appearance != const ListAppearance())
                   'appearance': list.appearance.toJson(),

@@ -10,6 +10,8 @@
     <application
         android:label="nocknock"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher">
         <meta-data
             android:name="google_analytics_adid_collection_enabled"

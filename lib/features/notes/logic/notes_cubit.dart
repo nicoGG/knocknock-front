@@ -17,32 +17,73 @@ class NotesCubit extends Cubit<NotesState> {
   final NotesRepository _repository;
   final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
+  int _loadGeneration = 0;
 
   Future<void> load() async {
+    final generation = ++_loadGeneration;
     emit(
       state.copyWith(
         status: NotesStatus.loading,
+        lists: const [],
+        selectedListId: 'home',
+        notes: const [],
         pinnedNotes: const [],
         isLoadingPinned: false,
       ),
     );
     _realtimeSubscription ??= _repository.realtimeEvents.listen(_onRealtime);
+    final rememberedListId = await _readRememberedListId();
+    final cached = await _readCache();
+    if (generation != _loadGeneration || isClosed) return;
+
+    var didShowCache = false;
+    if (cached != null && cached.lists.isNotEmpty) {
+      final cachedListId = _resolveSelectedListId(
+        cached.lists,
+        rememberedListId,
+      );
+      final cachedNotes = cached.notesByBoard[cachedListId];
+      if (cachedNotes != null) {
+        didShowCache = true;
+        emit(
+          state.copyWith(
+            status: NotesStatus.ready,
+            lists: cached.lists,
+            selectedListId: cachedListId,
+            notes: _sortedNotes(cachedNotes),
+          ),
+        );
+      }
+    }
+
     try {
       final lists = await _repository.fetchLists();
-      final rememberedListId = await _readRememberedListId();
+      if (generation != _loadGeneration || isClosed) return;
       final selectedListId = _resolveSelectedListId(lists, rememberedListId);
-      await _rememberSelectedList(selectedListId);
-      await _repository.connect(selectedListId);
+      unawaited(_rememberSelectedList(selectedListId));
+      unawaited(_connectBestEffort(selectedListId));
       final notes = await _repository.fetchNotes(selectedListId);
+      if (generation != _loadGeneration || isClosed) return;
       emit(
         state.copyWith(
           status: NotesStatus.ready,
           lists: lists,
           selectedListId: selectedListId,
-          notes: notes,
+          notes: _sortedNotes(notes),
         ),
       );
     } catch (error) {
+      if (generation != _loadGeneration || isClosed) return;
+      if (didShowCache) {
+        emit(
+          state.copyWith(
+            status: NotesStatus.ready,
+            message:
+                'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
+          ),
+        );
+        return;
+      }
       emit(
         state.copyWith(
           status: NotesStatus.failure,
@@ -54,6 +95,7 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> selectList(String listId) async {
     if (listId == state.selectedListId) return;
+    final generation = ++_loadGeneration;
     emit(
       state.copyWith(
         status: NotesStatus.loading,
@@ -61,14 +103,49 @@ class NotesCubit extends Cubit<NotesState> {
         notes: const [],
       ),
     );
-    await _rememberSelectedList(listId);
-    await _repository.connect(listId);
+    unawaited(_rememberSelectedList(listId));
+    unawaited(_connectBestEffort(listId));
+
+    var didShowCache = false;
+    final cached = await _readCache();
+    if (generation != _loadGeneration || isClosed) return;
+    final cachedNotes = cached?.notesByBoard[listId];
+    if (cachedNotes != null) {
+      didShowCache = true;
+      emit(
+        state.copyWith(
+          status: NotesStatus.ready,
+          notes: _sortedNotes(cachedNotes),
+        ),
+      );
+    }
+
     try {
       final notes = await _repository.fetchNotes(listId);
-      if (state.selectedListId != listId) return;
-      emit(state.copyWith(status: NotesStatus.ready, notes: notes));
+      if (generation != _loadGeneration ||
+          state.selectedListId != listId ||
+          isClosed) {
+        return;
+      }
+      emit(
+        state.copyWith(status: NotesStatus.ready, notes: _sortedNotes(notes)),
+      );
     } catch (error) {
-      if (state.selectedListId != listId) return;
+      if (generation != _loadGeneration ||
+          state.selectedListId != listId ||
+          isClosed) {
+        return;
+      }
+      if (didShowCache) {
+        emit(
+          state.copyWith(
+            status: NotesStatus.ready,
+            message:
+                'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
+          ),
+        );
+        return;
+      }
       emit(
         state.copyWith(
           status: NotesStatus.failure,
@@ -308,6 +385,27 @@ class NotesCubit extends Cubit<NotesState> {
       // temporarily unavailable.
     }
   }
+
+  Future<NotesCacheSnapshot?> _readCache() async {
+    final repository = _repository;
+    if (repository is! NotesCacheReader) return null;
+    try {
+      return await (repository as NotesCacheReader).readCache();
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _connectBestEffort(String listId) async {
+    try {
+      await _repository.connect(listId);
+    } on Object {
+      // REST data and the device cache remain usable while realtime reconnects.
+    }
+  }
+
+  List<Note> _sortedNotes(Iterable<Note> notes) =>
+      List<Note>.of(notes)..sort(compareNotes);
 
   Future<void> createNote(NoteDraft draft) async {
     emit(state.copyWith(isSaving: true));

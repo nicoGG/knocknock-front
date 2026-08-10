@@ -17,4 +17,18 @@ void main() {
     expect(notification.data['boardId'], 'shared');
     expect(notification.isRead, isFalse);
   });
+
+  test('maps task assignment notifications explicitly', () {
+    final notification = AppNotification.fromJson({
+      'id': 'notification-2',
+      'type': 'task_assigned',
+      'title': 'Te asignaron una tarea',
+      'body': 'Comprar pan',
+      'data': {'boardId': 'shared', 'noteId': 'note-1'},
+      'readAt': null,
+      'createdAt': '2026-08-10T15:00:00.000Z',
+    });
+
+    expect(notification.type, AppNotificationType.taskAssigned);
+  });
 }

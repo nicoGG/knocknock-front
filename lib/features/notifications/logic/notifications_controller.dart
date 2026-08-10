@@ -11,17 +11,11 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
+import 'package:nocknock/features/notifications/logic/encrypted_notification_content.dart';
 import 'package:nocknock/core/telemetry/app_telemetry.dart';
 import 'package:nocknock/core/telemetry/telemetry_dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-
-const _notificationChannel = AndroidNotificationChannel(
-  'nocknock_notifications',
-  'Notificaciones de NockNock',
-  description: 'Cambios en listas compartidas y recordatorios.',
-  importance: Importance.high,
-);
 
 class NotificationsController extends ChangeNotifier
     with WidgetsBindingObserver {
@@ -32,10 +26,13 @@ class NotificationsController extends ChangeNotifier
     FlutterLocalNotificationsPlugin? localNotifications,
     Dio? dio,
     AppTelemetry? telemetry,
-  }) : _messaging = messaging ?? FirebaseMessaging.instance,
+    EncryptedNotificationContentResolver? contentResolver,
+  }) : _messagingOverride = messaging,
        _localNotifications =
            localNotifications ?? FlutterLocalNotificationsPlugin(),
        _telemetry = telemetry,
+       _contentResolver =
+           contentResolver ?? EncryptedNotificationContentResolver(),
        _dio =
            dio ??
            createTelemetryDio(
@@ -44,10 +41,11 @@ class NotificationsController extends ChangeNotifier
            );
 
   final AuthRepository authRepository;
-  final FirebaseMessaging _messaging;
+  final FirebaseMessaging? _messagingOverride;
   final FlutterLocalNotificationsPlugin _localNotifications;
   final Dio _dio;
   final AppTelemetry? _telemetry;
+  final EncryptedNotificationContentResolver _contentResolver;
   final _tapEvents = StreamController<Map<String, String>>.broadcast();
 
   StreamSubscription<AppUser?>? _authSubscription;
@@ -60,11 +58,15 @@ class NotificationsController extends ChangeNotifier
   bool _initialized = false;
   bool _localNotificationsAvailable = false;
   bool _firebaseMessagingAvailable = false;
+  bool _isDeletingNotifications = false;
   String? _message;
 
+  FirebaseMessaging get _messaging =>
+      _messagingOverride ?? FirebaseMessaging.instance;
   List<AppNotification> get notifications => _notifications;
   int get unreadCount => _notifications.where((item) => !item.isRead).length;
   bool get isLoading => _isLoading;
+  bool get isDeletingNotifications => _isDeletingNotifications;
   String? get message => _message;
   Stream<Map<String, String>> get tapEvents => _tapEvents.stream;
 
@@ -73,17 +75,9 @@ class NotificationsController extends ChangeNotifier
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
 
-    const initializationSettings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
-    );
     try {
       await _localNotifications.initialize(
-        settings: initializationSettings,
+        settings: nockNockNotificationInitializationSettings,
         onDidReceiveNotificationResponse: (response) {
           final payload = response.payload;
           if (payload != null) _handleTapPayload(payload);
@@ -94,7 +88,7 @@ class NotificationsController extends ChangeNotifier
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >()
-          ?.createNotificationChannel(_notificationChannel);
+          ?.createNotificationChannel(nockNockNotificationChannel);
     } on MissingPluginException catch (error) {
       debugPrint(
         'Notificaciones locales aún no están registradas. '
@@ -165,13 +159,22 @@ class NotificationsController extends ChangeNotifier
     notifyListeners();
     try {
       final response = await _authorizedGet<List<dynamic>>('/notifications');
-      _notifications = (response.data ?? const [])
-          .map(
-            (item) => AppNotification.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList();
+      _notifications = await Future.wait(
+        (response.data ?? const []).map((item) async {
+          final notification = AppNotification.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          );
+          final content = await _contentResolver.resolve({
+            ...notification.data,
+            'displayTitle': notification.title,
+            'displayBody': notification.body,
+          }, userId: authRepository.currentUser?.id);
+          return notification.copyWith(
+            title: content.title,
+            body: content.body,
+          );
+        }),
+      );
     } catch (_) {
       _message = 'No pudimos actualizar tus notificaciones.';
     } finally {
@@ -207,6 +210,36 @@ class NotificationsController extends ChangeNotifier
       await _authorizedPatch<void>('/notifications/read-all');
     } catch (_) {
       await load();
+    }
+  }
+
+  Future<bool> deleteNotifications(Iterable<String> notificationIds) async {
+    final ids = notificationIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (ids.isEmpty) return true;
+    if (authRepository.currentUser == null || _isDeletingNotifications) {
+      return false;
+    }
+
+    _isDeletingNotifications = true;
+    _message = null;
+    notifyListeners();
+    try {
+      await _authorizedDelete<void>('/notifications/batch', data: {'ids': ids});
+      final deletedIds = ids.toSet();
+      _notifications = _notifications
+          .where((notification) => !deletedIds.contains(notification.id))
+          .toList(growable: false);
+      return true;
+    } catch (_) {
+      _message = 'No pudimos eliminar las notificaciones seleccionadas.';
+      return false;
+    } finally {
+      _isDeletingNotifications = false;
+      notifyListeners();
     }
   }
 
@@ -281,26 +314,12 @@ class NotificationsController extends ChangeNotifier
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
     await load();
-    final notification = message.notification;
-    if (notification == null ||
-        !Platform.isAndroid ||
-        !_localNotificationsAvailable) {
-      return;
-    }
-    await _localNotifications.show(
-      id: message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
-      title: notification.title ?? 'NockNock',
-      body: notification.body,
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'nocknock_notifications',
-          'Notificaciones de NockNock',
-          channelDescription: 'Cambios en listas compartidas y recordatorios.',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-      ),
-      payload: jsonEncode(message.data),
+    if (!_localNotificationsAvailable) return;
+    await showEncryptedRemoteNotification(
+      localNotifications: _localNotifications,
+      message: message,
+      userId: authRepository.currentUser?.id,
+      resolver: _contentResolver,
     );
   }
 
@@ -349,8 +368,8 @@ class NotificationsController extends ChangeNotifier
   Future<Response<T>> _authorizedPatch<T>(String path) async =>
       _dio.patch<T>(path, options: await _authOptions());
 
-  Future<Response<T>> _authorizedDelete<T>(String path) async =>
-      _dio.delete<T>(path, options: await _authOptions());
+  Future<Response<T>> _authorizedDelete<T>(String path, {Object? data}) async =>
+      _dio.delete<T>(path, data: data, options: await _authOptions());
 
   @override
   void dispose() {
