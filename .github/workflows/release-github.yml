@@ -1,0 +1,168 @@
+name: Crear GitHub Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nocknock-github-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validar, firmar y crear release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          cache: true
+
+      - name: Resolver dependencias
+        run: flutter pub get
+
+      - name: Analizar codigo
+        run: flutter analyze
+
+      - name: Ejecutar pruebas
+        run: flutter test
+
+      - name: Preparar version del release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(awk '/^version:/ { print $2 }' pubspec.yaml)"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[1-9][0-9]*$ ]]; then
+            echo "La version de pubspec.yaml no es valida: $version" >&2
+            exit 1
+          fi
+
+          build_name="${version%+*}"
+          build_number="${version##*+}"
+          release_tag="v${build_name}-build-${build_number}"
+          apk_name="NockNock-${build_name}-build-${build_number}-release.apk"
+
+          echo "BUILD_NAME=$build_name" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
+          echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
+
+      - name: Verificar que la version sea nueva
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Ya existe el release $RELEASE_TAG. Incrementa la version en pubspec.yaml." >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Ya existe el tag $RELEASE_TAG. Incrementa la version en pubspec.yaml." >&2
+            exit 1
+          fi
+
+      - name: Restaurar firma Android
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          missing=()
+          for secret_name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!secret_name}" ]]; then
+              missing+=("$secret_name")
+            fi
+          done
+
+          if ((${#missing[@]} > 0)); then
+            printf 'Faltan secretos de GitHub Actions: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode \
+            > android/app/nocknock-upload.jks
+
+          {
+            printf 'storeFile=app/nocknock-upload.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
+          chmod 600 android/app/nocknock-upload.jks android/key.properties
+
+      - name: Generar APK firmado
+        run: >-
+          flutter build apk --release
+          --build-name "$BUILD_NAME"
+          --build-number "$BUILD_NUMBER"
+
+      - name: Verificar y preparar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jarsigner -verify build/app/outputs/flutter-apk/app-release.apk
+          mv build/app/outputs/flutter-apk/app-release.apk "$APK_NAME"
+          shasum -a 256 "$APK_NAME" > "${APK_NAME}.sha256"
+
+      - name: Guardar APK del pipeline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nocknock-${{ env.BUILD_NAME }}-${{ env.BUILD_NUMBER }}-apk
+          path: |
+            ${{ env.APK_NAME }}
+            ${{ env.APK_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Crear GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release create "$RELEASE_TAG" \
+            "$APK_NAME" \
+            "${APK_NAME}.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "NockNock $BUILD_NAME ($BUILD_NUMBER)" \
+            --generate-notes
