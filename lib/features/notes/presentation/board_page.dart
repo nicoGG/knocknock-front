@@ -37,6 +37,11 @@ enum _ListMenuAction { background, rename, delete }
 
 enum _BoardScope { list, assignedToMe, pinned, withReminder }
 
+const _boardContentSwitchDuration = Duration(milliseconds: 220);
+const _boardControlMotionDuration = Duration(milliseconds: 200);
+const _boardSelectorSlideDuration = Duration(milliseconds: 260);
+const _maxAnimatedNoteEntrances = 6;
+
 void _playBoardTapSound() {
   unawaited(_playSystemClick());
 }
@@ -89,6 +94,8 @@ class _BoardPageState extends State<BoardPage>
   late final Animation<Offset> _headerSlide;
   late final Animation<double> _fabScale;
   final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
+  bool _animateNoteEntrances = true;
+  int _noteEntranceSuppressionEpoch = 0;
 
   @override
   void initState() {
@@ -350,91 +357,110 @@ class _BoardPageState extends State<BoardPage>
         onAction: context.read<NotesCubit>().load,
       );
     }
+    final Widget content;
     if (notes.isEmpty) {
       final isUnfiltered = _filter == NoteFilter.all;
-      return _MessageState(
-        icon: switch (_scope) {
-          _BoardScope.pinned => Icons.push_pin_outlined,
-          _BoardScope.withReminder => Icons.alarm_outlined,
-          _BoardScope.list ||
-          _BoardScope.assignedToMe => Icons.sticky_note_2_outlined,
+      content = KeyedSubtree(
+        key: ValueKey('board-empty-${_scope.name}-${_filter.name}'),
+        child: _MessageState(
+          icon: switch (_scope) {
+            _BoardScope.pinned => Icons.push_pin_outlined,
+            _BoardScope.withReminder => Icons.alarm_outlined,
+            _BoardScope.list ||
+            _BoardScope.assignedToMe => Icons.sticky_note_2_outlined,
+          },
+          title: switch (_scope) {
+            _BoardScope.assignedToMe =>
+              isUnfiltered
+                  ? 'No tienes notas asignadas en esta lista'
+                  : 'No hay notas asignadas en este filtro',
+            _BoardScope.pinned =>
+              isUnfiltered
+                  ? 'Todavía no tienes notas ancladas'
+                  : 'No hay notas ancladas en este filtro',
+            _BoardScope.withReminder =>
+              isUnfiltered
+                  ? 'Todavía no tienes notas con recordatorio'
+                  : 'No hay notas con recordatorio en este filtro',
+            _BoardScope.list =>
+              isUnfiltered
+                  ? 'Tu lista está lista'
+                  : 'No hay notas en este filtro',
+          },
+          detail: switch (_scope) {
+            _BoardScope.assignedToMe =>
+              'Cuando te asignen una nota, aparecerá aquí.',
+            _BoardScope.pinned =>
+              'Ancla una nota en cualquier lista y aparecerá aquí.',
+            _BoardScope.withReminder =>
+              'Agrega un recordatorio a una nota y aparecerá aquí.',
+            _BoardScope.list =>
+              isUnfiltered
+                  ? 'Crea una nota y empieza a organizar lo que importa.'
+                  : 'Prueba otro filtro o crea una nota nueva.',
+          },
+          actionLabel: _scope == _BoardScope.list && isUnfiltered
+              ? 'Crear primera nota'
+              : null,
+          onAction: _scope == _BoardScope.list && isUnfiltered
+              ? _openNewNoteEditor
+              : null,
+        ),
+      );
+    } else {
+      content = KeyedSubtree(
+        key: ValueKey('board-notes-${_viewMode.name}-${_filter.name}'),
+        child: switch (_viewMode) {
+          BoardViewMode.grid => _NotesGrid(
+            key: const ValueKey('notes-grid'),
+            notes: notes,
+            groupCompleted: _filter == NoteFilter.all,
+            animateEntrances: _animateNoteEntrances,
+            showOriginList:
+                _scope == _BoardScope.pinned ||
+                _scope == _BoardScope.withReminder,
+            buildCard: _buildCard,
+            onPreview: _openNotePreview,
+            onReorder: _reorderNotes,
+          ),
+          BoardViewMode.list => _NotesList(
+            key: const ValueKey('notes-list'),
+            notes: notes,
+            groupCompleted: _filter == NoteFilter.all,
+            animateEntrances: _animateNoteEntrances,
+            layout: PostItCardLayout.compact,
+            itemHeight: 55,
+            maxWidth: 980,
+            buildCard: _buildCard,
+            onPreview: _openNotePreview,
+            onReorder: _reorderNotes,
+          ),
         },
-        title: switch (_scope) {
-          _BoardScope.assignedToMe =>
-            isUnfiltered
-                ? 'No tienes notas asignadas en esta lista'
-                : 'No hay notas asignadas en este filtro',
-          _BoardScope.pinned =>
-            isUnfiltered
-                ? 'Todavía no tienes notas ancladas'
-                : 'No hay notas ancladas en este filtro',
-          _BoardScope.withReminder =>
-            isUnfiltered
-                ? 'Todavía no tienes notas con recordatorio'
-                : 'No hay notas con recordatorio en este filtro',
-          _BoardScope.list =>
-            isUnfiltered
-                ? 'Tu lista está lista'
-                : 'No hay notas en este filtro',
-        },
-        detail: switch (_scope) {
-          _BoardScope.assignedToMe =>
-            'Cuando te asignen una nota, aparecerá aquí.',
-          _BoardScope.pinned =>
-            'Ancla una nota en cualquier lista y aparecerá aquí.',
-          _BoardScope.withReminder =>
-            'Agrega un recordatorio a una nota y aparecerá aquí.',
-          _BoardScope.list =>
-            isUnfiltered
-                ? 'Crea una nota y empieza a organizar lo que importa.'
-                : 'Prueba otro filtro o crea una nota nueva.',
-        },
-        actionLabel: _scope == _BoardScope.list && isUnfiltered
-            ? 'Crear primera nota'
-            : null,
-        onAction: _scope == _BoardScope.list && isUnfiltered
-            ? _openNewNoteEditor
-            : null,
       );
     }
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 240),
-      switchInCurve: Curves.easeOutCubic,
+      duration: disableAnimations ? Duration.zero : _boardContentSwitchDuration,
+      reverseDuration: Duration.zero,
+      switchInCurve: Curves.easeInOutCubic,
       switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) =>
+          currentChild ?? const SizedBox.shrink(),
       transitionBuilder: (child, animation) => FadeTransition(
+        key: const ValueKey('board-content-fade'),
         opacity: animation,
         child: SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(0, 0.025),
+            begin: const Offset(0, 0.035),
             end: Offset.zero,
           ).animate(animation),
-          child: child,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.975, end: 1).animate(animation),
+            child: child,
+          ),
         ),
       ),
-      child: switch (_viewMode) {
-        BoardViewMode.grid => _NotesGrid(
-          key: const ValueKey('notes-grid'),
-          notes: notes,
-          groupCompleted: _filter == NoteFilter.all,
-          showOriginList:
-              _scope == _BoardScope.pinned ||
-              _scope == _BoardScope.withReminder,
-          buildCard: _buildCard,
-          onPreview: _openNotePreview,
-          onReorder: _reorderNotes,
-        ),
-        BoardViewMode.list => _NotesList(
-          key: const ValueKey('notes-list'),
-          notes: notes,
-          groupCompleted: _filter == NoteFilter.all,
-          layout: PostItCardLayout.compact,
-          itemHeight: 55,
-          maxWidth: 980,
-          buildCard: _buildCard,
-          onPreview: _openNotePreview,
-          onReorder: _reorderNotes,
-        ),
-      },
+      child: content,
     );
   }
 
@@ -900,13 +926,24 @@ class _BoardPageState extends State<BoardPage>
   void _changeFilter(NoteFilter value) {
     if (_filter == value) return;
     _playBoardTapSound();
-    setState(() => _filter = value);
+    _withoutNoteEntrances(() => setState(() => _filter = value));
   }
 
   void _changeViewMode(BoardViewMode value) {
     if (_viewMode == value) return;
     _playBoardTapSound();
-    widget.viewModeController.setViewMode(value);
+    _withoutNoteEntrances(() => widget.viewModeController.setViewMode(value));
+  }
+
+  void _withoutNoteEntrances(VoidCallback update) {
+    _animateNoteEntrances = false;
+    final epoch = ++_noteEntranceSuppressionEpoch;
+    update();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (epoch == _noteEntranceSuppressionEpoch) {
+        _animateNoteEntrances = true;
+      }
+    });
   }
 
   void _openProfile() {
@@ -1120,6 +1157,7 @@ class _NotesGrid extends StatelessWidget {
   const _NotesGrid({
     required this.notes,
     required this.groupCompleted,
+    required this.animateEntrances,
     required this.showOriginList,
     required this.buildCard,
     required this.onPreview,
@@ -1129,6 +1167,7 @@ class _NotesGrid extends StatelessWidget {
 
   final List<Note> notes;
   final bool groupCompleted;
+  final bool animateEntrances;
   final bool showOriginList;
   final NoteCardBuilder buildCard;
   final ValueChanged<Note> onPreview;
@@ -1176,6 +1215,7 @@ class _NotesGrid extends StatelessWidget {
                   spacing: spacing,
                   verticalSpacing: verticalSpacing,
                   isCompact: isCompact,
+                  animateEntrances: animateEntrances,
                   keySuffix: '',
                 ),
               if (completedNotes.isNotEmpty) ...[
@@ -1189,6 +1229,7 @@ class _NotesGrid extends StatelessWidget {
                   spacing: spacing,
                   verticalSpacing: verticalSpacing,
                   isCompact: isCompact,
+                  animateEntrances: animateEntrances,
                   keySuffix: '-completed',
                 ),
               ],
@@ -1207,6 +1248,7 @@ class _NotesGrid extends StatelessWidget {
     required double spacing,
     required double verticalSpacing,
     required bool isCompact,
+    required bool animateEntrances,
     required String keySuffix,
   }) {
     final columns = List.generate(
@@ -1249,6 +1291,8 @@ class _NotesGrid extends StatelessWidget {
                     child: _NoteEntrance(
                       key: ValueKey('note-entrance-${item.note.id}'),
                       index: item.index,
+                      motionId: item.note.id,
+                      enabled: animateEntrances,
                       child: _DraggableGridNote(
                         key: ValueKey('reorder-grid-${item.note.id}'),
                         note: item.note,
@@ -1445,6 +1489,7 @@ class _NotesList extends StatelessWidget {
   const _NotesList({
     required this.notes,
     required this.groupCompleted,
+    required this.animateEntrances,
     required this.layout,
     required this.itemHeight,
     required this.maxWidth,
@@ -1456,6 +1501,7 @@ class _NotesList extends StatelessWidget {
 
   final List<Note> notes;
   final bool groupCompleted;
+  final bool animateEntrances;
   final PostItCardLayout layout;
   final double itemHeight;
   final double maxWidth;
@@ -1547,6 +1593,8 @@ class _NotesList extends StatelessWidget {
               'Mantén presionada para previsualizar o arrastra para cambiar el orden',
           child: _NoteEntrance(
             index: index,
+            motionId: note.id,
+            enabled: animateEntrances,
             child: Padding(
               padding: EdgeInsets.only(
                 bottom: layout == PostItCardLayout.compact ? 3 : 8,
@@ -1669,18 +1717,30 @@ class _LongPressPreviewRegionState extends State<_LongPressPreviewRegion> {
 }
 
 class _NoteEntrance extends StatelessWidget {
-  const _NoteEntrance({required this.index, required this.child, super.key});
+  const _NoteEntrance({
+    required this.index,
+    required this.motionId,
+    required this.enabled,
+    required this.child,
+    super.key,
+  });
 
   final int index;
+  final String motionId;
+  final bool enabled;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) return child;
-    final staggerIndex = index.clamp(0, 7);
-    final delay = staggerIndex * 42;
+    if (!enabled ||
+        index >= _maxAnimatedNoteEntrances ||
+        MediaQuery.disableAnimationsOf(context)) {
+      return child;
+    }
+    final delay = index * 42;
     final totalDuration = 390 + delay;
     return TweenAnimationBuilder<double>(
+      key: ValueKey('note-entrance-motion-$motionId'),
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: totalDuration),
       curve: Interval(delay / totalDuration, 1, curve: Curves.easeOutCubic),
@@ -4968,26 +5028,39 @@ class _GlassSelectorSurface extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: borderRadius,
-        child: BackdropFilter(
-          key: blurKey,
-          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withValues(alpha: isDark ? 0.13 : 0.48),
-                  colorScheme.surface.withValues(alpha: isDark ? 0.42 : 0.5),
-                ],
-              ),
-              borderRadius: borderRadius,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.58),
+        child: Stack(
+          fit: StackFit.passthrough,
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: BackdropFilter(
+                  key: blurKey,
+                  filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withValues(alpha: isDark ? 0.13 : 0.48),
+                          colorScheme.surface.withValues(
+                            alpha: isDark ? 0.42 : 0.5,
+                          ),
+                        ],
+                      ),
+                      borderRadius: borderRadius,
+                      border: Border.all(
+                        color: Colors.white.withValues(
+                          alpha: isDark ? 0.18 : 0.58,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-            child: Padding(padding: padding, child: child),
-          ),
+            Padding(padding: padding, child: child),
+          ],
         ),
       ),
     );
@@ -5020,10 +5093,8 @@ class _SlidingSelectorHighlight extends StatelessWidget {
         : Alignment(-1 + (2 * selectedIndex / (itemCount - 1)), 0);
     return AnimatedAlign(
       key: ValueKey('$keyPrefix-selection-indicator'),
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 300),
-      curve: Curves.easeOutCubic,
+      duration: reduceMotion ? Duration.zero : _boardSelectorSlideDuration,
+      curve: Curves.easeInOutCubic,
       alignment: alignment,
       child: SizedBox.fromSize(
         size: size,
@@ -5147,6 +5218,9 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
     final selectedIndex = options.indexWhere(
       (option) => option.value == selected,
     );
+    final motionDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _boardControlMotionDuration;
     return SizedBox(
       height: 56,
       child: _GlassSelectorSurface(
@@ -5188,7 +5262,7 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
                         label: option.tooltip ?? option.label,
                         child: AnimatedContainer(
                           key: ValueKey('$keyPrefix-${option.value.name}'),
-                          duration: const Duration(milliseconds: 220),
+                          duration: motionDuration,
                           curve: Curves.easeOutCubic,
                           decoration: BoxDecoration(
                             color: Colors.transparent,
@@ -5202,41 +5276,46 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
                               onTap: isSelected
                                   ? null
                                   : () => onChanged(option.value),
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TweenAnimationBuilder<Color?>(
-                                      duration: const Duration(
-                                        milliseconds: 220,
+                              child: AnimatedScale(
+                                key: ValueKey(
+                                  '$keyPrefix-${option.value.name}-motion',
+                                ),
+                                scale: isSelected ? 1 : 0.92,
+                                duration: motionDuration,
+                                curve: Curves.easeOutBack,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      TweenAnimationBuilder<Color?>(
+                                        duration: motionDuration,
+                                        tween: ColorTween(end: foreground),
+                                        builder: (context, color, child) =>
+                                            Icon(
+                                              option.icon,
+                                              size: 17,
+                                              color: color ?? foreground,
+                                            ),
                                       ),
-                                      tween: ColorTween(end: foreground),
-                                      builder: (context, color, child) => Icon(
-                                        option.icon,
-                                        size: 17,
-                                        color: color ?? foreground,
+                                      const SizedBox(height: 2),
+                                      AnimatedDefaultTextStyle(
+                                        duration: motionDuration,
+                                        curve: Curves.easeOutCubic,
+                                        style: TextStyle(
+                                          color: foreground,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          height: 1,
+                                        ),
+                                        child: Text(
+                                          option.label,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.fade,
+                                          softWrap: false,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    AnimatedDefaultTextStyle(
-                                      duration: const Duration(
-                                        milliseconds: 220,
-                                      ),
-                                      curve: Curves.easeOutCubic,
-                                      style: TextStyle(
-                                        color: foreground,
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w800,
-                                        height: 1,
-                                      ),
-                                      child: Text(
-                                        option.label,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.fade,
-                                        softWrap: false,
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -5339,6 +5418,9 @@ class _BoardControlItem<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final motionDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _boardControlMotionDuration;
     final foreground = selected
         ? (ThemeData.estimateBrightnessForColor(selectedColor) ==
                   Brightness.dark
@@ -5349,7 +5431,7 @@ class _BoardControlItem<T> extends StatelessWidget {
       button: true,
       selected: selected,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
+        duration: motionDuration,
         curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
           color: Colors.transparent,
@@ -5363,32 +5445,37 @@ class _BoardControlItem<T> extends StatelessWidget {
             onTap: selected ? null : onTap,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 5),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (showIcon) ...[
-                    Icon(option.icon, size: 16, color: foreground),
-                    const SizedBox(width: 6),
-                  ],
-                  Flexible(
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 180),
-                      style: TextStyle(
-                        color: foreground,
-                        fontSize: 13,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                      ),
-                      child: Text(
-                        option.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.fade,
-                        softWrap: false,
+              child: AnimatedScale(
+                scale: selected ? 1 : 0.96,
+                duration: motionDuration,
+                curve: Curves.easeOutBack,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (showIcon) ...[
+                      Icon(option.icon, size: 16, color: foreground),
+                      const SizedBox(width: 6),
+                    ],
+                    Flexible(
+                      child: AnimatedDefaultTextStyle(
+                        duration: motionDuration,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 13,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                        ),
+                        child: Text(
+                          option.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.fade,
+                          softWrap: false,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

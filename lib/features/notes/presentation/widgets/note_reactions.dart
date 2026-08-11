@@ -185,18 +185,15 @@ class NoteReactionsSummary extends StatelessWidget {
         ),
     ];
     if (floating) {
+      // Grid cards already animate as a whole. Keeping these badges static
+      // avoids starting an extra ticker for every visible emoji on home load.
       return Row(
         key: ValueKey('note-reactions-summary-${note.id}'),
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var index = 0; index < reactionCounts.length; index++) ...[
             if (index > 0) const SizedBox(width: 2),
-            _FloatingReactionEntrance(
-              key: ValueKey('floating-reaction-${note.id}-$index'),
-              index: index,
-              enabled: !MediaQuery.disableAnimationsOf(context),
-              child: reactionCounts[index],
-            ),
+            reactionCounts[index],
           ],
         ],
       );
@@ -235,46 +232,6 @@ class _ReactionSetTransition extends StatelessWidget {
           child: child,
         ),
       ),
-    );
-  }
-}
-
-class _FloatingReactionEntrance extends StatelessWidget {
-  const _FloatingReactionEntrance({
-    required this.index,
-    required this.enabled,
-    required this.child,
-    super.key,
-  });
-
-  final int index;
-  final bool enabled;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!enabled) return child;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: Duration(milliseconds: 460 + (index * 80)),
-      builder: (context, progress, child) {
-        final entrance = Curves.easeOutBack.transform(progress);
-        final float = math.sin(progress * math.pi * 2) * (1 - progress) * 1.8;
-        return Opacity(
-          opacity: Curves.easeOut.transform(progress).clamp(0, 1),
-          child: Transform.translate(
-            offset: Offset(0, ((1 - entrance) * 7) + float),
-            child: Transform.rotate(
-              angle: (1 - progress) * (index.isEven ? -0.07 : 0.07),
-              child: Transform.scale(
-                scale: 0.76 + (entrance * 0.24),
-                child: child,
-              ),
-            ),
-          ),
-        );
-      },
-      child: child,
     );
   }
 }
@@ -507,7 +464,8 @@ class _ReactionCount extends StatelessWidget {
                   id: motionId!,
                   emoji: emoji,
                   fontSize: floating ? 12 : 13,
-                  enabled: !MediaQuery.disableAnimationsOf(context),
+                  enabled:
+                      !floating && !MediaQuery.disableAnimationsOf(context),
                 ),
                 const SizedBox(width: 3),
                 Text('$count', style: textStyle),

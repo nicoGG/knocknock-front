@@ -234,14 +234,16 @@ class PostItCard extends StatelessWidget {
                         ? SizedBox.shrink(
                             key: ValueKey('no-reactions-${note.id}'),
                           )
-                        : NoteReactionsSummary(
+                        : RepaintBoundary(
                             key: ValueKey(
                               'floating-reactions-${note.id}-$reactionFingerprint',
                             ),
-                            note: note,
-                            foregroundColor: foregroundColor,
-                            maxVisible: 2,
-                            floating: true,
+                            child: NoteReactionsSummary(
+                              note: note,
+                              foregroundColor: foregroundColor,
+                              maxVisible: 2,
+                              floating: true,
+                            ),
                           ),
                   ),
                 ),

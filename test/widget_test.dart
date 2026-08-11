@@ -2102,7 +2102,22 @@ void main() {
     );
     expect(
       tester.widget<AnimatedAlign>(filterIndicator).duration,
-      const Duration(milliseconds: 300),
+      const Duration(milliseconds: 260),
+    );
+    expect(
+      tester.widget<AnimatedAlign>(filterIndicator).curve,
+      Curves.easeInOutCubic,
+    );
+    final pendingMotion = find.byKey(
+      const ValueKey('filter-mode-pending-motion'),
+    );
+    expect(tester.widget<AnimatedScale>(pendingMotion).scale, 0.92);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('filter-mode-glass-blur')),
+        matching: filterIndicator,
+      ),
+      findsNothing,
     );
     final selectedFilterDecoration =
         tester.widget<DecoratedBox>(filterPill).decoration as BoxDecoration;
@@ -2119,6 +2134,7 @@ void main() {
         .dx;
     await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
     await tester.pump();
+    expect(tester.widget<AnimatedScale>(pendingMotion).scale, 1);
     expect(
       systemSoundCalls,
       contains(
@@ -2138,6 +2154,79 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('view-mode-list')));
     await tester.pump();
     expect(systemSoundCalls, hasLength(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('filter and view changes do not replay every card entrance', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(noteCount: 12),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final grid = find.byKey(const ValueKey('notes-grid'));
+    for (var index = 1; index <= 6; index++) {
+      expect(
+        find.byKey(ValueKey('note-entrance-motion-note-$index')),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.byKey(const ValueKey('note-entrance-motion-note-7')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pump();
+    expect(grid, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('note-entrance-motion-note-1')),
+      findsNothing,
+    );
+    final filterFade = tester.widget<FadeTransition>(
+      find.byKey(const ValueKey('board-content-fade')),
+    );
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(filterFade.opacity.value, inExclusiveRange(0, 1));
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+    await tester.pump();
+
+    final list = find.byKey(const ValueKey('notes-list'));
+    expect(list, findsOneWidget);
+    expect(grid, findsNothing);
+    expect(
+      find.byKey(const ValueKey('note-entrance-motion-note-1')),
+      findsNothing,
+    );
+    final viewFade = tester.widget<FadeTransition>(
+      find.byKey(const ValueKey('board-content-fade')),
+    );
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(viewFade.opacity.value, inExclusiveRange(0, 1));
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('board-empty-list-completed')),
+      findsOneWidget,
+    );
+    final emptyFade = tester.widget<FadeTransition>(
+      find.byKey(const ValueKey('board-content-fade')),
+    );
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(emptyFade.opacity.value, inExclusiveRange(0, 1));
     expect(tester.takeException(), isNull);
   });
 

@@ -132,9 +132,7 @@ void main() {
     expect(openCalls, 0);
   });
 
-  testWidgets('grid reactions float above the note without overflowing', (
-    tester,
-  ) async {
+  testWidgets('grid reactions stay lightweight above the note', (tester) async {
     var openCalls = 0;
     final note = _note().copyWith(
       reactions: const [
@@ -163,13 +161,7 @@ void main() {
     final firstFloatingReaction = find.byKey(
       const ValueKey('floating-reaction-content-❤️'),
     );
-    final animatedEmoji = find.byKey(
-      const ValueKey('animated-emoji-transform-floating-note-1-❤️'),
-    );
     final initialReactionTop = tester.getTopLeft(firstFloatingReaction).dy;
-    final initialEmojiTransform = List<double>.of(
-      tester.widget<Transform>(animatedEmoji).transform.storage,
-    );
 
     expect(find.text('+3'), findsOneWidget);
     expect(
@@ -179,7 +171,11 @@ void main() {
           (widget) => widget is TweenAnimationBuilder<double>,
         ),
       ),
-      findsNWidgets(5),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('animated-emoji-transform-floating-note-1-❤️')),
+      findsNothing,
     );
     expect(summaryRect.top, lessThan(surfaceRect.top));
     expect(summaryRect.bottom, lessThanOrEqualTo(surfaceRect.top + 14));
@@ -189,12 +185,7 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 140));
     final movingReactionTop = tester.getTopLeft(firstFloatingReaction).dy;
-    final movingEmojiTransform = List<double>.of(
-      tester.widget<Transform>(animatedEmoji).transform.storage,
-    );
-    expect((movingReactionTop - initialReactionTop).abs(), greaterThan(0.1));
-    expect(movingEmojiTransform, isNot(equals(initialEmojiTransform)));
-    await tester.pump(const Duration(milliseconds: 700));
+    expect(movingReactionTop, initialReactionTop);
 
     await tester.tapAt(summaryRect.center);
     await tester.pump();
