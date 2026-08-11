@@ -8,7 +8,11 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 
 /// Uses device storage for guests and the connected repository after sign-in.
 class AuthAwareNotesRepository
-    implements NotesRepository, LocalNotesDataCleaner, NotesCacheReader {
+    implements
+        NotesRepository,
+        LocalNotesDataCleaner,
+        NotesCacheReader,
+        AggregateBoardAppearancesRepository {
   AuthAwareNotesRepository({
     required AuthRepository authRepository,
     required this.localRepository,
@@ -103,6 +107,28 @@ class AuthAwareNotesRepository
   );
 
   @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() =>
+      _whenReady((repository) {
+        if (repository is! AggregateBoardAppearancesRepository) {
+          throw const NotesPersistenceFailure();
+        }
+        return (repository as AggregateBoardAppearancesRepository)
+            .fetchAggregateBoardAppearances();
+      });
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) => _whenReady((repository) {
+    if (repository is! AggregateBoardAppearancesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as AggregateBoardAppearancesRepository)
+        .updateAggregateBoardAppearance(scope, appearance);
+  });
+
+  @override
   Future<List<Note>> fetchNotes(String boardId) =>
       _whenReady((repository) => repository.fetchNotes(boardId));
 
@@ -178,19 +204,34 @@ class AuthAwareNotesRepository
   Future<void> _syncGuestData() async {
     final local = localRepository;
     final remote = remoteRepository;
-    if (local is! LocalNotesDataReader ||
-        local is! LocalNotesDataCleaner ||
-        remote is! GuestDataSyncTarget) {
+    if (local is! LocalNotesDataReader || local is! LocalNotesDataCleaner) {
       return;
     }
     final snapshot = await (local as LocalNotesDataReader).readLocalData();
-    if (!snapshot.hasData) return;
+    final localAppearances = local is AggregateBoardAppearancesRepository
+        ? await (local as AggregateBoardAppearancesRepository)
+              .fetchAggregateBoardAppearances()
+        : const AggregateBoardAppearances();
+    final hasAppearanceData =
+        localAppearances != const AggregateBoardAppearances();
+    if (!snapshot.hasData && !hasAppearanceData) return;
 
     _events.add(const GuestDataSyncStarted());
     try {
-      final result = await (remote as GuestDataSyncTarget).syncGuestData(
-        snapshot,
-      );
+      final result = snapshot.hasData
+          ? remote is GuestDataSyncTarget
+                ? await (remote as GuestDataSyncTarget).syncGuestData(snapshot)
+                : throw const NotesPersistenceFailure()
+          : const GuestDataSyncResult(listsImported: 0, notesImported: 0);
+      if (hasAppearanceData && remote is AggregateBoardAppearancesRepository) {
+        final target = remote as AggregateBoardAppearancesRepository;
+        for (final scope in AggregateBoardScope.values) {
+          final appearance = localAppearances.forScope(scope);
+          if (appearance != const ListAppearance()) {
+            await target.updateAggregateBoardAppearance(scope, appearance);
+          }
+        }
+      }
       await (local as LocalNotesDataCleaner).clearLocalData();
       _events.add(
         GuestDataSyncCompleted(

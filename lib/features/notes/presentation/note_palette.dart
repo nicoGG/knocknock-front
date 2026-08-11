@@ -12,5 +12,8 @@ abstract final class NotePalette {
     NoteColor.mint => const Color(0xFFA9E5D1),
     NoteColor.coral => const Color(0xFFFFAAA2),
     NoteColor.gray => const Color(0xFFD7D5D0),
+    NoteColor.red => const Color(0xFFF29C9C),
+    NoteColor.teal => const Color(0xFF8ED8D3),
+    NoteColor.brown => const Color(0xFFD8B79E),
   };
 }

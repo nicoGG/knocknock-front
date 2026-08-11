@@ -131,9 +131,31 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   ),
                 ),
                 const SizedBox(height: 22),
-                Text(
-                  widget.note == null ? 'Nueva nota' : 'Editar nota',
-                  style: Theme.of(context).textTheme.headlineSmall,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        widget.note == null ? 'Nueva nota' : 'Editar nota',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('close-note-editor-button'),
+                      tooltip: 'Cerrar',
+                      style: IconButton.styleFrom(
+                        backgroundColor: colorScheme.surface.withValues(
+                          alpha: isDark ? 0.3 : 0.42,
+                        ),
+                        side: BorderSide(
+                          color: Colors.white.withValues(
+                            alpha: isDark ? 0.12 : 0.46,
+                          ),
+                        ),
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
                 TextFormField(

@@ -18,7 +18,8 @@ class CachedNotesRepository
         NotesRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
-        E2eeNotesTransport {
+        E2eeNotesTransport,
+        AggregateBoardAppearancesRepository {
   factory CachedNotesRepository({
     required NotesRepository repository,
     required SharedPreferences preferences,
@@ -58,6 +59,7 @@ class CachedNotesRepository
         for (final entry in cache.notesByBoard.entries)
           entry.key: List<Note>.unmodifiable(entry.value),
       }),
+      aggregateBoardAppearances: cache.aggregateBoardAppearances,
     );
   }
 
@@ -105,6 +107,14 @@ class CachedNotesRepository
       throw const EncryptionKeyUnavailableFailure();
     }
     return repository as E2eeNotesTransport;
+  }
+
+  AggregateBoardAppearancesRepository get _aggregateBoardRepository {
+    final repository = _repository;
+    if (repository is! AggregateBoardAppearancesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return repository as AggregateBoardAppearancesRepository;
   }
 
   @override
@@ -224,6 +234,37 @@ class CachedNotesRepository
     final list = await _repository.updateListAppearance(listId, appearance);
     unawaited(_updateCache(userId, (cache) => _replaceList(cache, list)));
     return list;
+  }
+
+  @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async {
+    final userId = _userIdProvider();
+    final appearances = await _aggregateBoardRepository
+        .fetchAggregateBoardAppearances();
+    unawaited(
+      _updateCache(
+        userId,
+        (cache) => cache.aggregateBoardAppearances = appearances,
+      ),
+    );
+    return appearances;
+  }
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    final userId = _userIdProvider();
+    final appearances = await _aggregateBoardRepository
+        .updateAggregateBoardAppearance(scope, appearance);
+    unawaited(
+      _updateCache(
+        userId,
+        (cache) => cache.aggregateBoardAppearances = appearances,
+      ),
+    );
+    return appearances;
   }
 
   @override
@@ -356,6 +397,15 @@ class CachedNotesRepository
                 appearance: appearance,
               );
             }
+          }),
+        );
+      case AggregateBoardAppearanceChanged(:final scope, :final appearance):
+        unawaited(
+          _updateCache(userId, (cache) {
+            cache.aggregateBoardAppearances =
+                (cache.aggregateBoardAppearances ??
+                        const AggregateBoardAppearances())
+                    .copyWithScope(scope, appearance);
           }),
         );
       case ListAccessRemoved(:final listId):
@@ -530,6 +580,7 @@ class _AccountNotesCache {
     Map<String, List<Note>>? notesByBoard,
     this.pinnedNotes,
     this.reminderNotes,
+    this.aggregateBoardAppearances,
   }) : lists = lists ?? [],
        notesByBoard = notesByBoard ?? {};
 
@@ -539,6 +590,7 @@ class _AccountNotesCache {
     );
     final rawPinnedNotes = json['pinnedNotes'];
     final rawReminderNotes = json['reminderNotes'];
+    final rawAggregateBoardAppearances = json['aggregateBoardAppearances'];
     return _AccountNotesCache(
       userId: json['userId'] as String,
       lists: (json['lists'] as List<dynamic>? ?? const [])
@@ -570,6 +622,11 @@ class _AccountNotesCache {
                 )
                 .toList()
           : null,
+      aggregateBoardAppearances: rawAggregateBoardAppearances is Map
+          ? AggregateBoardAppearances.fromJson(
+              Map<String, dynamic>.from(rawAggregateBoardAppearances),
+            )
+          : null,
     );
   }
 
@@ -578,6 +635,7 @@ class _AccountNotesCache {
   final Map<String, List<Note>> notesByBoard;
   List<Note>? pinnedNotes;
   List<Note>? reminderNotes;
+  AggregateBoardAppearances? aggregateBoardAppearances;
 
   Map<String, dynamic> toJson() => {
     'userId': userId,
@@ -590,6 +648,8 @@ class _AccountNotesCache {
       'pinnedNotes': pinnedNotes!.map((note) => note.toJson()).toList(),
     if (reminderNotes != null)
       'reminderNotes': reminderNotes!.map((note) => note.toJson()).toList(),
+    if (aggregateBoardAppearances != null)
+      'aggregateBoardAppearances': aggregateBoardAppearances!.toJson(),
   };
 }
 

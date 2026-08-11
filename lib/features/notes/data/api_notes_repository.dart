@@ -11,7 +11,11 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 class ApiNotesRepository
-    implements NotesRepository, GuestDataSyncTarget, E2eeNotesTransport {
+    implements
+        NotesRepository,
+        GuestDataSyncTarget,
+        E2eeNotesTransport,
+        AggregateBoardAppearancesRepository {
   ApiNotesRepository({
     required String apiBaseUrl,
     required String socketBaseUrl,
@@ -64,6 +68,10 @@ class ApiNotesRepository
       ..on('note:created', _onNoteChanged)
       ..on('note:updated', _onNoteChanged)
       ..on('list:appearance-updated', _onListAppearanceChanged)
+      ..on(
+        'account:aggregate-board-appearance-updated',
+        _onAggregateBoardAppearanceChanged,
+      )
       ..on('list:access-removed', (data) {
         final listId = _asJson(data)?['listId'] as String?;
         if (listId != null) _events.add(ListAccessRemoved(listId));
@@ -300,6 +308,26 @@ class ApiNotesRepository
   }
 
   @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/account/aggregate-board-appearances',
+    );
+    return AggregateBoardAppearances.fromJson(response.data);
+  }
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/account/aggregate-board-appearances/${scope.name}',
+      data: appearance.toJson(),
+    );
+    return AggregateBoardAppearances.fromJson(response.data);
+  }
+
+  @override
   Future<List<Note>> fetchNotes(String boardId) async {
     final response = await _dio.get<List<dynamic>>(
       '/notes',
@@ -458,6 +486,23 @@ class ApiNotesRepository
       _events.add(
         ListAppearanceChanged(
           listId,
+          ListAppearance.fromJson(Map<String, dynamic>.from(rawAppearance)),
+        ),
+      );
+    }
+  }
+
+  void _onAggregateBoardAppearanceChanged(dynamic data) {
+    final json = _asJson(data);
+    final scopeName = json?['scope'] as String?;
+    final rawAppearance = json?['appearance'];
+    final scope = AggregateBoardScope.values
+        .where((candidate) => candidate.name == scopeName)
+        .firstOrNull;
+    if (scope != null && rawAppearance is Map) {
+      _events.add(
+        AggregateBoardAppearanceChanged(
+          scope,
           ListAppearance.fromJson(Map<String, dynamic>.from(rawAppearance)),
         ),
       );

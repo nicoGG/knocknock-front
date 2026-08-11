@@ -4,6 +4,8 @@
 <dict>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Elige una foto para usarla como fondo de tus listas.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Usa Face ID para desbloquear las listas que decidas proteger.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

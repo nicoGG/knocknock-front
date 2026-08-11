@@ -23,13 +23,22 @@ void main() {
     final list = _list();
     final note = _note(title: 'Guardada');
     final repository = CachedNotesRepository(
-      repository: _FakeRemoteRepository(lists: [list], notes: [note]),
+      repository: _FakeRemoteRepository(
+        lists: [list],
+        notes: [note],
+        aggregateBoardAppearances: const AggregateBoardAppearances(
+          pinned: ListAppearance(
+            backgroundPreset: ListBackgroundPreset.lavender,
+          ),
+        ),
+      ),
       preferences: preferences,
       userIdProvider: () => currentUserId,
     );
 
     await repository.fetchLists();
     await repository.fetchNotes(list.id);
+    await repository.fetchAggregateBoardAppearances();
     await pumpEventQueue();
     repository.dispose();
 
@@ -43,6 +52,10 @@ void main() {
     expect(cached?.lists.single.collaborators.single.displayName, 'Nico');
     expect(cached?.lists.single.pendingInvitations.single.email, 'ana@test.cl');
     expect(cached?.notesByBoard[list.id]?.single.title, 'Guardada');
+    expect(
+      cached?.aggregateBoardAppearances?.pinned.backgroundPreset,
+      ListBackgroundPreset.lavender,
+    );
 
     currentUserId = 'user-2';
     expect(await reopenedRepository.readCache(), isNull);
@@ -124,11 +137,17 @@ Note _note({required String title}) {
   );
 }
 
-class _FakeRemoteRepository implements NotesRepository {
-  _FakeRemoteRepository({required this.lists, required this.notes});
+class _FakeRemoteRepository
+    implements NotesRepository, AggregateBoardAppearancesRepository {
+  _FakeRemoteRepository({
+    required this.lists,
+    required this.notes,
+    this.aggregateBoardAppearances = const AggregateBoardAppearances(),
+  });
 
   final List<NoteList> lists;
   final List<Note> notes;
+  AggregateBoardAppearances aggregateBoardAppearances;
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => const Stream.empty();
@@ -138,6 +157,22 @@ class _FakeRemoteRepository implements NotesRepository {
 
   @override
   Future<List<Note>> fetchNotes(String boardId) async => notes;
+
+  @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async =>
+      aggregateBoardAppearances;
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    aggregateBoardAppearances = aggregateBoardAppearances.copyWithScope(
+      scope,
+      appearance,
+    );
+    return aggregateBoardAppearances;
+  }
 
   @override
   void dispose() {}

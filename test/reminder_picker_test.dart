@@ -62,4 +62,50 @@ void main() {
 
     expect(selected, DateTime(2026, 2, 28, 9, 45));
   });
+
+  testWidgets('keeps the dark sheet usable with enlarged text', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFFEC5B3F),
+            brightness: Brightness.dark,
+          ),
+        ),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.4)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              onPressed: () => showReminderPicker(
+                context,
+                now: () => DateTime(2026, 8, 11, 15, 3),
+              ),
+              child: const Text('Recordatorio'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Recordatorio'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('reminder-presets-group')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('reminder-custom-date')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -6,6 +6,11 @@ import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.
 
 const noteContentMaxLength = 500;
 
+final RegExp _visibleNoteUrlPattern = RegExp(
+  r'(?:(?:https?://)|(?:www\.))[^\s<>()]+',
+  caseSensitive: false,
+);
+
 class NoteRichContent {
   const NoteRichContent({required this.plainText, required this.deltaJson});
 
@@ -20,15 +25,105 @@ Document noteDocumentFromContent({
   if (deltaJson != null && deltaJson.trim().isNotEmpty) {
     try {
       final decoded = jsonDecode(deltaJson);
-      if (decoded is List) return Document.fromJson(decoded);
+      if (decoded is List) {
+        return _documentWithDetectedLinks(Document.fromJson(decoded));
+      }
     } catch (_) {
       // Fall back to the compatible plain-text description below.
     }
   }
-  return Document.fromJson([
-    if (plainText.isNotEmpty) {'insert': plainText},
-    {'insert': '\n'},
-  ]);
+  return _documentWithDetectedLinks(
+    Document.fromJson([
+      if (plainText.isNotEmpty) {'insert': plainText},
+      {'insert': '\n'},
+    ]),
+  );
+}
+
+Document _documentWithDetectedLinks(Document document) {
+  final linkedOperations = <Map<String, dynamic>>[];
+
+  for (final rawOperation in document.toDelta().toJson()) {
+    final operation = Map<String, dynamic>.from(rawOperation);
+    final insertion = operation['insert'];
+    final attributes = operation['attributes'] is Map
+        ? Map<String, dynamic>.from(operation['attributes'] as Map)
+        : <String, dynamic>{};
+    if (insertion is! String || attributes.containsKey(Attribute.link.key)) {
+      linkedOperations.add(operation);
+      continue;
+    }
+
+    var cursor = 0;
+    for (final match in _visibleNoteUrlPattern.allMatches(insertion)) {
+      var linkEnd = match.end;
+      while (linkEnd > match.start &&
+          '.,;:!?'.contains(insertion.substring(linkEnd - 1, linkEnd))) {
+        linkEnd--;
+      }
+      if (linkEnd == match.start) continue;
+
+      if (cursor < match.start) {
+        linkedOperations.add(
+          _textOperation(insertion.substring(cursor, match.start), attributes),
+        );
+      }
+      final visibleLink = insertion.substring(match.start, linkEnd);
+      linkedOperations.add(
+        _textOperation(visibleLink, {
+          ...attributes,
+          Attribute.link.key: _launchableNoteLink(visibleLink),
+        }),
+      );
+      cursor = linkEnd;
+    }
+
+    if (cursor < insertion.length) {
+      linkedOperations.add(
+        _textOperation(insertion.substring(cursor), attributes),
+      );
+    }
+  }
+
+  return Document.fromJson(linkedOperations);
+}
+
+Map<String, dynamic> _textOperation(
+  String text,
+  Map<String, dynamic> attributes,
+) => {'insert': text, if (attributes.isNotEmpty) 'attributes': attributes};
+
+String _launchableNoteLink(String link) {
+  final trimmedLink = link.trim();
+  return trimmedLink.toLowerCase().startsWith('www.')
+      ? 'https://$trimmedLink'
+      : trimmedLink;
+}
+
+bool _isSupportedNoteLink(String input) {
+  final link = input.trim();
+  if (link.isEmpty || link.contains(RegExp(r'\s'))) return false;
+
+  final parsed = Uri.tryParse(link);
+  if (parsed == null) return false;
+  if (parsed.hasScheme) {
+    switch (parsed.scheme.toLowerCase()) {
+      case 'http':
+      case 'https':
+        return parsed.host.isNotEmpty;
+      case 'mailto':
+      case 'tel':
+        return parsed.path.isNotEmpty;
+      default:
+        return false;
+    }
+  }
+
+  final webLink = Uri.tryParse('https://$link');
+  return webLink != null &&
+      webLink.host.contains('.') &&
+      !webLink.host.startsWith('.') &&
+      !webLink.host.endsWith('.');
 }
 
 NoteRichContent noteRichContentFromDocument(Document document) {
@@ -328,6 +423,40 @@ class _NoteFormatToolbar extends StatelessWidget {
                   ),
                   onPressed: () => _toggleInline(Attribute.strikeThrough),
                 ),
+                Container(
+                  width: 1,
+                  height: 26,
+                  margin: const EdgeInsets.symmetric(horizontal: 5),
+                  color: foregroundColor.withValues(alpha: 0.18),
+                ),
+                QuillToolbarLinkStyleButton(
+                  key: const ValueKey('note-hyperlink-button'),
+                  controller: controller,
+                  options: QuillToolbarLinkStyleButtonOptions(
+                    tooltip: 'Agregar o editar hipervínculo',
+                    iconData: Icons.link_rounded,
+                    validateLink: _isSupportedNoteLink,
+                    childBuilder:
+                        (dynamic rawOptions, dynamic rawExtraOptions) {
+                          final options =
+                              rawOptions as QuillToolbarLinkStyleButtonOptions;
+                          final extraOptions =
+                              rawExtraOptions
+                                  as QuillToolbarLinkStyleButtonExtraOptions;
+                          return _FormatButton(
+                            tooltip:
+                                options.tooltip ??
+                                'Agregar o editar hipervínculo',
+                            icon: options.iconData ?? Icons.link_rounded,
+                            foregroundColor: foregroundColor,
+                            isSelected: attributes.containsKey(
+                              Attribute.link.key,
+                            ),
+                            onPressed: extraOptions.onPressed!,
+                          );
+                        },
+                  ),
+                ),
               ],
             ),
           ),
@@ -446,12 +575,14 @@ class NoteRichTextViewer extends StatefulWidget {
     required this.plainText,
     this.deltaJson,
     this.foregroundColor,
+    this.onLaunchUrl,
     super.key,
   });
 
   final String plainText;
   final String? deltaJson;
   final Color? foregroundColor;
+  final ValueChanged<String>? onLaunchUrl;
 
   @override
   State<NoteRichTextViewer> createState() => _NoteRichTextViewerState();
@@ -493,11 +624,12 @@ class _NoteRichTextViewerState extends State<NoteRichTextViewer> {
       style: TextStyle(color: widget.foregroundColor),
       child: QuillEditor.basic(
         controller: _controller,
-        config: const QuillEditorConfig(
+        config: QuillEditorConfig(
           scrollable: false,
           padding: EdgeInsets.zero,
           enableInteractiveSelection: true,
           showCursor: false,
+          onLaunchUrl: widget.onLaunchUrl,
         ),
       ),
     );

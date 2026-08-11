@@ -29,6 +29,7 @@ class NotesCubit extends Cubit<NotesState> {
         notes: const [],
         pinnedNotes: const [],
         reminderNotes: const [],
+        aggregateBoardAppearances: const AggregateBoardAppearances(),
         isLoadingPinned: false,
         isLoadingReminderNotes: false,
       ),
@@ -53,6 +54,15 @@ class NotesCubit extends Cubit<NotesState> {
             lists: cached.lists,
             selectedListId: cachedListId,
             notes: _sortedNotes(cachedNotes),
+            aggregateBoardAppearances:
+                cached.aggregateBoardAppearances ??
+                state.aggregateBoardAppearances,
+          ),
+        );
+      } else if (cached.aggregateBoardAppearances != null) {
+        emit(
+          state.copyWith(
+            aggregateBoardAppearances: cached.aggregateBoardAppearances,
           ),
         );
       }
@@ -64,7 +74,10 @@ class NotesCubit extends Cubit<NotesState> {
       final selectedListId = _resolveSelectedListId(lists, rememberedListId);
       unawaited(_rememberSelectedList(selectedListId));
       unawaited(_connectBestEffort(selectedListId));
-      final notes = await _repository.fetchNotes(selectedListId);
+      final notesFuture = _repository.fetchNotes(selectedListId);
+      final appearancesFuture = _fetchAggregateBoardAppearances();
+      final notes = await notesFuture;
+      final aggregateBoardAppearances = await appearancesFuture;
       if (generation != _loadGeneration || isClosed) return;
       emit(
         state.copyWith(
@@ -72,6 +85,8 @@ class NotesCubit extends Cubit<NotesState> {
           lists: lists,
           selectedListId: selectedListId,
           notes: _sortedNotes(notes),
+          aggregateBoardAppearances:
+              aggregateBoardAppearances ?? state.aggregateBoardAppearances,
         ),
       );
     } catch (error) {
@@ -420,6 +435,44 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<bool> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    final repository = _repository;
+    if (repository is! AggregateBoardAppearancesRepository) return false;
+    final previous = state.aggregateBoardAppearances;
+    if (previous.forScope(scope) == appearance) return true;
+
+    emit(
+      state.copyWith(
+        aggregateBoardAppearances: previous.copyWithScope(scope, appearance),
+        isSavingAppearance: true,
+      ),
+    );
+    try {
+      final updated = await (repository as AggregateBoardAppearancesRepository)
+          .updateAggregateBoardAppearance(scope, appearance);
+      emit(
+        state.copyWith(
+          aggregateBoardAppearances: updated,
+          isSavingAppearance: false,
+          message: 'Fondo sincronizado con tu cuenta.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      emit(
+        state.copyWith(
+          aggregateBoardAppearances: previous,
+          isSavingAppearance: false,
+          message: _friendlyMessage(error),
+        ),
+      );
+      return false;
+    }
+  }
+
   List<NoteList> _replaceList(NoteList updated) => state.lists
       .map((list) => list.id == updated.id ? updated : list)
       .toList();
@@ -457,6 +510,17 @@ class NotesCubit extends Cubit<NotesState> {
     if (repository is! NotesCacheReader) return null;
     try {
       return await (repository as NotesCacheReader).readCache();
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<AggregateBoardAppearances?> _fetchAggregateBoardAppearances() async {
+    final repository = _repository;
+    if (repository is! AggregateBoardAppearancesRepository) return null;
+    try {
+      return await (repository as AggregateBoardAppearancesRepository)
+          .fetchAggregateBoardAppearances();
     } on Object {
       return null;
     }
@@ -790,6 +854,13 @@ class NotesCubit extends Cubit<NotesState> {
             ),
           );
         }
+      case AggregateBoardAppearanceChanged(:final scope, :final appearance):
+        emit(
+          state.copyWith(
+            aggregateBoardAppearances: state.aggregateBoardAppearances
+                .copyWithScope(scope, appearance),
+          ),
+        );
       case ListAccessRemoved(:final listId):
         if (state.lists.any((list) => list.id == listId)) {
           unawaited(_refreshAfterAccessRemoved());

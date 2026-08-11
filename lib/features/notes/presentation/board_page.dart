@@ -11,13 +11,17 @@ import 'package:nocknock/core/theme/app_theme_controller.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/auth/presentation/profile_page.dart';
+import 'package:nocknock/features/notes/data/list_protection_controller.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
 import 'package:nocknock/features/notes/presentation/board_view_mode_controller.dart';
+import 'package:nocknock/features/notes/presentation/list_biometric_copy.dart';
+import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_detail_page.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
+import 'package:nocknock/features/notes/presentation/list_protection_guard.dart';
 import 'package:nocknock/features/notes/presentation/widgets/board_loading_state.dart';
 import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note_fab.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
@@ -33,7 +37,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 enum NoteFilter { all, pending, completed }
 
-enum _ListMenuAction { background, rename, delete }
+enum _ListMenuAction { background, rename, protection, delete }
 
 enum _BoardScope { list, assignedToMe, pinned, withReminder }
 
@@ -44,16 +48,6 @@ const _maxAnimatedNoteEntrances = 6;
 
 void _playBoardTapSound() {
   unawaited(_playSystemClick());
-}
-
-void _playBoardLongPressSound() {
-  unawaited(_playBoardLongPressPattern());
-}
-
-Future<void> _playBoardLongPressPattern() async {
-  await _playSystemClick();
-  await Future<void>.delayed(const Duration(milliseconds: 72));
-  await _playSystemClick();
 }
 
 Future<void> _playSystemClick() async {
@@ -68,12 +62,14 @@ class BoardPage extends StatefulWidget {
   const BoardPage({
     required this.themeController,
     required this.viewModeController,
+    required this.listProtectionController,
     this.notificationsController,
     super.key,
   });
 
   final AppThemeController themeController;
   final BoardViewModeController viewModeController;
+  final ListProtectionController listProtectionController;
   final NotificationsController? notificationsController;
 
   @override
@@ -83,11 +79,10 @@ class BoardPage extends StatefulWidget {
 class _BoardPageState extends State<BoardPage>
     with SingleTickerProviderStateMixin {
   NoteFilter _filter = NoteFilter.all;
+  NoteCategory? _categoryFilter;
+  String? _assigneeFilterUid;
   _BoardScope _scope = _BoardScope.list;
   late BoardViewMode _viewMode = widget.viewModeController.viewMode;
-  ListAppearance _assignedToMeAppearance = const ListAppearance();
-  ListAppearance _pinnedAppearance = const ListAppearance();
-  ListAppearance _withReminderAppearance = const ListAppearance();
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
@@ -96,6 +91,7 @@ class _BoardPageState extends State<BoardPage>
   final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
   bool _animateNoteEntrances = true;
   int _noteEntranceSuppressionEpoch = 0;
+  final Set<String> _automaticUnlockAttemptedListIds = {};
 
   @override
   void initState() {
@@ -121,6 +117,7 @@ class _BoardPageState extends State<BoardPage>
     );
     _entranceController.forward();
     widget.viewModeController.addListener(_restoreViewMode);
+    widget.listProtectionController.addListener(_restoreListProtectionState);
     final notificationsController = widget.notificationsController;
     if (notificationsController != null) {
       _notificationTapSubscription = notificationsController.tapEvents.listen(
@@ -146,6 +143,7 @@ class _BoardPageState extends State<BoardPage>
   @override
   void dispose() {
     widget.viewModeController.removeListener(_restoreViewMode);
+    widget.listProtectionController.removeListener(_restoreListProtectionState);
     unawaited(_notificationTapSubscription?.cancel());
     _entranceController.dispose();
     _appBarScrollProgress.dispose();
@@ -156,28 +154,75 @@ class _BoardPageState extends State<BoardPage>
   Widget build(BuildContext context) {
     return BlocConsumer<NotesCubit, NotesState>(
       listenWhen: (previous, current) =>
-          current.message != null && previous.message != current.message,
+          (current.message != null && previous.message != current.message) ||
+          previous.selectedListId != current.selectedListId ||
+          previous.lists != current.lists,
       listener: (context, state) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(state.message!)));
+        _scheduleActiveListProtectionSync(state);
+        if (state.message != null) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(state.message!)));
+        }
       },
       builder: (context, state) {
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
-        final scopedNotes = switch (_scope) {
+        final rawScopedNotes = switch (_scope) {
           _BoardScope.pinned => state.pinnedNotes,
           _BoardScope.withReminder => state.reminderNotes,
           _BoardScope.list || _BoardScope.assignedToMe => state.notes,
         };
+        final scopedNotes =
+            _scope == _BoardScope.pinned || _scope == _BoardScope.withReminder
+            ? rawScopedNotes
+                  .where(
+                    (note) =>
+                        widget.listProtectionController.canAccess(note.boardId),
+                  )
+                  .toList()
+            : rawScopedNotes;
         final scopeNotes = _scope == _BoardScope.assignedToMe
             ? _assignedToCurrentUser(scopedNotes)
             : scopedNotes;
-        final notes = _filtered(scopeNotes);
+        final statusFilteredNotes = _filtered(scopeNotes);
+        final categoryCounts = _categoryCounts(statusFilteredNotes);
+        final selectedCategory = categoryCounts.containsKey(_categoryFilter)
+            ? _categoryFilter
+            : null;
+        final categoryFilteredNotes = selectedCategory == null
+            ? statusFilteredNotes
+            : statusFilteredNotes
+                  .where((note) => note.category == selectedCategory)
+                  .toList();
+        final assigneeFilters = _assigneeFilters(
+          categoryFilteredNotes,
+          state.lists,
+        );
+        final selectedAssigneeUid =
+            assigneeFilters.any(
+              (assignee) => assignee.uid == _assigneeFilterUid,
+            )
+            ? _assigneeFilterUid
+            : null;
+        final notes = selectedAssigneeUid == null
+            ? categoryFilteredNotes
+            : categoryFilteredNotes
+                  .where((note) => note.assigneeUid == selectedAssigneeUid)
+                  .toList();
         final isPinnedScope = _scope == _BoardScope.pinned;
         final isWithReminderScope = _scope == _BoardScope.withReminder;
         final isAggregateScope = isPinnedScope || isWithReminderScope;
         final isListScope = _scope == _BoardScope.list;
+        final selectedList = state.selectedList;
+        final selectedListRequiresUnlock =
+            (_scope == _BoardScope.list ||
+                _scope == _BoardScope.assignedToMe) &&
+            selectedList != null &&
+            !widget.listProtectionController.canAccess(selectedList.id);
+        if (selectedListRequiresUnlock) {
+          _scheduleAutomaticUnlock(selectedList);
+        }
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
@@ -196,6 +241,7 @@ class _BoardPageState extends State<BoardPage>
             assignedToMeSelected: _scope == _BoardScope.assignedToMe,
             pinnedSelected: isPinnedScope,
             withReminderSelected: isWithReminderScope,
+            isListProtected: widget.listProtectionController.isProtected,
             isSavingList: state.isSavingList,
             onSelectList: _selectList,
             onShowAssignedToMe: _openAssignedToMe,
@@ -206,7 +252,8 @@ class _BoardPageState extends State<BoardPage>
             onOpenProfile: _openProfile,
             onOpenSettings: _openSettings,
           ),
-          floatingActionButton: isCompact && !isAggregateScope
+          floatingActionButton:
+              isCompact && !isAggregateScope && !selectedListRequiresUnlock
               ? ScaleTransition(
                   scale: _fabScale,
                   child: CollapsingNewNoteFab(
@@ -218,130 +265,194 @@ class _BoardPageState extends State<BoardPage>
                   ),
                 )
               : null,
-          body: ListBoardBackground(
-            useThemeBackground:
-                (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
-                (_scope == _BoardScope.withReminder &&
-                    state.isLoadingReminderNotes) ||
-                state.status == NotesStatus.loading ||
-                state.status == NotesStatus.initial,
-            appearance: isListScope
-                ? state.selectedList?.appearance ?? const ListAppearance()
-                : _scope == _BoardScope.assignedToMe
-                ? _assignedToMeAppearance
-                : _scope == _BoardScope.pinned
-                ? _pinnedAppearance
-                : _withReminderAppearance,
-            child: _BoardContentFade(
-              topInset: MediaQuery.paddingOf(context).top,
-              scrollProgress: _appBarScrollProgress,
-              child: SafeArea(
-                bottom: false,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _updateAppBarParallax,
-                  child: NestedScrollView(
-                    key: const ValueKey('board-scroll-view'),
-                    headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                      SliverPadding(
-                        padding: EdgeInsets.fromLTRB(
-                          isCompact ? 18 : 40,
-                          isCompact ? 12 : 40,
-                          isCompact ? 18 : 40,
-                          0,
-                        ),
-                        sliver: SliverToBoxAdapter(
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: _appBarScrollProgress,
-                            builder: (context, progress, child) {
-                              final motionProgress =
-                                  MediaQuery.disableAnimationsOf(context)
-                                  ? 0.0
-                                  : Curves.easeOutCubic.transform(progress);
-                              return Transform.translate(
-                                key: const ValueKey('board-header-parallax'),
-                                offset: Offset(0, 12 * motionProgress),
-                                child: child,
-                              );
-                            },
-                            child: FadeTransition(
-                              opacity: _headerOpacity,
-                              child: SlideTransition(
-                                position: _headerSlide,
-                                child: _BoardHeader(
-                                  title: switch (_scope) {
-                                    _BoardScope.list =>
-                                      state.selectedList?.name ?? 'Mis notas',
-                                    _BoardScope.assignedToMe => 'Asignado a mí',
-                                    _BoardScope.pinned => 'Ancladas',
-                                    _BoardScope.withReminder =>
-                                      'Con recordatorio',
-                                  },
-                                  list: isListScope ? state.selectedList : null,
-                                  noteCount: scopeNotes.length,
-                                  filter: _filter,
-                                  viewMode: _viewMode,
-                                  onFilterChanged: _changeFilter,
-                                  onViewModeChanged: _changeViewMode,
-                                  onAdd: state.isSaving || isAggregateScope
-                                      ? null
-                                      : _openNewNoteEditor,
-                                  onShare: state.isInviting || isAggregateScope
-                                      ? null
-                                      : () => _openCollaborators(
-                                          state.selectedList,
+          body:
+              selectedListRequiresUnlock &&
+                  !widget.listProtectionController.privacyShieldRequired
+              ? ListProtectionLockedView(
+                  controller: widget.listProtectionController,
+                )
+              : ListBoardBackground(
+                  useThemeBackground:
+                      (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
+                      (_scope == _BoardScope.withReminder &&
+                          state.isLoadingReminderNotes) ||
+                      state.status == NotesStatus.loading ||
+                      state.status == NotesStatus.initial,
+                  appearance: isListScope
+                      ? state.selectedList?.appearance ?? const ListAppearance()
+                      : _scope == _BoardScope.assignedToMe
+                      ? state.aggregateBoardAppearances.assignedToMe
+                      : _scope == _BoardScope.pinned
+                      ? state.aggregateBoardAppearances.pinned
+                      : state.aggregateBoardAppearances.withReminder,
+                  child: _BoardContentFade(
+                    topInset: MediaQuery.paddingOf(context).top,
+                    scrollProgress: _appBarScrollProgress,
+                    child: SafeArea(
+                      bottom: false,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _updateAppBarParallax,
+                        child: NestedScrollView(
+                          key: const ValueKey('board-scroll-view'),
+                          headerSliverBuilder: (context, innerBoxIsScrolled) =>
+                              [
+                                SliverPadding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    isCompact ? 18 : 40,
+                                    isCompact ? 12 : 40,
+                                    isCompact ? 18 : 40,
+                                    0,
+                                  ),
+                                  sliver: SliverToBoxAdapter(
+                                    child: ValueListenableBuilder<double>(
+                                      valueListenable: _appBarScrollProgress,
+                                      builder: (context, progress, child) {
+                                        final motionProgress =
+                                            MediaQuery.disableAnimationsOf(
+                                              context,
+                                            )
+                                            ? 0.0
+                                            : Curves.easeOutCubic.transform(
+                                                progress,
+                                              );
+                                        return Transform.translate(
+                                          key: const ValueKey(
+                                            'board-header-parallax',
+                                          ),
+                                          offset: Offset(
+                                            0,
+                                            12 * motionProgress,
+                                          ),
+                                          child: child,
+                                        );
+                                      },
+                                      child: FadeTransition(
+                                        opacity: _headerOpacity,
+                                        child: SlideTransition(
+                                          position: _headerSlide,
+                                          child: _BoardHeader(
+                                            title: switch (_scope) {
+                                              _BoardScope.list =>
+                                                state.selectedList?.name ??
+                                                    'Mis notas',
+                                              _BoardScope.assignedToMe =>
+                                                'Asignado a mí',
+                                              _BoardScope.pinned => 'Ancladas',
+                                              _BoardScope.withReminder =>
+                                                'Con recordatorio',
+                                            },
+                                            list: isListScope
+                                                ? state.selectedList
+                                                : null,
+                                            filter: _filter,
+                                            categoryCounts: categoryCounts,
+                                            selectedCategory: selectedCategory,
+                                            assigneeFilters: assigneeFilters,
+                                            selectedAssigneeUid:
+                                                selectedAssigneeUid,
+                                            viewMode: _viewMode,
+                                            onFilterChanged: _changeFilter,
+                                            onCategoryChanged:
+                                                _changeCategoryFilter,
+                                            onAssigneeChanged:
+                                                _changeAssigneeFilter,
+                                            onClearFilters: _clearFacetFilters,
+                                            onViewModeChanged: _changeViewMode,
+                                            onAdd:
+                                                state.isSaving ||
+                                                    isAggregateScope
+                                                ? null
+                                                : _openNewNoteEditor,
+                                            onShare:
+                                                state.isInviting ||
+                                                    isAggregateScope
+                                                ? null
+                                                : () => _openCollaborators(
+                                                    state.selectedList,
+                                                  ),
+                                            onCustomizeBackground:
+                                                state.isSavingAppearance
+                                                ? null
+                                                : _openBackgroundPicker,
+                                            onRenameList:
+                                                !isListScope ||
+                                                    state.isSavingList ||
+                                                    state
+                                                            .selectedList
+                                                            ?.currentUserRole !=
+                                                        ListMemberRole.owner
+                                                ? null
+                                                : _renameList,
+                                            onDeleteList:
+                                                !isListScope ||
+                                                    state.isSavingList ||
+                                                    state
+                                                            .selectedList
+                                                            ?.currentUserRole !=
+                                                        ListMemberRole.owner
+                                                ? null
+                                                : _deleteList,
+                                            onToggleListProtection: !isListScope
+                                                ? null
+                                                : _toggleListProtection,
+                                            isListProtected:
+                                                isListScope &&
+                                                    selectedList != null
+                                                ? widget
+                                                      .listProtectionController
+                                                      .isProtected(
+                                                        selectedList.id,
+                                                      )
+                                                : false,
+                                            isSavingListOptions:
+                                                state.isSavingAppearance ||
+                                                state.isSavingList ||
+                                                widget
+                                                    .listProtectionController
+                                                    .isAuthenticating,
+                                            showAddButton:
+                                                !isCompact && !isAggregateScope,
+                                            isCompact: isCompact,
+                                          ),
                                         ),
-                                  onCustomizeBackground:
-                                      state.isSavingAppearance
-                                      ? null
-                                      : _openBackgroundPicker,
-                                  onRenameList:
-                                      !isListScope ||
-                                          state.isSavingList ||
-                                          state.selectedList?.currentUserRole !=
-                                              ListMemberRole.owner
-                                      ? null
-                                      : _renameList,
-                                  onDeleteList:
-                                      !isListScope ||
-                                          state.isSavingList ||
-                                          state.selectedList?.currentUserRole !=
-                                              ListMemberRole.owner
-                                      ? null
-                                      : _deleteList,
-                                  isSavingListOptions:
-                                      state.isSavingAppearance ||
-                                      state.isSavingList,
-                                  showAddButton:
-                                      !isCompact && !isAggregateScope,
-                                  isCompact: isCompact,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SliverToBoxAdapter(
+                                  child: SizedBox(height: 26),
+                                ),
+                              ],
+                          body: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              isCompact ? 18 : 40,
+                              0,
+                              isCompact ? 18 : 40,
+                              0,
+                            ),
+                            child: _content(
+                              state,
+                              notes,
+                              selectedCategory,
+                              selectedAssigneeUid,
                             ),
                           ),
                         ),
                       ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 26)),
-                    ],
-                    body: Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        isCompact ? 18 : 40,
-                        0,
-                        isCompact ? 18 : 40,
-                        0,
-                      ),
-                      child: _content(state, notes),
                     ),
                   ),
                 ),
-              ),
-            ),
-          ),
         );
       },
     );
   }
 
-  Widget _content(NotesState state, List<Note> notes) {
+  Widget _content(
+    NotesState state,
+    List<Note> notes,
+    NoteCategory? selectedCategory,
+    String? selectedAssigneeUid,
+  ) {
     if ((_scope == _BoardScope.pinned && state.isLoadingPinned) ||
         (_scope == _BoardScope.withReminder && state.isLoadingReminderNotes) ||
         state.status == NotesStatus.loading ||
@@ -359,9 +470,16 @@ class _BoardPageState extends State<BoardPage>
     }
     final Widget content;
     if (notes.isEmpty) {
-      final isUnfiltered = _filter == NoteFilter.all;
+      final isUnfiltered =
+          _filter == NoteFilter.all &&
+          selectedCategory == null &&
+          selectedAssigneeUid == null;
       content = KeyedSubtree(
-        key: ValueKey('board-empty-${_scope.name}-${_filter.name}'),
+        key: ValueKey(
+          'board-empty-${_scope.name}-${_filter.name}'
+          '${selectedCategory == null ? '' : '-${selectedCategory.name}'}'
+          '${selectedAssigneeUid == null ? '' : '-assignee-$selectedAssigneeUid'}',
+        ),
         child: _MessageState(
           icon: switch (_scope) {
             _BoardScope.pinned => Icons.push_pin_outlined,
@@ -409,7 +527,11 @@ class _BoardPageState extends State<BoardPage>
       );
     } else {
       content = KeyedSubtree(
-        key: ValueKey('board-notes-${_viewMode.name}-${_filter.name}'),
+        key: ValueKey(
+          'board-notes-${_viewMode.name}-${_filter.name}'
+          '${selectedCategory == null ? '' : '-${selectedCategory.name}'}'
+          '${selectedAssigneeUid == null ? '' : '-assignee-$selectedAssigneeUid'}',
+        ),
         child: switch (_viewMode) {
           BoardViewMode.grid => _NotesGrid(
             key: const ValueKey('notes-grid'),
@@ -420,7 +542,6 @@ class _BoardPageState extends State<BoardPage>
                 _scope == _BoardScope.pinned ||
                 _scope == _BoardScope.withReminder,
             buildCard: _buildCard,
-            onPreview: _openNotePreview,
             onReorder: _reorderNotes,
           ),
           BoardViewMode.list => _NotesList(
@@ -432,7 +553,6 @@ class _BoardPageState extends State<BoardPage>
             itemHeight: 55,
             maxWidth: 980,
             buildCard: _buildCard,
-            onPreview: _openNotePreview,
             onReorder: _reorderNotes,
           ),
         },
@@ -475,7 +595,12 @@ class _BoardPageState extends State<BoardPage>
     return false;
   }
 
-  Widget _buildCard(Note note, PostItCardLayout layout) {
+  Widget _buildCard(
+    Note note,
+    PostItCardLayout layout, {
+    bool? completedChecklistExpanded,
+    ValueChanged<bool>? onCompletedChecklistExpansionChanged,
+  }) {
     final state = context.read<NotesCubit>().state;
     final noteList = state.lists
         .where((list) => list.id == note.boardId)
@@ -524,13 +649,15 @@ class _BoardPageState extends State<BoardPage>
           context.read<NotesCubit>().togglePin(note);
         },
         onOpen: () {
-          _playBoardTapSound();
-          _openNote(note);
+          unawaited(_openNotePreview(note));
         },
         onChecklistToggle: (item) {
           HapticFeedback.selectionClick();
           context.read<NotesCubit>().toggleChecklistItem(note, item);
         },
+        completedChecklistExpanded: completedChecklistExpanded,
+        onCompletedChecklistExpansionChanged:
+            onCompletedChecklistExpansionChanged,
       ),
     );
   }
@@ -543,6 +670,59 @@ class _BoardPageState extends State<BoardPage>
     };
   }
 
+  Map<NoteCategory, int> _categoryCounts(List<Note> notes) {
+    final unorderedCounts = <NoteCategory, int>{};
+    for (final note in notes) {
+      unorderedCounts.update(
+        note.category,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    return {
+      for (final category in NoteCategory.values)
+        if ((unorderedCounts[category] ?? 0) > 0)
+          category: unorderedCounts[category]!,
+    };
+  }
+
+  List<_AssigneeFilterOption> _assigneeFilters(
+    List<Note> notes,
+    List<NoteList> lists,
+  ) {
+    final collaboratorsByUid = <String, ListCollaborator>{};
+    for (final list in lists) {
+      for (final collaborator in list.collaborators) {
+        collaboratorsByUid.putIfAbsent(collaborator.uid, () => collaborator);
+      }
+    }
+
+    final counts = <String, int>{};
+    for (final note in notes) {
+      final assigneeUid = note.assigneeUid?.trim();
+      if (assigneeUid == null || assigneeUid.isEmpty) continue;
+      counts.update(assigneeUid, (count) => count + 1, ifAbsent: () => 1);
+    }
+
+    return counts.entries
+        .map((entry) {
+          final collaborator = collaboratorsByUid[entry.key];
+          final displayName = collaborator?.displayName.trim();
+          final email = collaborator?.email.trim();
+          return _AssigneeFilterOption(
+            uid: entry.key,
+            displayName: displayName?.isNotEmpty == true
+                ? displayName!
+                : email?.isNotEmpty == true
+                ? email!.split('@').first
+                : 'Usuario asignado',
+            photoUrl: collaborator?.photoUrl,
+            count: entry.value,
+          );
+        })
+        .toList(growable: false);
+  }
+
   List<Note> _assignedToCurrentUser(List<Note> notes) {
     final userId = context.read<AuthRepository>().currentUser?.id;
     return notes
@@ -550,11 +730,36 @@ class _BoardPageState extends State<BoardPage>
         .toList();
   }
 
-  Future<void> _selectList(String listId) async {
-    if (_scope != _BoardScope.list) {
-      setState(() => _scope = _BoardScope.list);
+  Future<bool> _selectList(String listId) async {
+    final cubit = context.read<NotesCubit>();
+    final targetList = cubit.state.lists
+        .where((list) => list.id == listId)
+        .firstOrNull;
+    if (targetList != null) {
+      final result = await widget.listProtectionController.unlock(
+        listId,
+        listName: targetList.name,
+      );
+      _automaticUnlockAttemptedListIds.add(listId);
+      if (result != ListProtectionResult.success || !mounted) return false;
     }
-    await context.read<NotesCubit>().selectList(listId);
+    final previousListId = cubit.state.selectedListId;
+    if (previousListId != listId) {
+      widget.listProtectionController.lock(previousListId);
+    }
+    if (_scope != _BoardScope.list ||
+        _categoryFilter != null ||
+        _assigneeFilterUid != null) {
+      setState(() {
+        _scope = _BoardScope.list;
+        _categoryFilter = null;
+        _assigneeFilterUid = null;
+      });
+    }
+    await cubit.selectList(listId);
+    if (!mounted) return false;
+    _scheduleActiveListProtectionSync(cubit.state);
+    return true;
   }
 
   void _openAssignedToMe() {
@@ -568,16 +773,35 @@ class _BoardPageState extends State<BoardPage>
       _openProfile();
       return;
     }
-    setState(() => _scope = _BoardScope.assignedToMe);
+    setState(() {
+      _scope = _BoardScope.assignedToMe;
+      _categoryFilter = null;
+      _assigneeFilterUid = null;
+    });
+    _scheduleActiveListProtectionSync(context.read<NotesCubit>().state);
   }
 
   Future<void> _openPinned() async {
-    setState(() => _scope = _BoardScope.pinned);
+    widget.listProtectionController
+      ..setActiveList(null)
+      ..lockAll();
+    setState(() {
+      _scope = _BoardScope.pinned;
+      _categoryFilter = null;
+      _assigneeFilterUid = null;
+    });
     await context.read<NotesCubit>().loadPinnedNotes();
   }
 
   Future<void> _openWithReminder() async {
-    setState(() => _scope = _BoardScope.withReminder);
+    widget.listProtectionController
+      ..setActiveList(null)
+      ..lockAll();
+    setState(() {
+      _scope = _BoardScope.withReminder;
+      _categoryFilter = null;
+      _assigneeFilterUid = null;
+    });
     await context.read<NotesCubit>().loadReminderNotes();
   }
 
@@ -627,8 +851,8 @@ class _BoardPageState extends State<BoardPage>
   }
 
   Future<void> _openNotePreview(Note initialNote) async {
-    _playBoardLongPressSound();
-    HapticFeedback.mediumImpact();
+    _playBoardTapSound();
+    HapticFeedback.lightImpact();
     final cubit = context.read<NotesCubit>();
     final currentUser = context.read<AuthRepository>().currentUser;
 
@@ -643,8 +867,17 @@ class _BoardPageState extends State<BoardPage>
     final shouldOpen = await showNotePreviewDialog(
       context: context,
       noteProvider: () => latestNote(cubit.state),
+      assigneesProvider: () {
+        final note = latestNote(cubit.state);
+        return cubit.state.lists
+                .where((list) => list.id == note.boardId)
+                .firstOrNull
+                ?.collaborators ??
+            const <ListCollaborator>[];
+      },
       onSave: (note, draft) => cubit.editNote(note, draft),
-      cardBuilder: (dialogContext, openNote) =>
+      onDelete: cubit.deleteNote,
+      cardBuilder: (dialogContext, editAssignee, editTarget, saveInline) =>
           BlocBuilder<NotesCubit, NotesState>(
             bloc: cubit,
             builder: (context, state) {
@@ -704,10 +937,10 @@ class _BoardPageState extends State<BoardPage>
                   HapticFeedback.lightImpact();
                   cubit.togglePin(note);
                 },
-                onOpen: () {
-                  _playBoardTapSound();
-                  openNote();
-                },
+                onOpen: () {},
+                onAssigneeTap: editAssignee,
+                inlineEditTarget: editTarget,
+                onInlineSave: saveInline,
                 onChecklistToggle: (item) {
                   HapticFeedback.selectionClick();
                   cubit.toggleChecklistItem(note, item);
@@ -727,17 +960,26 @@ class _BoardPageState extends State<BoardPage>
         .state
         .selectedList
         ?.collaborators;
-    final draft = await showNoteEditor(
-      context,
-      note: note,
-      defaultAuthorName: currentUser == null
-          ? 'Invitado'
-          : currentUser.displayName.trim().isNotEmpty
-          ? currentUser.displayName.trim()
-          : currentUser.email.trim(),
-      showAuthorField: currentUser == null,
-      assignees: assignees ?? const [],
-    );
+    final defaultAuthorName = currentUser == null
+        ? 'Invitado'
+        : currentUser.displayName.trim().isNotEmpty
+        ? currentUser.displayName.trim()
+        : currentUser.email.trim();
+    final availableAssignees = assignees ?? const <ListCollaborator>[];
+    final draft = note == null
+        ? await showCreateNoteDialog(
+            context: context,
+            defaultAuthorName: defaultAuthorName,
+            showAuthorField: currentUser == null,
+            assignees: availableAssignees,
+          )
+        : await showNoteEditor(
+            context,
+            note: note,
+            defaultAuthorName: defaultAuthorName,
+            showAuthorField: currentUser == null,
+            assignees: availableAssignees,
+          );
     if (draft == null || !mounted) return;
     final cubit = context.read<NotesCubit>();
     if (note == null) {
@@ -760,7 +1002,14 @@ class _BoardPageState extends State<BoardPage>
       builder: (_) => const _CreateListDialog(),
     );
     if (name == null || !mounted) return;
+    widget.listProtectionController.lockAll();
     await context.read<NotesCubit>().createList(name);
+    if (mounted && (_categoryFilter != null || _assigneeFilterUid != null)) {
+      setState(() {
+        _categoryFilter = null;
+        _assigneeFilterUid = null;
+      });
+    }
   }
 
   Future<void> _openListReorder() async {
@@ -824,27 +1073,27 @@ class _BoardPageState extends State<BoardPage>
   Future<void> _openBackgroundPicker() async {
     final cubit = context.read<NotesCubit>();
     final list = cubit.state.selectedList;
-    if (list == null) return;
+    if (_scope == _BoardScope.list && list == null) return;
+    final aggregateScope = switch (_scope) {
+      _BoardScope.assignedToMe => AggregateBoardScope.assignedToMe,
+      _BoardScope.pinned => AggregateBoardScope.pinned,
+      _BoardScope.withReminder => AggregateBoardScope.withReminder,
+      _BoardScope.list => null,
+    };
     final appearance = await showListBackgroundPicker(
       context,
       initialAppearance: switch (_scope) {
-        _BoardScope.assignedToMe => _assignedToMeAppearance,
-        _BoardScope.pinned => _pinnedAppearance,
-        _BoardScope.withReminder => _withReminderAppearance,
-        _BoardScope.list => list.appearance,
+        _BoardScope.assignedToMe =>
+          cubit.state.aggregateBoardAppearances.assignedToMe,
+        _BoardScope.pinned => cubit.state.aggregateBoardAppearances.pinned,
+        _BoardScope.withReminder =>
+          cubit.state.aggregateBoardAppearances.withReminder,
+        _BoardScope.list => list!.appearance,
       },
     );
     if (appearance == null || !mounted) return;
-    if (_scope == _BoardScope.assignedToMe) {
-      setState(() => _assignedToMeAppearance = appearance);
-      return;
-    }
-    if (_scope == _BoardScope.pinned) {
-      setState(() => _pinnedAppearance = appearance);
-      return;
-    }
-    if (_scope == _BoardScope.withReminder) {
-      setState(() => _withReminderAppearance = appearance);
+    if (aggregateScope != null) {
+      await cubit.updateAggregateBoardAppearance(aggregateScope, appearance);
       return;
     }
     await cubit.updateListAppearance(appearance);
@@ -894,7 +1143,17 @@ class _BoardPageState extends State<BoardPage>
       ),
     );
     if (confirmed == true && mounted) {
-      await cubit.deleteSelectedList();
+      final deleted = await cubit.deleteSelectedList();
+      if (deleted) {
+        await widget.listProtectionController.forgetList(list.id);
+        if (mounted &&
+            (_categoryFilter != null || _assigneeFilterUid != null)) {
+          setState(() {
+            _categoryFilter = null;
+            _assigneeFilterUid = null;
+          });
+        }
+      }
     }
   }
 
@@ -923,10 +1182,128 @@ class _BoardPageState extends State<BoardPage>
     }
   }
 
+  void _restoreListProtectionState() {
+    if (mounted) setState(() {});
+  }
+
+  void _scheduleActiveListProtectionSync(NotesState _) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final currentState = context.read<NotesCubit>().state;
+      final showsSelectedList =
+          _scope == _BoardScope.list || _scope == _BoardScope.assignedToMe;
+      final list = showsSelectedList ? currentState.selectedList : null;
+      widget.listProtectionController.setActiveList(list?.id, name: list?.name);
+    });
+  }
+
+  void _scheduleAutomaticUnlock(NoteList list) {
+    if (!_automaticUnlockAttemptedListIds.add(list.id)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || widget.listProtectionController.canAccess(list.id)) {
+        return;
+      }
+      await widget.listProtectionController.unlock(
+        list.id,
+        listName: list.name,
+      );
+    });
+  }
+
+  Future<void> _toggleListProtection() async {
+    final list = context.read<NotesCubit>().state.selectedList;
+    if (list == null) return;
+    final wasProtected = widget.listProtectionController.isProtected(list.id);
+    final result = await widget.listProtectionController.setProtection(
+      list.id,
+      enabled: !wasProtected,
+      listName: list.name,
+    );
+    if (!mounted) return;
+    final platform = Theme.of(context).platform;
+    if (result == ListProtectionResult.success) {
+      _automaticUnlockAttemptedListIds.add(list.id);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            wasProtected
+                ? 'Protección biométrica desactivada.'
+                : 'Lista protegida con ${listBiometricMethodLabel(platform)}.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (result == ListProtectionResult.unavailable) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Biometría no disponible'),
+          content: Text(
+            '${listBiometricSetupInstruction(platform)} en los ajustes del '
+            'dispositivo para proteger esta lista.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+    } else if (result == ListProtectionResult.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No pudimos comprobar tu identidad. Inténtalo nuevamente.',
+          ),
+        ),
+      );
+    }
+  }
+
   void _changeFilter(NoteFilter value) {
-    if (_filter == value) return;
+    if (_filter == value &&
+        _categoryFilter == null &&
+        _assigneeFilterUid == null) {
+      return;
+    }
     _playBoardTapSound();
-    _withoutNoteEntrances(() => setState(() => _filter = value));
+    _withoutNoteEntrances(
+      () => setState(() {
+        _filter = value;
+        _categoryFilter = null;
+        _assigneeFilterUid = null;
+      }),
+    );
+  }
+
+  void _changeCategoryFilter(NoteCategory? value) {
+    if (_categoryFilter == value && _assigneeFilterUid == null) return;
+    _playBoardTapSound();
+    _withoutNoteEntrances(
+      () => setState(() {
+        _categoryFilter = value;
+        _assigneeFilterUid = null;
+      }),
+    );
+  }
+
+  void _changeAssigneeFilter(String? uid) {
+    if (_assigneeFilterUid == uid) return;
+    _playBoardTapSound();
+    _withoutNoteEntrances(() => setState(() => _assigneeFilterUid = uid));
+  }
+
+  void _clearFacetFilters() {
+    if (_categoryFilter == null && _assigneeFilterUid == null) return;
+    _playBoardTapSound();
+    _withoutNoteEntrances(
+      () => setState(() {
+        _categoryFilter = null;
+        _assigneeFilterUid = null;
+      }),
+    );
   }
 
   void _changeViewMode(BoardViewMode value) {
@@ -988,7 +1365,8 @@ class _BoardPageState extends State<BoardPage>
           .timeout(const Duration(seconds: 10), onTimeout: () => cubit.state);
     }
     if (!mounted) return;
-    await cubit.selectList(boardId);
+    final didOpenList = await _selectList(boardId);
+    if (!didOpenList) return;
     if (!mounted) return;
     final noteId = data['noteId'];
     if (noteId == null || noteId.isEmpty) return;
@@ -1001,7 +1379,13 @@ class _BoardPageState extends State<BoardPage>
   }
 }
 
-typedef NoteCardBuilder = Widget Function(Note note, PostItCardLayout layout);
+typedef NoteCardBuilder =
+    Widget Function(
+      Note note,
+      PostItCardLayout layout, {
+      bool? completedChecklistExpanded,
+      ValueChanged<bool>? onCompletedChecklistExpansionChanged,
+    });
 typedef NoteReorderCallback = void Function(List<String> orderedIds);
 typedef NoteCompletionBuilder =
     Widget Function(BuildContext context, Note note, VoidCallback onToggle);
@@ -1153,14 +1537,13 @@ class _CompletedSectionHeader extends StatelessWidget {
   }
 }
 
-class _NotesGrid extends StatelessWidget {
+class _NotesGrid extends StatefulWidget {
   const _NotesGrid({
     required this.notes,
     required this.groupCompleted,
     required this.animateEntrances,
     required this.showOriginList,
     required this.buildCard,
-    required this.onPreview,
     required this.onReorder,
     super.key,
   });
@@ -1170,8 +1553,41 @@ class _NotesGrid extends StatelessWidget {
   final bool animateEntrances;
   final bool showOriginList;
   final NoteCardBuilder buildCard;
-  final ValueChanged<Note> onPreview;
   final NoteReorderCallback onReorder;
+
+  @override
+  State<_NotesGrid> createState() => _NotesGridState();
+}
+
+class _NotesGridState extends State<_NotesGrid> {
+  final Set<String> _collapsedCompletedChecklistNoteIds = {};
+
+  List<Note> get notes => widget.notes;
+  bool get groupCompleted => widget.groupCompleted;
+  bool get animateEntrances => widget.animateEntrances;
+  bool get showOriginList => widget.showOriginList;
+  NoteCardBuilder get buildCard => widget.buildCard;
+  NoteReorderCallback get onReorder => widget.onReorder;
+
+  @override
+  void didUpdateWidget(covariant _NotesGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final collapsibleNoteIds = notes
+        .where((note) => note.checklist.any((item) => item.isCompleted))
+        .map((note) => note.id)
+        .toSet();
+    _collapsedCompletedChecklistNoteIds.retainAll(collapsibleNoteIds);
+  }
+
+  void _setCompletedChecklistExpanded(String noteId, bool expanded) {
+    setState(() {
+      if (expanded) {
+        _collapsedCompletedChecklistNoteIds.remove(noteId);
+      } else {
+        _collapsedCompletedChecklistNoteIds.add(noteId);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1259,11 +1675,14 @@ class _NotesGrid extends StatelessWidget {
 
     for (var index = 0; index < notes.length; index++) {
       final note = notes[index];
+      final completedChecklistExpanded = !_collapsedCompletedChecklistNoteIds
+          .contains(note.id);
       final height = _gridNoteHeight(
         context,
         note,
         columnWidth: columnWidth,
         isCompact: isCompact,
+        completedChecklistExpanded: completedChecklistExpanded,
       );
       var targetColumn = 0;
       for (var column = 1; column < columnCount; column++) {
@@ -1286,7 +1705,12 @@ class _NotesGrid extends StatelessWidget {
               key: ValueKey('masonry-grid-column-$column$keySuffix'),
               children: [
                 for (final item in columns[column]) ...[
-                  SizedBox(
+                  AnimatedContainer(
+                    key: ValueKey('grid-note-size-${item.note.id}'),
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 220),
+                    curve: Curves.easeInOutCubic,
                     height: item.height,
                     child: _NoteEntrance(
                       key: ValueKey('note-entrance-${item.note.id}'),
@@ -1296,21 +1720,36 @@ class _NotesGrid extends StatelessWidget {
                       child: _DraggableGridNote(
                         key: ValueKey('reorder-grid-${item.note.id}'),
                         note: item.note,
-                        onPreview: () => onPreview(item.note),
                         onDrop: (draggedId) {
                           final reordered = [...notes];
                           final oldIndex = reordered.indexWhere(
                             (note) => note.id == draggedId,
                           );
-                          if (oldIndex == -1 || oldIndex == item.index) return;
-                          final moved = reordered.removeAt(oldIndex);
                           final targetIndex = reordered.indexWhere(
                             (note) => note.id == item.note.id,
                           );
+                          if (oldIndex == -1 ||
+                              targetIndex == -1 ||
+                              oldIndex == targetIndex) {
+                            return;
+                          }
+                          final moved = reordered.removeAt(oldIndex);
                           reordered.insert(targetIndex, moved);
                           onReorder(reordered.map((note) => note.id).toList());
                         },
-                        child: buildCard(item.note, PostItCardLayout.grid),
+                        child: buildCard(
+                          item.note,
+                          PostItCardLayout.grid,
+                          completedChecklistExpanded:
+                              !_collapsedCompletedChecklistNoteIds.contains(
+                                item.note.id,
+                              ),
+                          onCompletedChecklistExpansionChanged: (expanded) =>
+                              _setCompletedChecklistExpanded(
+                                item.note.id,
+                                expanded,
+                              ),
+                        ),
                       ),
                     ),
                   ),
@@ -1329,6 +1768,7 @@ class _NotesGrid extends StatelessWidget {
     Note note, {
     required double columnWidth,
     required bool isCompact,
+    required bool completedChecklistExpanded,
   }) {
     final textScaler = MediaQuery.textScalerOf(context);
     final textDirection = Directionality.of(context);
@@ -1353,9 +1793,33 @@ class _NotesGrid extends StatelessWidget {
       textScaler: textScaler,
       maxLines: 7,
     )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
+    final pendingChecklistCount = note.checklist
+        .where((item) => !item.isCompleted)
+        .length;
+    final completedChecklistCount =
+        note.checklist.length - pendingChecklistCount;
+    var visiblePendingChecklistCount = pendingChecklistCount
+        .clamp(0, 10)
+        .toInt();
+    var visibleCompletedChecklistCount = 0;
+    if (completedChecklistExpanded && completedChecklistCount > 0) {
+      final remainingCapacity = 10 - visiblePendingChecklistCount;
+      if (remainingCapacity > 0) {
+        visibleCompletedChecklistCount = completedChecklistCount
+            .clamp(0, remainingCapacity)
+            .toInt();
+      } else if (visiblePendingChecklistCount > 0) {
+        visiblePendingChecklistCount -= 1;
+        visibleCompletedChecklistCount = 1;
+      }
+    }
+    final hiddenPendingChecklistCount =
+        pendingChecklistCount - visiblePendingChecklistCount;
     final contentHeight = note.checklist.isNotEmpty
-        ? (note.checklist.length.clamp(1, 10) * 30) +
-              (note.checklist.length > 10 ? 22 : 0)
+        ? ((visiblePendingChecklistCount + visibleCompletedChecklistCount) *
+                  30) +
+              (hiddenPendingChecklistCount > 0 ? 22 : 0) +
+              (completedChecklistCount > 0 ? 44 : 0)
         : note.content.isEmpty
         ? 0.0
         : contentPainter.height;
@@ -1417,14 +1881,12 @@ class _NotesGrid extends StatelessWidget {
 class _DraggableGridNote extends StatefulWidget {
   const _DraggableGridNote({
     required this.note,
-    required this.onPreview,
     required this.onDrop,
     required this.child,
     super.key,
   });
 
   final Note note;
-  final VoidCallback onPreview;
   final ValueChanged<String> onDrop;
   final Widget child;
 
@@ -1455,28 +1917,25 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,
         child: LayoutBuilder(
-          builder: (context, constraints) => _LongPressPreviewRegion(
-            onLongPress: widget.onPreview,
-            child: Semantics(
-              hint:
-                  'Mantén presionada para previsualizar o arrastra para cambiar el orden',
-              child: LongPressDraggable<String>(
-                data: widget.note.id,
-                delay: const Duration(milliseconds: 500),
-                onDragStarted: HapticFeedback.mediumImpact,
-                feedback: Material(
-                  color: Colors.transparent,
-                  elevation: 10,
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    width: constraints.maxWidth,
-                    height: constraints.maxHeight,
-                    child: widget.child,
-                  ),
+          builder: (context, constraints) => Semantics(
+            hint:
+                'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
+            child: LongPressDraggable<String>(
+              data: widget.note.id,
+              delay: const Duration(milliseconds: 500),
+              onDragStarted: HapticFeedback.mediumImpact,
+              feedback: Material(
+                color: Colors.transparent,
+                elevation: 10,
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  child: widget.child,
                 ),
-                childWhenDragging: Opacity(opacity: 0.2, child: widget.child),
-                child: widget.child,
               ),
+              childWhenDragging: Opacity(opacity: 0.2, child: widget.child),
+              child: widget.child,
             ),
           ),
         ),
@@ -1494,7 +1953,6 @@ class _NotesList extends StatelessWidget {
     required this.itemHeight,
     required this.maxWidth,
     required this.buildCard,
-    required this.onPreview,
     required this.onReorder,
     super.key,
   });
@@ -1506,7 +1964,6 @@ class _NotesList extends StatelessWidget {
   final double itemHeight;
   final double maxWidth;
   final NoteCardBuilder buildCard;
-  final ValueChanged<Note> onPreview;
   final NoteReorderCallback onReorder;
 
   @override
@@ -1583,135 +2040,33 @@ class _NotesList extends StatelessWidget {
 
   Widget _buildItem(BuildContext context, List<Note> notes, int index) {
     final note = notes[index];
-    return _LongPressPreviewRegion(
+    return ReorderableDelayedDragStartListener(
       key: ValueKey('reorder-list-${note.id}'),
-      onLongPress: () => onPreview(note),
-      child: ReorderableDelayedDragStartListener(
-        index: index,
-        child: Semantics(
-          hint:
-              'Mantén presionada para previsualizar o arrastra para cambiar el orden',
-          child: _NoteEntrance(
-            index: index,
-            motionId: note.id,
-            enabled: animateEntrances,
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: layout == PostItCardLayout.compact ? 3 : 8,
-              ),
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxWidth),
-                  child: SizedBox(
-                    height: itemHeight,
-                    child: buildCard(note, layout),
-                  ),
+      index: index,
+      child: Semantics(
+        hint:
+            'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
+        child: _NoteEntrance(
+          index: index,
+          motionId: note.id,
+          enabled: animateEntrances,
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: layout == PostItCardLayout.compact ? 3 : 8,
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxWidth),
+                child: SizedBox(
+                  height: itemHeight,
+                  child: buildCard(note, layout),
                 ),
               ),
             ),
           ),
         ),
       ),
-    );
-  }
-}
-
-class _LongPressPreviewRegion extends StatefulWidget {
-  const _LongPressPreviewRegion({
-    required this.onLongPress,
-    required this.child,
-    super.key,
-  });
-
-  final VoidCallback onLongPress;
-  final Widget child;
-
-  @override
-  State<_LongPressPreviewRegion> createState() =>
-      _LongPressPreviewRegionState();
-}
-
-class _LongPressPreviewRegionState extends State<_LongPressPreviewRegion> {
-  static const _minimumHold = Duration(milliseconds: 500);
-  static const _previewDelay = Duration(milliseconds: 575);
-  static const _movementTolerance = 18.0;
-
-  Timer? _previewTimer;
-  int? _pointer;
-  Duration? _pressedAt;
-  Offset? _origin;
-  bool _moved = false;
-  bool _triggered = false;
-
-  @override
-  void dispose() {
-    _previewTimer?.cancel();
-    super.dispose();
-  }
-
-  void _onPointerDown(PointerDownEvent event) {
-    if (_pointer != null) return;
-    _pointer = event.pointer;
-    _pressedAt = event.timeStamp;
-    _origin = event.position;
-    _moved = false;
-    _triggered = false;
-    _previewTimer?.cancel();
-    _previewTimer = Timer(_previewDelay, _triggerPreview);
-  }
-
-  void _onPointerMove(PointerMoveEvent event) {
-    if (event.pointer != _pointer || _moved) return;
-    final origin = _origin;
-    if (origin != null &&
-        (event.position - origin).distance > _movementTolerance) {
-      _moved = true;
-      _previewTimer?.cancel();
-    }
-  }
-
-  void _onPointerUp(PointerUpEvent event) {
-    if (event.pointer != _pointer) return;
-    final pressedAt = _pressedAt;
-    final heldFor = pressedAt == null
-        ? Duration.zero
-        : event.timeStamp - pressedAt;
-    if (!_moved && !_triggered && heldFor >= _minimumHold) {
-      _triggerPreview();
-    }
-    _reset();
-  }
-
-  void _onPointerCancel(PointerCancelEvent event) {
-    if (event.pointer == _pointer) _reset();
-  }
-
-  void _triggerPreview() {
-    if (_moved || _triggered || _pointer == null) return;
-    _triggered = true;
-    _previewTimer?.cancel();
-    widget.onLongPress();
-  }
-
-  void _reset() {
-    _previewTimer?.cancel();
-    _previewTimer = null;
-    _pointer = null;
-    _pressedAt = null;
-    _origin = null;
-    _moved = false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _onPointerDown,
-      onPointerMove: _onPointerMove,
-      onPointerUp: _onPointerUp,
-      onPointerCancel: _onPointerCancel,
-      child: widget.child,
     );
   }
 }
@@ -2625,6 +2980,7 @@ class _AppDrawer extends StatelessWidget {
     required this.assignedToMeSelected,
     required this.pinnedSelected,
     required this.withReminderSelected,
+    required this.isListProtected,
     required this.isSavingList,
     required this.onSelectList,
     required this.onShowAssignedToMe,
@@ -2641,6 +2997,7 @@ class _AppDrawer extends StatelessWidget {
   final bool assignedToMeSelected;
   final bool pinnedSelected;
   final bool withReminderSelected;
+  final bool Function(String listId) isListProtected;
   final bool isSavingList;
   final ValueChanged<String> onSelectList;
   final VoidCallback onShowAssignedToMe;
@@ -2775,53 +3132,56 @@ class _AppDrawer extends StatelessWidget {
                 const SizedBox(height: 16),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Column(
+                  child: Row(
                     children: [
-                      _DrawerDestinationTile(
-                        key: const ValueKey('assigned-to-me-menu-button'),
-                        selected: assignedToMeSelected,
-                        icon: assignedToMeSelected
-                            ? Icons.assignment_ind_rounded
-                            : Icons.assignment_ind_outlined,
-                        label: 'Asignado a mí',
-                        trailing: Icons.chevron_right_rounded,
-                        onTap: () {
-                          Navigator.pop(context);
-                          onShowAssignedToMe();
-                        },
+                      Expanded(
+                        child: _DrawerScopeShortcutButton(
+                          key: const ValueKey('assigned-to-me-menu-button'),
+                          selected: assignedToMeSelected,
+                          icon: assignedToMeSelected
+                              ? Icons.assignment_ind_rounded
+                              : Icons.assignment_ind_outlined,
+                          label: 'Asignado a mí',
+                          onTap: () {
+                            Navigator.pop(context);
+                            onShowAssignedToMe();
+                          },
+                        ),
                       ),
-                      const SizedBox(height: 6),
-                      _DrawerDestinationTile(
-                        key: const ValueKey('pinned-menu-button'),
-                        selected: pinnedSelected,
-                        icon: pinnedSelected
-                            ? Icons.push_pin_rounded
-                            : Icons.push_pin_outlined,
-                        label: 'Ancladas',
-                        trailing: Icons.chevron_right_rounded,
-                        onTap: () {
-                          Navigator.pop(context);
-                          onShowPinned();
-                        },
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DrawerScopeShortcutButton(
+                          key: const ValueKey('pinned-menu-button'),
+                          selected: pinnedSelected,
+                          icon: pinnedSelected
+                              ? Icons.push_pin_rounded
+                              : Icons.push_pin_outlined,
+                          label: 'Ancladas',
+                          onTap: () {
+                            Navigator.pop(context);
+                            onShowPinned();
+                          },
+                        ),
                       ),
-                      const SizedBox(height: 6),
-                      _DrawerDestinationTile(
-                        key: const ValueKey('with-reminder-menu-button'),
-                        selected: withReminderSelected,
-                        icon: withReminderSelected
-                            ? Icons.alarm_rounded
-                            : Icons.alarm_outlined,
-                        label: 'Con recordatorio',
-                        trailing: Icons.chevron_right_rounded,
-                        onTap: () {
-                          Navigator.pop(context);
-                          onShowWithReminder();
-                        },
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _DrawerScopeShortcutButton(
+                          key: const ValueKey('with-reminder-menu-button'),
+                          selected: withReminderSelected,
+                          icon: withReminderSelected
+                              ? Icons.alarm_rounded
+                              : Icons.alarm_outlined,
+                          label: 'Con recordatorio',
+                          onTap: () {
+                            Navigator.pop(context);
+                            onShowWithReminder();
+                          },
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 12, 4),
                   child: Row(
@@ -2876,11 +3236,17 @@ class _AppDrawer extends StatelessWidget {
                                 : Icons.folder_outlined,
                             label: list.name,
                             trailing: selected
-                                ? Icons.check_rounded
+                                ? isListProtected(list.id)
+                                      ? Icons.lock_rounded
+                                      : Icons.check_rounded
+                                : isListProtected(list.id)
+                                ? Icons.lock_outline_rounded
                                 : list.isShared
                                 ? Icons.people_outline_rounded
                                 : null,
-                            trailingTooltip: list.isShared && !selected
+                            trailingTooltip: isListProtected(list.id)
+                                ? 'Lista protegida'
+                                : list.isShared && !selected
                                 ? 'Lista compartida'
                                 : null,
                             onTap: () {
@@ -3621,6 +3987,119 @@ class _DrawerDestinationTile extends StatelessWidget {
   }
 }
 
+class _DrawerScopeShortcutButton extends StatelessWidget {
+  const _DrawerScopeShortcutButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.selected,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = selected ? colorScheme.primary : colorScheme.onSurface;
+    final borderRadius = BorderRadius.circular(17);
+    final animationDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+
+    return Semantics(
+      label: label,
+      button: true,
+      selected: selected,
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: AnimatedContainer(
+          duration: animationDuration,
+          height: 54,
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.12),
+                      blurRadius: 14,
+                      offset: const Offset(0, 5),
+                    ),
+                  ]
+                : null,
+          ),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: Material(
+              color: Colors.transparent,
+              child: Ink(
+                decoration: BoxDecoration(
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: selected
+                        ? colorScheme.primary.withValues(
+                            alpha: isDark ? 0.34 : 0.28,
+                          )
+                        : Colors.white.withValues(alpha: isDark ? 0.07 : 0.24),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: selected
+                        ? [
+                            colorScheme.primary.withValues(
+                              alpha: isDark ? 0.24 : 0.2,
+                            ),
+                            colorScheme.surface.withValues(
+                              alpha: isDark ? 0.3 : 0.38,
+                            ),
+                          ]
+                        : [
+                            Colors.white.withValues(
+                              alpha: isDark ? 0.035 : 0.16,
+                            ),
+                            colorScheme.surface.withValues(
+                              alpha: isDark ? 0.12 : 0.18,
+                            ),
+                          ],
+                  ),
+                ),
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: borderRadius,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(icon, size: 24, color: foreground),
+                      Positioned(
+                        bottom: 6,
+                        child: AnimatedContainer(
+                          duration: animationDuration,
+                          width: selected ? 18 : 0,
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CollaboratorsDialog extends StatefulWidget {
   const _CollaboratorsDialog({required this.initialList});
 
@@ -4290,16 +4769,24 @@ class _BoardHeader extends StatelessWidget {
   const _BoardHeader({
     required this.title,
     required this.list,
-    required this.noteCount,
     required this.filter,
+    required this.categoryCounts,
+    required this.selectedCategory,
+    required this.assigneeFilters,
+    required this.selectedAssigneeUid,
     required this.viewMode,
     required this.onFilterChanged,
+    required this.onCategoryChanged,
+    required this.onAssigneeChanged,
+    required this.onClearFilters,
     required this.onViewModeChanged,
     required this.onAdd,
     required this.onShare,
     required this.onCustomizeBackground,
     required this.onRenameList,
     required this.onDeleteList,
+    required this.onToggleListProtection,
+    required this.isListProtected,
     required this.isSavingListOptions,
     required this.showAddButton,
     required this.isCompact,
@@ -4307,16 +4794,24 @@ class _BoardHeader extends StatelessWidget {
 
   final String title;
   final NoteList? list;
-  final int noteCount;
   final NoteFilter filter;
+  final Map<NoteCategory, int> categoryCounts;
+  final NoteCategory? selectedCategory;
+  final List<_AssigneeFilterOption> assigneeFilters;
+  final String? selectedAssigneeUid;
   final BoardViewMode viewMode;
   final ValueChanged<NoteFilter> onFilterChanged;
+  final ValueChanged<NoteCategory?> onCategoryChanged;
+  final ValueChanged<String?> onAssigneeChanged;
+  final VoidCallback onClearFilters;
   final ValueChanged<BoardViewMode> onViewModeChanged;
   final VoidCallback? onAdd;
   final VoidCallback? onShare;
   final VoidCallback? onCustomizeBackground;
   final VoidCallback? onRenameList;
   final VoidCallback? onDeleteList;
+  final VoidCallback? onToggleListProtection;
+  final bool isListProtected;
   final bool isSavingListOptions;
   final bool showAddButton;
   final bool isCompact;
@@ -4361,81 +4856,84 @@ class _BoardHeader extends StatelessWidget {
                 ),
               ),
             ),
-            if (isCompact && list != null)
-              if (hasInvitedCollaborators)
-                Tooltip(
-                  message: 'Personas de la lista',
-                  child: InkWell(
-                    key: const ValueKey('share-list-button'),
-                    onTap: onShare,
-                    customBorder: const StadiumBorder(),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 8,
-                      ),
-                      child: _CollaboratorAvatarStack(
-                        collaborators: list!.collaborators,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                IconButton.filledTonal(
-                  key: const ValueKey('share-list-button'),
-                  tooltip: 'Compartir lista',
-                  onPressed: onShare,
-                  icon: const Icon(Icons.person_add_alt_1_rounded),
-                ),
-            if (showAddButton)
-              Wrap(
-                spacing: 10,
+            if ((isCompact && list != null) ||
+                showAddButton ||
+                onCustomizeBackground != null)
+              Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (list != null)
-                    OutlinedButton.icon(
-                      key: const ValueKey('share-list-button'),
-                      onPressed: onShare,
-                      icon: const Icon(Icons.person_add_alt_1_rounded),
-                      label: Text(list!.isShared ? 'Personas' : 'Compartir'),
+                  if (isCompact && list != null)
+                    if (hasInvitedCollaborators)
+                      Tooltip(
+                        message: 'Personas de la lista',
+                        child: InkWell(
+                          key: const ValueKey('share-list-button'),
+                          onTap: onShare,
+                          customBorder: const StadiumBorder(),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 8,
+                            ),
+                            child: _CollaboratorAvatarStack(
+                              collaborators: list!.collaborators,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      IconButton.filledTonal(
+                        key: const ValueKey('share-list-button'),
+                        tooltip: 'Compartir lista',
+                        onPressed: onShare,
+                        icon: const Icon(Icons.person_add_alt_1_rounded),
+                      ),
+                  if (showAddButton)
+                    Wrap(
+                      spacing: 10,
+                      children: [
+                        if (list != null)
+                          OutlinedButton.icon(
+                            key: const ValueKey('share-list-button'),
+                            onPressed: onShare,
+                            icon: const Icon(Icons.person_add_alt_1_rounded),
+                            label: Text(
+                              list!.isShared ? 'Personas' : 'Compartir',
+                            ),
+                          ),
+                        GlassNewNoteButton(
+                          key: const ValueKey('new-note-button'),
+                          onPressed: onAdd,
+                          backgroundColor: colorScheme.primary,
+                          foregroundColor: colorScheme.onPrimary,
+                        ),
+                      ],
                     ),
-                  GlassNewNoteButton(
-                    key: const ValueKey('new-note-button'),
-                    onPressed: onAdd,
-                    backgroundColor: colorScheme.primary,
-                    foregroundColor: colorScheme.onPrimary,
-                  ),
+                  if (onCustomizeBackground != null) ...[
+                    if ((isCompact && list != null) || showAddButton)
+                      const SizedBox(width: 8),
+                    _ListMenuButton(
+                      onCustomizeBackground: onCustomizeBackground,
+                      onRenameList: onRenameList,
+                      onToggleListProtection: onToggleListProtection,
+                      isListProtected: isListProtected,
+                      onDeleteList: onDeleteList,
+                      isSaving: isSavingListOptions,
+                    ),
+                  ],
                 ],
               ),
           ],
         ),
-        const SizedBox(height: 10),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  _BoardMetaChip(
-                    icon: Icons.sticky_note_2_outlined,
-                    label: '$noteCount ${noteCount == 1 ? 'nota' : 'notas'}',
-                    color: colorScheme.primary,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (onCustomizeBackground != null)
-              _ListMenuButton(
-                onCustomizeBackground: onCustomizeBackground,
-                onRenameList: onRenameList,
-                onDeleteList: onDeleteList,
-                isSaving: isSavingListOptions,
-              ),
-          ],
-        ),
+        if (isListProtected) ...[
+          const SizedBox(height: 10),
+          _BoardMetaChip(
+            key: const ValueKey('protected-list-chip'),
+            icon: Icons.lock_rounded,
+            label: 'Protegida',
+            color: colorScheme.primary,
+          ),
+        ],
         SizedBox(height: isCompact ? 16 : 24),
         if (isCompact)
           _CompactBoardControls(
@@ -4504,7 +5002,420 @@ class _BoardHeader extends StatelessWidget {
               ),
             ],
           ),
+        if (categoryCounts.isNotEmpty || assigneeFilters.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _CategoryFilterBar(
+            counts: categoryCounts,
+            selected: selectedCategory,
+            onChanged: onCategoryChanged,
+            assignees: assigneeFilters,
+            selectedAssigneeUid: selectedAssigneeUid,
+            onAssigneeChanged: onAssigneeChanged,
+            onClear: onClearFilters,
+          ),
+        ],
       ],
+    );
+  }
+}
+
+class _CategoryFilterBar extends StatelessWidget {
+  const _CategoryFilterBar({
+    required this.counts,
+    required this.selected,
+    required this.onChanged,
+    required this.assignees,
+    required this.selectedAssigneeUid,
+    required this.onAssigneeChanged,
+    required this.onClear,
+  });
+
+  final Map<NoteCategory, int> counts;
+  final NoteCategory? selected;
+  final ValueChanged<NoteCategory?> onChanged;
+  final List<_AssigneeFilterOption> assignees;
+  final String? selectedAssigneeUid;
+  final ValueChanged<String?> onAssigneeChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = counts.entries.toList(growable: false);
+    return Semantics(
+      container: true,
+      label: 'Filtros por categoría y persona asignada',
+      child: SingleChildScrollView(
+        key: const ValueKey('category-filter-bar'),
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        child: Row(
+          children: [
+            for (final entry in entries.indexed) ...[
+              if (entry.$1 > 0) const SizedBox(width: 8),
+              _CategoryFilterChip(
+                key: ValueKey('category-filter-${entry.$2.key.name}'),
+                category: entry.$2.key,
+                count: entry.$2.value,
+                selected: selected == entry.$2.key,
+                onTap: () =>
+                    onChanged(selected == entry.$2.key ? null : entry.$2.key),
+              ),
+            ],
+            for (final assignee in assignees) ...[
+              const SizedBox(width: 8),
+              _AssigneeFilterChip(
+                key: ValueKey('assignee-filter-${assignee.uid}'),
+                assignee: assignee,
+                selected: selectedAssigneeUid == assignee.uid,
+                onTap: () => onAssigneeChanged(
+                  selectedAssigneeUid == assignee.uid ? null : assignee.uid,
+                ),
+              ),
+            ],
+            const SizedBox(width: 8),
+            _ClearCategoryFilterButton(
+              enabled: selected != null || selectedAssigneeUid != null,
+              onTap: onClear,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AssigneeFilterOption {
+  const _AssigneeFilterOption({
+    required this.uid,
+    required this.displayName,
+    required this.photoUrl,
+    required this.count,
+  });
+
+  final String uid;
+  final String displayName;
+  final String? photoUrl;
+  final int count;
+}
+
+class _AssigneeFilterChip extends StatelessWidget {
+  const _AssigneeFilterChip({
+    required this.assignee,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final _AssigneeFilterOption assignee;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final selectedForeground =
+        ThemeData.estimateBrightnessForColor(colorScheme.primary) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black87;
+    final foreground = selected
+        ? selectedForeground
+        : colorScheme.onSurface.withValues(alpha: 0.78);
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _boardControlMotionDuration;
+    final displayName = assignee.displayName.trim();
+    final shortName = displayName.split(RegExp(r'\s+')).first;
+    final initial = displayName.isEmpty ? '?' : displayName[0].toUpperCase();
+    final photoUrl = assignee.photoUrl?.trim();
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label:
+          '${assignee.displayName}, ${assignee.count} ${assignee.count == 1 ? 'nota asignada' : 'notas asignadas'}',
+      child: AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeOutCubic,
+        height: 36,
+        decoration: BoxDecoration(
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.88)
+              : colorScheme.surface.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: colorScheme.primary.withValues(alpha: selected ? 0.9 : 0.4),
+          ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: colorScheme.primary.withValues(alpha: 0.2),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            enableFeedback: false,
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(6, 0, 7, 0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? selectedForeground.withValues(alpha: 0.18)
+                          : colorScheme.primary.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: photoUrl?.isNotEmpty == true
+                        ? Image.network(
+                            photoUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Center(
+                              child: Text(
+                                initial,
+                                style: TextStyle(
+                                  color: foreground,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              initial,
+                              style: TextStyle(
+                                color: foreground,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    shortName,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Container(
+                    key: ValueKey('assignee-filter-count-${assignee.uid}'),
+                    constraints: const BoxConstraints(minWidth: 22),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? selectedForeground.withValues(alpha: 0.16)
+                          : colorScheme.primary.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Text(
+                      '${assignee.count}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ClearCategoryFilterButton extends StatelessWidget {
+  const _ClearCategoryFilterButton({
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _boardControlMotionDuration;
+    return Tooltip(
+      message: 'Limpiar filtros',
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: 'Limpiar filtros',
+        child: AnimatedOpacity(
+          duration: duration,
+          opacity: enabled ? 1 : 0.42,
+          child: Material(
+            key: const ValueKey('category-filter-clear-button'),
+            color: enabled
+                ? colorScheme.primary.withValues(alpha: 0.15)
+                : colorScheme.surface.withValues(alpha: 0.72),
+            shape: CircleBorder(
+              side: BorderSide(
+                color: enabled
+                    ? colorScheme.primary.withValues(alpha: 0.48)
+                    : colorScheme.outline.withValues(alpha: 0.28),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              enableFeedback: false,
+              onTap: enabled ? onTap : null,
+              child: SizedBox.square(
+                dimension: 36,
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 19,
+                  color: enabled
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryFilterChip extends StatelessWidget {
+  const _CategoryFilterChip({
+    required this.category,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final NoteCategory category;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final categoryColor = NoteCategoryStyle.baseColor(category);
+    final selectedForeground = NoteCategoryStyle.foregroundColor(category);
+    final foreground = selected
+        ? selectedForeground
+        : colorScheme.onSurface.withValues(alpha: 0.78);
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _boardControlMotionDuration;
+    final label = NoteCategoryStyle.label(category);
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label, $count ${count == 1 ? 'nota' : 'notas'}',
+      child: AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeOutCubic,
+        height: 36,
+        decoration: BoxDecoration(
+          color: selected
+              ? categoryColor.withValues(alpha: 0.9)
+              : colorScheme.surface.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected
+                ? categoryColor.withValues(alpha: 0.95)
+                : categoryColor.withValues(alpha: 0.42),
+          ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: categoryColor.withValues(alpha: 0.22),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            enableFeedback: false,
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 7, 0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    NoteCategoryStyle.icon(category),
+                    size: 16,
+                    color: selected ? selectedForeground : categoryColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Container(
+                    key: ValueKey('category-filter-count-${category.name}'),
+                    constraints: const BoxConstraints(minWidth: 22),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? selectedForeground.withValues(alpha: 0.16)
+                          : categoryColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Text(
+                      '$count',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -4685,6 +5596,7 @@ class _BoardMetaChip extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.color,
+    super.key,
   });
 
   final IconData icon;
@@ -4738,12 +5650,16 @@ class _ListMenuButton extends StatelessWidget {
   const _ListMenuButton({
     required this.onCustomizeBackground,
     required this.onRenameList,
+    required this.onToggleListProtection,
+    required this.isListProtected,
     required this.onDeleteList,
     required this.isSaving,
   });
 
   final VoidCallback? onCustomizeBackground;
   final VoidCallback? onRenameList;
+  final VoidCallback? onToggleListProtection;
+  final bool isListProtected;
   final VoidCallback? onDeleteList;
   final bool isSaving;
 
@@ -4779,6 +5695,8 @@ class _ListMenuButton extends StatelessWidget {
             onCustomizeBackground?.call();
           case _ListMenuAction.rename:
             onRenameList?.call();
+          case _ListMenuAction.protection:
+            onToggleListProtection?.call();
           case _ListMenuAction.delete:
             onDeleteList?.call();
         }
@@ -4787,6 +5705,8 @@ class _ListMenuButton extends StatelessWidget {
         _GlassListMenuEntry(
           backgroundEnabled: onCustomizeBackground != null,
           showRename: onRenameList != null,
+          showProtection: onToggleListProtection != null,
+          isListProtected: isListProtected,
           showDelete: onDeleteList != null,
         ),
       ],
@@ -4810,14 +5730,22 @@ class _GlassListMenuEntry extends PopupMenuEntry<_ListMenuAction> {
   const _GlassListMenuEntry({
     required this.backgroundEnabled,
     required this.showRename,
+    required this.showProtection,
+    required this.isListProtected,
     required this.showDelete,
   });
 
   final bool backgroundEnabled;
   final bool showRename;
+  final bool showProtection;
+  final bool isListProtected;
   final bool showDelete;
 
-  int get itemCount => 1 + (showRename ? 1 : 0) + (showDelete ? 1 : 0);
+  int get itemCount =>
+      1 +
+      (showRename ? 1 : 0) +
+      (showProtection ? 1 : 0) +
+      (showDelete ? 1 : 0);
 
   @override
   double get height => 28 + (itemCount * 62);
@@ -4833,6 +5761,7 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final platform = Theme.of(context).platform;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderRadius = BorderRadius.circular(26);
     return SizedBox(
@@ -4896,6 +5825,19 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
                           label: 'Editar nombre',
                           onTap: () =>
                               Navigator.of(context).pop(_ListMenuAction.rename),
+                        ),
+                      if (widget.showProtection)
+                        _GlassListMenuTile(
+                          key: const ValueKey('protect-list-menu-item'),
+                          icon: widget.isListProtected
+                              ? Icons.lock_open_rounded
+                              : listBiometricIcon(platform),
+                          label: widget.isListProtected
+                              ? 'Quitar protección biométrica'
+                              : 'Proteger con ${listBiometricMethodLabel(platform)}',
+                          onTap: () => Navigator.of(
+                            context,
+                          ).pop(_ListMenuAction.protection),
                         ),
                       if (widget.showDelete)
                         _GlassListMenuTile(

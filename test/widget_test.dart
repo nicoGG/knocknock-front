@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -10,6 +11,7 @@ import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
+import 'package:nocknock/features/notes/data/list_protection_controller.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
@@ -34,6 +36,13 @@ List<MethodCall> _captureSystemSoundCalls(WidgetTester tester) {
     ),
   );
   return calls;
+}
+
+Future<void> _openNoteDetailFromPreview(WidgetTester tester) async {
+  expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+  await tester.tap(find.byKey(const ValueKey('open-note-from-preview-button')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
 }
 
 void main() {
@@ -90,6 +99,22 @@ void main() {
     );
     expect(firstAvatar, findsOneWidget);
     expect(secondAvatar, findsOneWidget);
+
+    final collaboratorsButtonRect = tester.getRect(
+      find.byKey(const ValueKey('share-list-button')),
+    );
+    final listOptionsButtonRect = tester.getRect(
+      find.byKey(const ValueKey('list-options-button')),
+    );
+    expect(
+      listOptionsButtonRect.left - collaboratorsButtonRect.right,
+      closeTo(8, 0.1),
+    );
+    expect(
+      listOptionsButtonRect.center.dy,
+      closeTo(collaboratorsButtonRect.center.dy, 0.1),
+    );
+    expect(find.text('1 nota'), findsNothing);
 
     final initialFirstOffset = tester
         .widget<Transform>(firstAvatar)
@@ -155,6 +180,124 @@ void main() {
     expect(initialOffset.y, 0);
     expect(laterOffset.x, 0);
     expect(laterOffset.y, 0);
+  });
+
+  testWidgets('filters by populated categories and assignees with totals', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          noteCount: 3,
+          initiallyCompleted: true,
+          category: NoteCategory.shopping,
+          withInvitedPeople: true,
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final categoryBar = find.byKey(const ValueKey('category-filter-bar'));
+    final statusSelector = find.byKey(
+      const ValueKey('compact-filter-selector'),
+    );
+    expect(categoryBar, findsOneWidget);
+    expect(
+      tester.getRect(categoryBar).top,
+      greaterThan(tester.getRect(statusSelector).bottom),
+    );
+    expect(
+      find.byKey(const ValueKey('category-filter-shopping')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('category-filter-general')),
+      findsOneWidget,
+    );
+    final clearCategoryFilter = find.byKey(
+      const ValueKey('category-filter-clear-button'),
+    );
+    final anaFilter = find.byKey(const ValueKey('assignee-filter-person-ana'));
+    expect(anaFilter, findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('assignee-filter-count-person-ana')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+    expect(clearCategoryFilter, findsOneWidget);
+    expect(
+      tester.getRect(anaFilter).left,
+      greaterThan(
+        tester
+            .getRect(find.byKey(const ValueKey('category-filter-shopping')))
+            .right,
+      ),
+    );
+    expect(
+      tester.getRect(clearCategoryFilter).left,
+      greaterThan(tester.getRect(anaFilter).right),
+    );
+    expect(find.byKey(const ValueKey('category-filter-work')), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('category-filter-count-shopping')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('category-filter-count-general')),
+        matching: find.text('2'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('category-filter-shopping')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('Nota 2'), findsNothing);
+
+    await tester.drag(categoryBar, const Offset(-240, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(clearCategoryFilter);
+    await tester.pumpAndSettle();
+    expect(find.text('Nota 2'), findsOneWidget);
+
+    await tester.tap(anaFilter);
+    await tester.pumpAndSettle();
+    expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('Nota 2'), findsNothing);
+
+    await tester.drag(categoryBar, const Offset(-240, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(clearCategoryFilter);
+    await tester.pumpAndSettle();
+    expect(find.text('Nota 2'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('category-filter-shopping')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('category-filter-general')),
+      findsOneWidget,
+    );
+    expect(anaFilter, findsNothing);
+    expect(find.text('Comprar café'), findsNothing);
+    expect(find.text('Nota 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows the board and can open the note editor', (tester) async {
@@ -230,15 +373,24 @@ void main() {
 
     expect(find.text('Nueva nota'), findsNWidgets(2));
     expect(find.byKey(const ValueKey('note-title-field')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('close-note-editor-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('close-note-editor-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('note-title-field')), findsNothing);
+    expect(find.text('Nueva nota'), findsOneWidget);
   });
 
-  testWidgets('long press previews a note in grid and list modes', (
-    tester,
-  ) async {
+  testWidgets('tap previews a note in grid and list modes', (tester) async {
     await tester.pumpWidget(
       NockNockApp(
         repository: _FakeNotesRepository(
           withInvitedPeople: true,
+          category: NoteCategory.shopping,
           initialContent: 'Texto importante para mañana',
           initialContentDelta:
               '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
@@ -248,7 +400,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pump();
 
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
@@ -274,6 +432,24 @@ void main() {
       findsOneWidget,
     );
     final previewCard = find.byKey(const ValueKey('note-preview-card'));
+    final originChip = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('note-list-note-1')),
+    );
+    final categoryChip = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('note-category-note-1')),
+    );
+    expect(originChip, findsOneWidget);
+    expect(categoryChip, findsOneWidget);
+    expect(
+      tester.getCenter(originChip).dy,
+      closeTo(tester.getCenter(categoryChip).dy, 0.5),
+    );
+    expect(
+      tester.getRect(originChip).right,
+      lessThan(tester.getRect(categoryChip).left),
+    );
     final richContent = find.descendant(
       of: previewCard,
       matching: find.byKey(const ValueKey('preview-rich-content-note-1')),
@@ -318,6 +494,95 @@ void main() {
       find.byKey(const ValueKey('open-note-from-preview-button')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('note-preview-editing-dock')),
+      findsOneWidget,
+    );
+    expect(find.text('Abrir nota'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('quick-edit-note-button')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('preview-color-action')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('preview-category-action')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('preview-reminder-action')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('preview-assignee-action')), findsNothing);
+    final previewElementBeforeEditing = tester.element(previewCard);
+
+    await tester.tap(
+      find.byKey(const ValueKey('inline-title-hit-target-note-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('quick-edit-title-field')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('inline-description-subtasks-divider-note-1')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
+    expect(previewCard, findsOneWidget);
+    expect(tester.element(previewCard), same(previewElementBeforeEditing));
+    expect(createdBy, findsOneWidget);
+    expect(assignedTo, findsOneWidget);
+    expect(authorAvatar, findsOneWidget);
+    expect(assigneeAvatar, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('note-preview-editing-dock')),
+      findsOneWidget,
+    );
+    final noteSurface = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('note-surface-note-1')),
+    );
+    expect(
+      tester.widget<Material>(noteSurface).color,
+      NoteCategoryStyle.baseColor(NoteCategory.shopping),
+    );
+    final cardInk = tester.widget<Ink>(
+      find.descendant(of: noteSurface, matching: find.byType(Ink)).first,
+    );
+    expect(
+      ((cardInk.decoration as BoxDecoration).image!.image as AssetImage)
+          .assetName,
+      'assets/note_backgrounds/shopping.jpg',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-inline-title-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quick-edit-title-field')), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('inline-description-hit-target-note-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('quick-edit-content-editor')),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Título grande'), findsOneWidget);
+    expect(find.byTooltip('Negrita'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('cancel-inline-description-button')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(assigneeAvatar);
+    await tester.pumpAndSettle();
+    expect(find.text('Asignar responsable'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('preview-assignee-owner-1')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('preview-assignee-person-ana')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
 
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
@@ -337,7 +602,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
 
-    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
 
@@ -346,6 +611,66 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+  });
+
+  testWidgets('long press drag reorders notes in mosaic mode', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FakeNotesRepository(noteCount: 3);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final first = find.byKey(const ValueKey('reorder-grid-note-1'));
+    final second = find.byKey(const ValueKey('reorder-grid-note-2'));
+    final gesture = await tester.startGesture(tester.getCenter(first));
+    await tester.pump(const Duration(milliseconds: 550));
+    await gesture.moveTo(tester.getCenter(second));
+    await tester.pump(const Duration(milliseconds: 160));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(repository.reorderedNoteIds, ['note-2', 'note-1', 'note-3']);
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+  });
+
+  testWidgets('long press drag reorders notes in list mode', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FakeNotesRepository(noteCount: 3);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ReorderableDelayedDragStartListener), findsNWidgets(3));
+    final first = find.byKey(const ValueKey('reorder-list-note-1'));
+    final gesture = await tester.startGesture(tester.getCenter(first));
+    await tester.pump(const Duration(milliseconds: 500));
+    await gesture.moveBy(const Offset(0, 20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 110));
+    await tester.pumpAndSettle();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(repository.reorderedNoteIds, ['note-2', 'note-1', 'note-3']);
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
   });
 
   testWidgets('reacts without leaving the quick preview', (tester) async {
@@ -364,7 +689,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
     final preview = find.byKey(const ValueKey('note-preview-dialog'));
     expect(preview, findsOneWidget);
@@ -420,9 +745,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('plays board action sounds and distinguishes a long press', (
-    tester,
-  ) async {
+  testWidgets('plays click sounds for board tap actions', (tester) async {
     final systemSoundCalls = _captureSystemSoundCalls(tester);
     await tester.pumpWidget(
       NockNockApp(
@@ -454,24 +777,21 @@ void main() {
     expect(systemSoundCalls, hasLength(1));
     await tester.pumpAndSettle();
     Navigator.of(
-      tester.element(find.byKey(const ValueKey('note-detail-page'))),
+      tester.element(find.byKey(const ValueKey('note-preview-dialog'))),
     ).pop();
     await tester.pumpAndSettle();
 
     systemSoundCalls.clear();
-    await tester.longPress(find.byKey(const ValueKey('note-note-1')));
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(systemSoundCalls, hasLength(2));
-    expect(
-      systemSoundCalls,
-      everyElement(
-        isMethodCall('SystemSound.play', arguments: 'SystemSoundType.click'),
-      ),
+    final dragGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('note-note-1'))),
     );
-    Navigator.of(
-      tester.element(find.byKey(const ValueKey('note-preview-dialog'))),
-    ).pop();
+    await tester.pump(const Duration(milliseconds: 520));
+    await dragGesture.moveBy(const Offset(0, 32));
+    await tester.pump(const Duration(milliseconds: 100));
+    await dragGesture.up();
     await tester.pumpAndSettle();
+    expect(systemSoundCalls, isEmpty);
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
 
     systemSoundCalls.clear();
     await tester.tap(find.byKey(const ValueKey('new-note-button')));
@@ -491,7 +811,10 @@ void main() {
         NoteChecklistItem(id: 'quick-task-1', text: 'Primera subtarea'),
         NoteChecklistItem(id: 'quick-task-2', text: 'Segunda subtarea'),
       ];
-      final repository = _FakeNotesRepository(checklist: checklist);
+      final repository = _FakeNotesRepository(
+        checklist: checklist,
+        withInvitedPeople: true,
+      );
       await tester.pumpWidget(
         NockNockApp(
           repository: repository,
@@ -500,25 +823,70 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.longPress(find.byKey(const ValueKey('note-note-1')));
+      await tester.tap(find.byKey(const ValueKey('note-note-1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('quick-edit-note-button')));
-      await tester.pumpAndSettle();
+      final previewCard = find.byKey(const ValueKey('note-preview-card'));
+      final previewElement = tester.element(previewCard);
+      expect(
+        find.byKey(
+          const ValueKey('inline-description-subtasks-divider-note-1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('preview-rich-content-note-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: previewCard,
+          matching: find.text('Primera subtarea'),
+        ),
+        findsOneWidget,
+      );
 
-      expect(find.text('Edición rápida'), findsOneWidget);
-      expect(find.byKey(const ValueKey('quick-note-editor')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('inline-title-hit-target-note-1')),
+      );
+      await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('quick-edit-title-field')),
         findsOneWidget,
       );
       expect(
         find.byKey(const ValueKey('quick-edit-content-editor')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(tester.element(previewCard), same(previewElement));
 
+      final titleField = find.byKey(const ValueKey('quick-edit-title-field'));
+      final singleLineHeight = tester.getSize(titleField).height;
+      expect(tester.widget<TextField>(titleField).minLines, 1);
+      expect(tester.widget<TextField>(titleField).maxLines, 1);
       await tester.enterText(
+        titleField,
+        'Comprar entradas para el concierto del próximo sábado con la familia',
+      );
+      await tester.pump();
+      expect(tester.widget<TextField>(titleField).minLines, 2);
+      expect(tester.widget<TextField>(titleField).maxLines, 2);
+      expect(tester.getSize(titleField).height, greaterThan(singleLineHeight));
+
+      await tester.enterText(titleField, 'comprar café y té');
+      await tester.tap(find.byKey(const ValueKey('save-inline-title-button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('inline-description-hit-target-note-1')),
+      );
+      await tester.pumpAndSettle();
+      expect(
         find.byKey(const ValueKey('quick-edit-title-field')),
-        'comprar café y té',
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('quick-edit-content-editor')),
+        findsOneWidget,
       );
       final contentEditor = tester.widget<QuillEditor>(
         find.byKey(const ValueKey('quick-edit-content-editor')),
@@ -532,9 +900,35 @@ void main() {
         const TextSelection.collapsed(offset: updatedContent.length),
       );
       await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('save-inline-description-button')),
+      );
+      await tester.pumpAndSettle();
 
+      await tester.tap(
+        find.byKey(const ValueKey('edit-inline-checklist-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('quick-edit-content-editor')),
+        findsNothing,
+      );
       final checklistEditor = find.byKey(
         const ValueKey('quick-edit-checklist-editor'),
+      );
+      expect(
+        find.descendant(
+          of: checklistEditor,
+          matching: find.byType(PopupMenuButton),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('add-checklist-item')),
+          matching: find.text('Elemento de la lista'),
+        ),
+        findsOneWidget,
       );
       final addItem = find.descendant(
         of: checklistEditor,
@@ -561,16 +955,32 @@ void main() {
       reorderable.onReorderItem!(0, 2);
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('save-quick-edit-button')));
+      final saveChecklist = find.byKey(
+        const ValueKey('save-inline-checklist-button'),
+      );
+      await tester.ensureVisible(saveChecklist);
+      await tester.tap(saveChecklist);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
+      await tester.tap(
+        find.descendant(
+          of: previewCard,
+          matching: find.byKey(const ValueKey('assignee-avatar-note-1')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Asignar responsable'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('preview-assignee-owner-1')));
+      await tester.pumpAndSettle();
+
       expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      expect(tester.element(previewCard), same(previewElement));
       expect(
         repository.lastChanges,
         containsPair('title', 'Comprar café y té'),
       );
       expect(repository.lastChanges, containsPair('content', updatedContent));
+      expect(repository.lastChanges, containsPair('assigneeUid', 'owner-1'));
       final savedChecklist =
           repository.lastChanges!['checklist'] as List<dynamic>;
       expect(savedChecklist.map((item) => (item as Map)['text']), [
@@ -588,6 +998,239 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'edits each card zone in place and keeps description above subtasks',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(initialContent: ''),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('note-note-1')));
+      await tester.pumpAndSettle();
+      final previewCard = find.byKey(const ValueKey('note-preview-card'));
+      final previewElement = tester.element(previewCard);
+      final description = find.byKey(
+        const ValueKey('inline-description-hit-target-note-1'),
+      );
+      final divider = find.byKey(
+        const ValueKey('inline-description-subtasks-divider-note-1'),
+      );
+
+      expect(find.text('Agregar descripción'), findsOneWidget);
+      expect(description, findsOneWidget);
+      expect(divider, findsOneWidget);
+      expect(find.text('Subtareas'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('add-inline-subtask-button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(description);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('quick-edit-content-editor')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Título grande'), findsOneWidget);
+      expect(divider, findsOneWidget);
+      expect(tester.element(previewCard), same(previewElement));
+      expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('cancel-inline-description-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add-inline-subtask-button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('quick-edit-checklist-editor')),
+        findsOneWidget,
+      );
+      final emptyChecklistEditor = find.byKey(
+        const ValueKey('quick-edit-checklist-editor'),
+      );
+      final firstChecklistField = find.descendant(
+        of: emptyChecklistEditor,
+        matching: find.byType(TextFormField),
+      );
+      expect(firstChecklistField, findsOneWidget);
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: firstChecklistField,
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byKey(const ValueKey('add-checklist-item')), findsOneWidget);
+      expect(divider, findsOneWidget);
+      expect(tester.element(previewCard), same(previewElement));
+    },
+  );
+
+  testWidgets('edits note attributes from the floating preview dock', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository(withInvitedPeople: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('preview-color-action')));
+    await tester.pumpAndSettle();
+    expect(find.text('Color de la nota'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('preview-color-blue')));
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('color', 'blue'));
+
+    await tester.tap(find.byKey(const ValueKey('preview-category-action')));
+    await tester.pumpAndSettle();
+    expect(find.text('Categoría y fondo'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('preview-category-work')));
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('category', 'work'));
+
+    await tester.tap(find.byKey(const ValueKey('preview-reminder-action')));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Cuándo te recordamos?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reminder-preset-day')));
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges?['reminderAt'], isNotNull);
+
+    expect(find.byKey(const ValueKey('preview-assignee-action')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('preview-reminder-action')));
+    await tester.pumpAndSettle();
+    expect(find.text('Recordatorio activo'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('preview-remove-reminder')));
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('reminderAt', null));
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('undoes, redoes, and confirms deletion from the preview dock', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository();
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+
+    final undoAction = find.byKey(const ValueKey('preview-undo-action'));
+    final redoAction = find.byKey(const ValueKey('preview-redo-action'));
+    final deleteAction = find.byKey(const ValueKey('preview-delete-action'));
+    IconButton actionButton(Finder action) => tester.widget<IconButton>(
+      find.descendant(of: action, matching: find.byType(IconButton)),
+    );
+
+    expect(undoAction, findsOneWidget);
+    expect(redoAction, findsOneWidget);
+    expect(deleteAction, findsOneWidget);
+    expect(actionButton(undoAction).onPressed, isNull);
+    expect(actionButton(redoAction).onPressed, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('preview-color-action')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('preview-color-blue')));
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('color', 'blue'));
+    expect(actionButton(undoAction).onPressed, isNotNull);
+
+    await tester.tap(undoAction);
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('color', 'yellow'));
+    expect(actionButton(redoAction).onPressed, isNotNull);
+
+    await tester.tap(redoAction);
+    await tester.pumpAndSettle();
+    expect(repository.lastChanges, containsPair('color', 'blue'));
+
+    await tester.tap(deleteAction);
+    await tester.pumpAndSettle();
+    expect(find.text('¿Eliminar esta nota?'), findsOneWidget);
+    expect(
+      find.textContaining('Esta acción no se puede deshacer.'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('cancel-preview-delete-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(repository.deletedNoteId, isNull);
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+
+    await tester.tap(deleteAction);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('confirm-preview-delete-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(repository.deletedNoteId, 'note-1');
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+    expect(find.byKey(const ValueKey('note-note-1')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('shows an add-responsible control when the note is unassigned', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+
+    final addAssignee = find.byKey(const ValueKey('add-assignee-note-1'));
+    expect(addAssignee, findsOneWidget);
+    expect(find.text('Responsable'), findsOneWidget);
+
+    await tester.tap(addAssignee);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Asignar responsable'), findsOneWidget);
+    expect(
+      find.text(
+        'Aún no hay personas en esta lista. Invita colaboradores para poder asignarles la nota.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('changes a list background and blur from the board', (
     tester,
@@ -614,16 +1257,12 @@ void main() {
       findsNothing,
     );
     expect(find.textContaining('Tiempo real'), findsNothing);
-    final noteCountLabel = find.text('1 nota');
+    expect(find.text('1 nota'), findsNothing);
+    final shareListButton = find.byKey(const ValueKey('share-list-button'));
     final listOptionsButtonRect = tester.getRect(listOptionsButton);
-    final noteCountLabelRect = tester.getRect(noteCountLabel);
-    final verticalCenterDelta =
-        listOptionsButtonRect.center.dy - noteCountLabelRect.center.dy;
     expect(
-      verticalCenterDelta.abs(),
-      lessThan(1),
-      reason:
-          'button=$listOptionsButtonRect, label=$noteCountLabelRect, delta=$verticalCenterDelta',
+      listOptionsButtonRect.left - tester.getRect(shareListButton).right,
+      closeTo(8, 0.1),
     );
     expect(listOptionsButtonRect.right, greaterThan(398));
 
@@ -706,6 +1345,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('note-author-field')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('description-subtasks-divider')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('add-checklist-item')), findsOneWidget);
+    expect(
+      find.text(
+        'Arrastra desde los puntos para ordenar. Usa las flechas para crear subtareas.',
+      ),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('note-content-editor')), findsNothing);
+    expect(find.byTooltip('Título grande'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('add-description-button')));
+    await tester.pumpAndSettle();
+
     final titleField = find.byKey(const ValueKey('note-title-field'));
     final contentField = find.byKey(const ValueKey('note-content-editor'));
     expect(find.byTooltip('Título grande'), findsOneWidget);
@@ -730,10 +1385,23 @@ void main() {
       'Llevar dos cajas',
     );
 
-    await tester.ensureVisible(find.byTooltip('Negrita'));
-    await tester.tap(find.byTooltip('Negrita'));
+    tester
+        .widget<InkWell>(
+          find.descendant(
+            of: find.byTooltip('Negrita'),
+            matching: find.byType(InkWell),
+          ),
+        )
+        .onTap!();
     await tester.pump();
-    await tester.tap(find.byTooltip('Título grande'));
+    tester
+        .widget<InkWell>(
+          find.descendant(
+            of: find.byTooltip('Título grande'),
+            matching: find.byType(InkWell),
+          ),
+        )
+        .onTap!();
     await tester.pump();
 
     final styledDelta = richEditor.controller.document.toDelta().toJson();
@@ -753,7 +1421,7 @@ void main() {
   });
 
   testWidgets(
-    'new note editor is glass and uses the signed-in author automatically',
+    'new note uses the same card editor and signed-in author automatically',
     (tester) async {
       const user = AppUser(
         id: 'google-user',
@@ -772,28 +1440,20 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('new-note-button')));
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const ValueKey('note-create-dialog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('quick-note-editor')), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('note-editor-glass-blur')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('note-editor-glass-surface')),
+        find.byKey(const ValueKey('quick-note-editor-surface')),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('note-author-field')), findsNothing);
       expect(find.text('Tu nombre'), findsNothing);
 
-      final reminder = find.byKey(const ValueKey('note-reminder-button'));
+      final reminder = find.byKey(
+        const ValueKey('quick-editor-reminder-action'),
+      );
       await tester.ensureVisible(reminder);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('note-reminder-glass-surface')),
-        findsOneWidget,
-      );
-      final sheetWidth = tester
-          .getSize(find.byKey(const ValueKey('note-editor-glass-surface')))
-          .width;
-      expect(tester.getSize(reminder).width, closeTo(sheetWidth - 48, 0.1));
 
       final beforePreset = DateTime.now();
       await tester.tap(reminder);
@@ -846,6 +1506,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('new-note-button')));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('add-description-button')));
+    await tester.pumpAndSettle();
     final editorFinder = find.byKey(const ValueKey('note-content-editor'));
     final initialEditor = tester.widget<QuillEditor>(editorFinder);
     initialEditor.focusNode.requestFocus();
@@ -863,7 +1525,7 @@ void main() {
     expect(rebuiltEditor.focusNode.hasFocus, isTrue);
   });
 
-  testWidgets('creates categorized notes with nested checklist items', (
+  testWidgets('creates categorized notes with simple checklist items', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 1200);
@@ -888,35 +1550,61 @@ void main() {
     );
     tester.testTextInput.hide();
     await tester.pumpAndSettle();
-    final workCategory = find.byKey(const ValueKey('note-category-work'));
+    await tester.tap(
+      find.byKey(const ValueKey('quick-editor-category-action')),
+    );
+    await tester.pumpAndSettle();
+    final workCategory = find.byKey(const ValueKey('preview-category-work'));
     await tester.ensureVisible(workCategory);
     await tester.tap(workCategory);
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final addItem = find.byKey(const ValueKey('add-checklist-item'));
     await tester.ensureVisible(addItem);
     await tester.tap(addItem);
     await tester.pump();
+
+    final checklistEditor = find.byKey(const ValueKey('checklist-editor'));
+    var fields = find.descendant(
+      of: checklistEditor,
+      matching: find.byType(TextFormField),
+    );
+    expect(fields, findsOneWidget);
+    final firstEditable = tester.widget<EditableText>(
+      find.descendant(of: fields.first, matching: find.byType(EditableText)),
+    );
+    expect(firstEditable.focusNode.hasFocus, isTrue);
+
     await tester.ensureVisible(addItem);
     await tester.tap(addItem);
     await tester.pump();
 
-    final checklistEditor = find.byKey(const ValueKey('checklist-editor'));
-    final fields = find.descendant(
+    fields = find.descendant(
       of: checklistEditor,
       matching: find.byType(TextFormField),
     );
+    expect(fields, findsNWidgets(2));
     await tester.enterText(fields.at(0), 'preparar pauta');
+    await tester.pump();
     await tester.enterText(fields.at(1), 'confirmar asistentes');
-
-    final menus = find.descendant(
-      of: checklistEditor,
-      matching: find.byType(PopupMenuButton<String>),
+    await tester.pump();
+    await tester.ensureVisible(addItem);
+    await tester.tap(addItem);
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: checklistEditor,
+        matching: find.byType(TextFormField),
+      ),
+      findsNWidgets(3),
     );
-    await tester.tap(menus.last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Convertir en subtarea'));
-    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: checklistEditor,
+        matching: find.byType(PopupMenuButton<String>),
+      ),
+      findsNothing,
+    );
 
     final saveButton = find.byKey(const ValueKey('save-note-button'));
     await tester.ensureVisible(saveButton);
@@ -928,7 +1616,7 @@ void main() {
       'Preparar pauta',
       'Confirmar asistentes',
     ]);
-    expect(repository.createdDraft?.checklist.last.indent, 1);
+    expect(repository.createdDraft?.checklist.last.indent, 0);
   });
 
   testWidgets('unfocuses a checklist field before reordering it', (
@@ -1040,9 +1728,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Viajes'), findsOneWidget);
-    expect(find.text('Pasaporte'), findsOneWidget);
     final card = find.byKey(const ValueKey('note-note-1'));
+    expect(
+      find.descendant(of: card, matching: find.text('Viajes')),
+      findsOneWidget,
+    );
+    expect(find.text('Pasaporte'), findsOneWidget);
     final ink = tester.widget<Ink>(
       find.descendant(of: card, matching: find.byType(Ink)).first,
     );
@@ -1058,6 +1749,7 @@ void main() {
 
     await tester.tapAt(tester.getTopLeft(card) + const Offset(40, 40));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
     final taskContainer = find.byKey(const ValueKey('note-task-container'));
     final checklistDetail = find.byKey(const ValueKey('note-checklist-detail'));
     expect(
@@ -1209,6 +1901,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
     final closeButton = find.byKey(const ValueKey('detail-close-button'));
@@ -1394,6 +2087,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     final header = find.byKey(const ValueKey('note-detail-header'));
     await tester.tapAt(
@@ -1444,6 +2138,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     final contentRow = find.byKey(const ValueKey('detail-content-row'));
     await tester.tapAt(tester.getTopLeft(contentRow) + const Offset(24, 28));
@@ -1482,6 +2177,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     final contentRow = find.byKey(const ValueKey('detail-content-row'));
     await tester.tapAt(tester.getTopLeft(contentRow) + const Offset(24, 28));
@@ -1601,6 +2297,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     expect(find.text('Persona invitada'), findsNothing);
     expect(find.text('Ana Torres\nana@example.com'), findsNothing);
@@ -1669,16 +2366,21 @@ void main() {
       find.byKey(const ValueKey('note-title-field')),
       'Comprar entradas',
     );
-    final assigneeField = find.byKey(const ValueKey('note-assignee-field'));
+    final assigneeField = find.byKey(
+      const ValueKey('quick-editor-assignee-action'),
+    );
     await tester.ensureVisible(assigneeField);
     await tester.tap(assigneeField);
     await tester.pumpAndSettle();
+    final assigneeOption = find.byKey(
+      const ValueKey('preview-assignee-person-ana'),
+    );
     final avatar = tester.widget<CircleAvatar>(
-      find.byKey(const ValueKey('assignee-option-avatar-person-ana')),
+      find.descendant(of: assigneeOption, matching: find.byType(CircleAvatar)),
     );
     expect(avatar.foregroundImage, isA<NetworkImage>());
     expect((avatar.foregroundImage! as NetworkImage).url, photoUrl);
-    await tester.tap(find.text('Ana Torres').last);
+    await tester.tap(assigneeOption);
     await tester.pumpAndSettle();
 
     final saveButton = find.byKey(const ValueKey('save-note-button'));
@@ -1702,6 +2404,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('note-note-1')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
     final assigneeRow = find.byKey(const ValueKey('detail-assignee-row'));
     await tester.ensureVisible(assigneeRow);
     await tester.pumpAndSettle();
@@ -1752,6 +2455,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tapAt(tester.getTopLeft(noteCard) + const Offset(24, 24));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
     expect(find.byKey(const ValueKey('note-detail-header')), findsOneWidget);
@@ -1782,6 +2486,7 @@ void main() {
     await tester.ensureVisible(noteCard);
     await tester.tapAt(tester.getTopLeft(noteCard) + const Offset(24, 24));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     final categoryRow = find.byKey(const ValueKey('detail-category-row'));
     await tester.ensureVisible(categoryRow);
@@ -1806,10 +2511,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    const compactAssigneePhotoUrl = 'https://example.com/ana-list-profile.jpg';
     await tester.pumpWidget(
       NockNockApp(
         repository: _FakeNotesRepository(
           withInvitedPeople: true,
+          collaboratorPhotoUrl: compactAssigneePhotoUrl,
           category: NoteCategory.shopping,
           initialReminderAt: DateTime(2026, 8, 4, 6, 39),
         ),
@@ -1895,6 +2602,25 @@ void main() {
       find.descendant(
         of: compactCard,
         matching: find.byKey(const ValueKey('assignee-note-1')),
+      ),
+      findsOneWidget,
+    );
+    final compactAssigneeAvatar = find.descendant(
+      of: compactCard,
+      matching: find.byKey(const ValueKey('assignee-avatar-note-1')),
+    );
+    expect(compactAssigneeAvatar, findsOneWidget);
+    expect(tester.getSize(compactAssigneeAvatar), const Size.square(24));
+    final compactAvatar = tester.widget<CircleAvatar>(compactAssigneeAvatar);
+    expect(compactAvatar.foregroundImage, isA<NetworkImage>());
+    expect(
+      (compactAvatar.foregroundImage! as NetworkImage).url,
+      compactAssigneePhotoUrl,
+    );
+    expect(
+      find.descendant(
+        of: compactCard,
+        matching: find.byIcon(Icons.assignment_ind_rounded),
       ),
       findsNothing,
     );
@@ -1988,12 +2714,91 @@ void main() {
 
     await tester.tap(openHint);
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('detail-checklist-long-task-11')),
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'completed subtasks move below and their section compacts the card',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const checklist = [
+        NoteChecklistItem(id: 'task-pending', text: 'Reservar alojamiento'),
+        NoteChecklistItem(
+          id: 'task-completed',
+          text: 'Comprar pasajes',
+          isCompleted: true,
+        ),
+      ];
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(checklist: checklist),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(const ValueKey('reorder-grid-note-1'));
+      final completedToggle = find.descendant(
+        of: card,
+        matching: find.byKey(
+          const ValueKey('preview-completed-section-toggle'),
+        ),
+      );
+      expect(completedToggle, findsOneWidget);
+      expect(find.text('1 elemento completado'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Reservar alojamiento')).dy,
+        lessThan(tester.getTopLeft(completedToggle).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('Comprar pasajes')).dy,
+        greaterThan(tester.getBottomLeft(completedToggle).dy),
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('preview-check-task-pending')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 elementos completados'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Reservar alojamiento')).dy,
+        greaterThan(tester.getBottomLeft(completedToggle).dy),
+      );
+      final expandedHeight = tester.getSize(card).height;
+
+      await tester.tap(completedToggle);
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 elementos completados'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.byIcon(Icons.chevron_right_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Reservar alojamiento'), findsNothing);
+      expect(find.text('Comprar pasajes'), findsNothing);
+      expect(tester.getSize(card).height, lessThan(expandedHeight));
+
+      await tester.tap(completedToggle);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reservar alojamiento'), findsOneWidget);
+      expect(find.text('Comprar pasajes'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('empty masonry notes show only title and optional assignee', (
     tester,
@@ -2645,6 +3450,122 @@ void main() {
     expect(find.text('Proyectos'), findsNothing);
   });
 
+  testWidgets('protects a list and locks it after backgrounding the app', (
+    tester,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final authenticator = _FakeListBiometricAuthenticator();
+    final protectionController = ListProtectionController(
+      preferences: preferences,
+      authenticator: authenticator,
+    );
+    addTearDown(protectionController.dispose);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+        preferences: preferences,
+        listProtectionController: protectionController,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Proteger con huella o reconocimiento facial'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('protect-list-menu-item')));
+    await tester.pumpAndSettle();
+
+    expect(authenticator.authenticationCount, 1);
+    expect(find.byKey(const ValueKey('protected-list-chip')), findsOneWidget);
+    expect(find.text('Comprar café'), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('protected-list-gate')), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('unlock-protected-list-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(authenticator.authenticationCount, 2);
+    expect(find.byKey(const ValueKey('protected-list-gate')), findsNothing);
+    expect(find.text('Comprar café'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Quitar protección biométrica'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('protect-list-menu-item')));
+    await tester.pumpAndSettle();
+
+    expect(authenticator.authenticationCount, 3);
+    expect(find.byKey(const ValueKey('protected-list-chip')), findsNothing);
+  });
+
+  testWidgets('calls biometric protection Face ID on iOS', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Proteger con Face ID'), findsOneWidget);
+    expect(
+      find.text('Proteger con huella o reconocimiento facial'),
+      findsNothing,
+    );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('hides locked-list notes from the pinned overview', (
+    tester,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final protectionController = ListProtectionController(
+      preferences: preferences,
+      authenticator: _FakeListBiometricAuthenticator(),
+    );
+    addTearDown(protectionController.dispose);
+    await protectionController.setProtection(
+      'home',
+      enabled: true,
+      listName: 'Mis notas',
+    );
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(withPinnedAcrossLists: true),
+        authRepository: _FakeAuthRepository(),
+        preferences: preferences,
+        listProtectionController: protectionController,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('pinned-menu-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Preparar lanzamiento'), findsOneWidget);
+    expect(find.text('Comprar café'), findsNothing);
+  });
+
   testWidgets(
     'deletes the only list after confirmation and creates an empty one',
     (tester) async {
@@ -2786,13 +3707,13 @@ void main() {
       const ValueKey('assigned-to-me-menu-button'),
     );
     expect(assignedToMe, findsOneWidget);
-    expect(find.text('Asignado a mí'), findsOneWidget);
+    expect(find.bySemanticsLabel('Asignado a mí'), findsOneWidget);
     await tester.tap(assignedToMe);
     await tester.pumpAndSettle();
 
     expect(find.text('Asignado a mí'), findsOneWidget);
     expect(find.text('Comprar café'), findsOneWidget);
-    expect(find.text('1 nota'), findsOneWidget);
+    expect(find.text('1 nota'), findsNothing);
     expect(
       find.byKey(const ValueKey('collaborator-avatar-stack')),
       findsNothing,
@@ -2819,6 +3740,14 @@ void main() {
       findsOneWidget,
     );
     expect(repository.lastAppearance, isNull);
+    expect(
+      repository.lastAggregateAppearanceScope,
+      AggregateBoardScope.assignedToMe,
+    );
+    expect(
+      repository.lastAggregateAppearance?.backgroundPreset,
+      ListBackgroundPreset.lagoon,
+    );
   });
 
   testWidgets('shows pinned notes from every list with their origin', (
@@ -2829,12 +3758,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    final repository = _FakeNotesRepository(
+      withPinnedAcrossLists: true,
+      initialReminderAt: DateTime(2026, 8, 28, 6),
+    );
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(
-          withPinnedAcrossLists: true,
-          initialReminderAt: DateTime(2026, 8, 28, 6),
-        ),
+        repository: repository,
         authRepository: _FakeAuthRepository(),
       ),
     );
@@ -2845,7 +3775,7 @@ void main() {
 
     final pinnedMenu = find.byKey(const ValueKey('pinned-menu-button'));
     expect(pinnedMenu, findsOneWidget);
-    expect(find.text('Ancladas'), findsOneWidget);
+    expect(find.bySemanticsLabel('Ancladas'), findsOneWidget);
     await tester.tap(pinnedMenu);
     await tester.pumpAndSettle();
 
@@ -2878,8 +3808,18 @@ void main() {
       find.byKey(const ValueKey('background-live-preview')),
       findsOneWidget,
     );
-    await tester.tap(find.byTooltip('Cerrar'));
+    await tester.tap(find.byKey(const ValueKey('background-preset-lavender')));
+    await tester.tap(find.byKey(const ValueKey('save-background-button')));
     await tester.pumpAndSettle();
+    expect(repository.lastAggregateAppearanceScope, AggregateBoardScope.pinned);
+    expect(
+      repository.lastAggregateAppearance?.backgroundPreset,
+      ListBackgroundPreset.lavender,
+    );
+    expect(
+      find.byKey(const ValueKey('preset-background-lavender')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey('pin-note-note-1')));
     await tester.pumpAndSettle();
@@ -2889,20 +3829,22 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('note-note-pinned-work')));
     await tester.pumpAndSettle();
+    await _openNoteDetailFromPreview(tester);
 
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
     expect(find.text('Trabajo'), findsOneWidget);
   });
 
-  testWidgets('shows notes with reminders below pinned in the menu', (
+  testWidgets('shows note scope shortcuts horizontally in the menu', (
     tester,
   ) async {
+    final repository = _FakeNotesRepository(
+      withRemindersAcrossLists: true,
+      initialReminderAt: DateTime(2026, 8, 12, 9),
+    );
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(
-          withRemindersAcrossLists: true,
-          initialReminderAt: DateTime(2026, 8, 12, 9),
-        ),
+        repository: repository,
         authRepository: _FakeAuthRepository(),
       ),
     );
@@ -2912,15 +3854,29 @@ void main() {
     await tester.pumpAndSettle();
 
     final pinnedMenu = find.byKey(const ValueKey('pinned-menu-button'));
+    final assignedToMeMenu = find.byKey(
+      const ValueKey('assigned-to-me-menu-button'),
+    );
     final reminderMenu = find.byKey(
       const ValueKey('with-reminder-menu-button'),
     );
+    expect(assignedToMeMenu, findsOneWidget);
     expect(pinnedMenu, findsOneWidget);
     expect(reminderMenu, findsOneWidget);
     expect(
-      tester.getTopLeft(reminderMenu).dy,
-      greaterThan(tester.getTopLeft(pinnedMenu).dy),
+      tester.getCenter(assignedToMeMenu).dx,
+      lessThan(tester.getCenter(pinnedMenu).dx),
     );
+    expect(
+      tester.getCenter(pinnedMenu).dx,
+      lessThan(tester.getCenter(reminderMenu).dx),
+    );
+    expect(
+      tester.getCenter(assignedToMeMenu).dy,
+      tester.getCenter(pinnedMenu).dy,
+    );
+    expect(tester.getCenter(pinnedMenu).dy, tester.getCenter(reminderMenu).dy);
+    expect(find.bySemanticsLabel('Con recordatorio'), findsOneWidget);
 
     await tester.tap(reminderMenu);
     await tester.pumpAndSettle();
@@ -2932,6 +3888,27 @@ void main() {
     expect(find.text('Trabajo'), findsOneWidget);
     expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
     expect(find.byKey(const ValueKey('new-note-fab')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('customize-background-menu-item')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('background-preset-lagoon')));
+    await tester.tap(find.byKey(const ValueKey('save-background-button')));
+    await tester.pumpAndSettle();
+    expect(
+      repository.lastAggregateAppearanceScope,
+      AggregateBoardScope.withReminder,
+    );
+    expect(
+      repository.lastAggregateAppearance?.backgroundPreset,
+      ListBackgroundPreset.lagoon,
+    );
+    expect(
+      find.byKey(const ValueKey('preset-background-lagoon')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -3660,6 +4637,16 @@ void main() {
   });
 }
 
+class _FakeListBiometricAuthenticator implements ListBiometricAuthenticator {
+  int authenticationCount = 0;
+
+  @override
+  Future<ListProtectionResult> authenticate({required String reason}) async {
+    authenticationCount += 1;
+    return ListProtectionResult.success;
+  }
+}
+
 class _FakeAuthRepository implements AuthRepository {
   _FakeAuthRepository({this.user});
 
@@ -3685,7 +4672,11 @@ class _FakeAuthRepository implements AuthRepository {
   Future<void> signOut() async {}
 }
 
-class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
+class _FakeNotesRepository
+    implements
+        NotesRepository,
+        LocalNotesDataCleaner,
+        AggregateBoardAppearancesRepository {
   _FakeNotesRepository({
     this.isConnected = false,
     this.isEncrypted = false,
@@ -3784,12 +4775,18 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   Note _note;
   final List<NoteList> _lists;
   bool didClearLocalData = false;
+  String? deletedNoteId;
   String? invitedEmail;
   String? removedCollaboratorUid;
   Map<String, dynamic>? lastChanges;
   List<String>? reorderedListIds;
+  List<String>? reorderedNoteIds;
   NoteDraft? createdDraft;
   ListAppearance? lastAppearance;
+  AggregateBoardScope? lastAggregateAppearanceScope;
+  ListAppearance? lastAggregateAppearance;
+  AggregateBoardAppearances aggregateBoardAppearances =
+      const AggregateBoardAppearances();
 
   @override
   bool get isLocalDataActive => true;
@@ -3898,6 +4895,24 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   }
 
   @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async =>
+      aggregateBoardAppearances;
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    lastAggregateAppearanceScope = scope;
+    lastAggregateAppearance = appearance;
+    aggregateBoardAppearances = aggregateBoardAppearances.copyWithScope(
+      scope,
+      appearance,
+    );
+    return aggregateBoardAppearances;
+  }
+
+  @override
   Future<List<Note>> fetchNotes(String boardId) async {
     if (boardId != 'home' || didClearLocalData) return [];
     return List.generate(noteCount, (index) {
@@ -3974,15 +4989,30 @@ class _FakeNotesRepository implements NotesRepository, LocalNotesDataCleaner {
   Future<List<Note>> reorderNotes(
     String boardId,
     List<String> orderedIds,
-  ) async => orderedIds.contains(_note.id) ? [_note] : const [];
+  ) async {
+    final notesById = {
+      for (final note in await fetchNotes(boardId)) note.id: note,
+    };
+    if (orderedIds.length != notesById.length ||
+        orderedIds.toSet().length != orderedIds.length ||
+        !notesById.keys.toSet().containsAll(orderedIds)) {
+      throw const NotesPersistenceFailure();
+    }
+    reorderedNoteIds = List.of(orderedIds);
+    return [
+      for (var index = 0; index < orderedIds.length; index++)
+        notesById[orderedIds[index]]!.copyWith(sortOrder: index),
+    ];
+  }
 
   @override
-  Future<void> deleteNote(String id) async {}
+  Future<void> deleteNote(String id) async => deletedNoteId = id;
 
   @override
   Future<void> clearLocalData() async {
     didClearLocalData = true;
     _lists.removeWhere((list) => list.id != 'home');
+    aggregateBoardAppearances = const AggregateBoardAppearances();
   }
 
   @override

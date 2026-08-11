@@ -6,10 +6,12 @@ import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
 import 'package:nocknock/core/update/google_play_update_prompt.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
+import 'package:nocknock/features/notes/data/list_protection_controller.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/presentation/board_page.dart';
 import 'package:nocknock/features/notes/presentation/board_view_mode_controller.dart';
+import 'package:nocknock/features/notes/presentation/list_protection_guard.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,6 +21,7 @@ class NockNockApp extends StatefulWidget {
     required this.authRepository,
     this.themeController,
     this.boardViewModeController,
+    this.listProtectionController,
     this.notificationsController,
     this.navigatorObservers = const [],
     this.preferences,
@@ -29,6 +32,7 @@ class NockNockApp extends StatefulWidget {
   final AuthRepository authRepository;
   final AppThemeController? themeController;
   final BoardViewModeController? boardViewModeController;
+  final ListProtectionController? listProtectionController;
   final NotificationsController? notificationsController;
   final List<NavigatorObserver> navigatorObservers;
   final SharedPreferences? preferences;
@@ -46,6 +50,11 @@ class _NockNockAppState extends State<NockNockApp> {
       widget.boardViewModeController ?? BoardViewModeController();
   late final bool _ownsBoardViewModeController =
       widget.boardViewModeController == null;
+  late final ListProtectionController _listProtectionController =
+      widget.listProtectionController ??
+      ListProtectionController(preferences: widget.preferences);
+  late final bool _ownsListProtectionController =
+      widget.listProtectionController == null;
 
   @override
   void initState() {
@@ -58,6 +67,7 @@ class _NockNockAppState extends State<NockNockApp> {
   void dispose() {
     if (_ownsThemeController) _themeController.dispose();
     if (_ownsBoardViewModeController) _boardViewModeController.dispose();
+    if (_ownsListProtectionController) _listProtectionController.dispose();
     super.dispose();
   }
 
@@ -93,11 +103,16 @@ class _NockNockAppState extends State<NockNockApp> {
         builder: (context, child) {
           final app = child ?? const SizedBox.shrink();
           final preferences = widget.preferences;
-          if (preferences == null) return app;
-          return GooglePlayUpdatePrompt(
-            preferences: preferences,
-            navigatorKey: _navigatorKey,
-            child: app,
+          final appWithUpdatePrompt = preferences == null
+              ? app
+              : GooglePlayUpdatePrompt(
+                  preferences: preferences,
+                  navigatorKey: _navigatorKey,
+                  child: app,
+                );
+          return ListProtectionPrivacyGuard(
+            controller: _listProtectionController,
+            child: appWithUpdatePrompt,
           );
         },
       ),
@@ -114,6 +129,7 @@ class _NockNockAppState extends State<NockNockApp> {
           child: BoardPage(
             themeController: _themeController,
             viewModeController: _boardViewModeController,
+            listProtectionController: _listProtectionController,
             notificationsController: widget.notificationsController,
           ),
         ),

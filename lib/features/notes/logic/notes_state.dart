@@ -10,6 +10,7 @@ class NotesState extends Equatable {
     this.notes = const [],
     this.pinnedNotes = const [],
     this.reminderNotes = const [],
+    this.aggregateBoardAppearances = const AggregateBoardAppearances(),
     this.lists = const [],
     this.selectedListId = 'home',
     this.isRealtimeConnected = false,
@@ -28,6 +29,7 @@ class NotesState extends Equatable {
   final List<Note> notes;
   final List<Note> pinnedNotes;
   final List<Note> reminderNotes;
+  final AggregateBoardAppearances aggregateBoardAppearances;
   final List<NoteList> lists;
   final String selectedListId;
   final bool isRealtimeConnected;
@@ -53,6 +55,7 @@ class NotesState extends Equatable {
     List<Note>? notes,
     List<Note>? pinnedNotes,
     List<Note>? reminderNotes,
+    AggregateBoardAppearances? aggregateBoardAppearances,
     List<NoteList>? lists,
     String? selectedListId,
     bool? isRealtimeConnected,
@@ -70,6 +73,8 @@ class NotesState extends Equatable {
     notes: notes ?? this.notes,
     pinnedNotes: pinnedNotes ?? this.pinnedNotes,
     reminderNotes: reminderNotes ?? this.reminderNotes,
+    aggregateBoardAppearances:
+        aggregateBoardAppearances ?? this.aggregateBoardAppearances,
     lists: lists ?? this.lists,
     selectedListId: selectedListId ?? this.selectedListId,
     isRealtimeConnected: isRealtimeConnected ?? this.isRealtimeConnected,
@@ -92,6 +97,7 @@ class NotesState extends Equatable {
     notes,
     pinnedNotes,
     reminderNotes,
+    aggregateBoardAppearances,
     lists,
     selectedListId,
     isRealtimeConnected,

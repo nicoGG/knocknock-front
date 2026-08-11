@@ -1437,4 +1437,7 @@ String _colorName(NoteColor color) => switch (color) {
   NoteColor.mint => 'Menta',
   NoteColor.coral => 'Coral',
   NoteColor.gray => 'Gris',
+  NoteColor.red => 'Rojo',
+  NoteColor.teal => 'Turquesa',
+  NoteColor.brown => 'Café',
 };

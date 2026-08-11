@@ -124,6 +124,7 @@ void main() {
 
     final reaction = find.byKey(const ValueKey('note-reaction-note-1-🔥'));
     expect(reaction, findsOneWidget);
+    expect(tester.getSize(reaction).height, lessThanOrEqualTo(36));
     expect(openCalls, 0);
 
     await tester.longPress(reaction);

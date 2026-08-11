@@ -35,10 +35,10 @@ abstract final class NoteCategoryStyle {
     NoteCategory.shopping => 'assets/note_backgrounds/shopping.jpg',
     NoteCategory.health => 'assets/note_backgrounds/health.jpg',
     NoteCategory.travel => 'assets/note_backgrounds/travel.jpg',
-    NoteCategory.study => null,
-    NoteCategory.finance => null,
-    NoteCategory.home => null,
-    NoteCategory.ideas => null,
+    NoteCategory.study => 'assets/note_backgrounds/study.jpg',
+    NoteCategory.finance => 'assets/note_backgrounds/finance.jpg',
+    NoteCategory.home => 'assets/note_backgrounds/home.jpg',
+    NoteCategory.ideas => 'assets/note_backgrounds/ideas.jpg',
   };
 
   static Color baseColor(NoteCategory category) => switch (category) {

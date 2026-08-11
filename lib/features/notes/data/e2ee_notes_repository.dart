@@ -12,7 +12,11 @@ typedef E2eeUserIdProvider = String? Function();
 /// Encrypts every user-authored list/note field before it reaches the API or
 /// the account cache. MongoDB and the backend only receive opaque ciphertext.
 class E2eeNotesRepository
-    implements NotesRepository, NotesCacheReader, GuestDataSyncTarget {
+    implements
+        NotesRepository,
+        NotesCacheReader,
+        GuestDataSyncTarget,
+        AggregateBoardAppearancesRepository {
   E2eeNotesRepository({
     required NotesRepository repository,
     required E2eeUserIdProvider userIdProvider,
@@ -31,6 +35,8 @@ class E2eeNotesRepository
 
   static const _listNameField = e2eeListNameField;
   static const _listBackgroundField = 'list:custom-background:v1';
+  static const _aggregateBoardBackgroundFieldPrefix =
+      'account:aggregate-board-background:v1';
   static const _noteTitleField = e2eeNoteTitleField;
   static const _noteContentField = 'note:content:v1';
   static const _noteDeltaField = 'note:content-delta:v1';
@@ -52,6 +58,14 @@ class E2eeNotesRepository
   Future<void>? _registration;
 
   E2eeNotesTransport get _transport => _repository as E2eeNotesTransport;
+
+  AggregateBoardAppearancesRepository get _aggregateBoardRepository {
+    final repository = _repository;
+    if (repository is! AggregateBoardAppearancesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return repository as AggregateBoardAppearancesRepository;
+  }
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => _events.stream;
@@ -132,9 +146,11 @@ class E2eeNotesRepository
     await _repository.deleteList(listId);
     final userId = _requireUserId();
     _rawLists.remove(listId);
-    _listKeys.remove(listId);
     _noteBoards.removeWhere((_, boardId) => boardId == listId);
-    await _keyStore.deleteListKey(userId, listId);
+    if (listId != 'home-$userId') {
+      _listKeys.remove(listId);
+      await _keyStore.deleteListKey(userId, listId);
+    }
   }
 
   @override
@@ -180,6 +196,39 @@ class E2eeNotesRepository
     );
     _rawLists[listId] = raw;
     return _decryptList(raw);
+  }
+
+  @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async {
+    final key = await _aggregateBoardAppearanceKey();
+    final raw = await _aggregateBoardRepository
+        .fetchAggregateBoardAppearances();
+    return _decryptAggregateBoardAppearances(raw, key);
+  }
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    final key = await _aggregateBoardAppearanceKey();
+    final customBackground = appearance.customBackgroundImage;
+    final encryptedAppearance = ListAppearance(
+      backgroundPreset: appearance.backgroundPreset,
+      backgroundBlur: appearance.backgroundBlur,
+      customBackgroundImage: customBackground == null
+          ? null
+          : await _cipher.encryptString(
+              customBackground,
+              key,
+              field: _aggregateBoardBackgroundField(scope),
+            ),
+    );
+    final raw = await _aggregateBoardRepository.updateAggregateBoardAppearance(
+      scope,
+      encryptedAppearance,
+    );
+    return _decryptAggregateBoardAppearances(raw, key);
   }
 
   @override
@@ -294,7 +343,17 @@ class E2eeNotesRepository
         }),
       );
     }
-    return NotesCacheSnapshot(lists: clearLists, notesByBoard: clearNotes);
+    final aggregateBoardAppearances = raw.aggregateBoardAppearances;
+    return NotesCacheSnapshot(
+      lists: clearLists,
+      notesByBoard: clearNotes,
+      aggregateBoardAppearances: aggregateBoardAppearances == null
+          ? null
+          : await _decryptAggregateBoardAppearances(
+              aggregateBoardAppearances,
+              await _aggregateBoardAppearanceKey(),
+            ),
+    );
   }
 
   @override
@@ -814,6 +873,14 @@ class E2eeNotesRepository
               ),
             ),
           );
+        case AggregateBoardAppearanceChanged(:final scope, :final appearance):
+          final key = await _aggregateBoardAppearanceKey();
+          _events.add(
+            AggregateBoardAppearanceChanged(
+              scope,
+              await _decryptAggregateBoardAppearance(scope, appearance, key),
+            ),
+          );
         case ListAccessRemoved(:final listId):
           final userId = _requireUserId();
           _rawLists.remove(listId);
@@ -840,6 +907,57 @@ class E2eeNotesRepository
     } on Object {
       // Invalid or unavailable ciphertext is never forwarded as plaintext.
     }
+  }
+
+  Future<SecretKey> _aggregateBoardAppearanceKey() async {
+    final userId = _requireUserId();
+    final homeListId = 'home-$userId';
+    if (!_rawLists.containsKey(homeListId)) await fetchLists();
+    return _requireListKey(homeListId);
+  }
+
+  String _aggregateBoardBackgroundField(AggregateBoardScope scope) =>
+      '$_aggregateBoardBackgroundFieldPrefix:${scope.name}';
+
+  Future<AggregateBoardAppearances> _decryptAggregateBoardAppearances(
+    AggregateBoardAppearances appearances,
+    SecretKey key,
+  ) async => AggregateBoardAppearances(
+    assignedToMe: await _decryptAggregateBoardAppearance(
+      AggregateBoardScope.assignedToMe,
+      appearances.assignedToMe,
+      key,
+    ),
+    pinned: await _decryptAggregateBoardAppearance(
+      AggregateBoardScope.pinned,
+      appearances.pinned,
+      key,
+    ),
+    withReminder: await _decryptAggregateBoardAppearance(
+      AggregateBoardScope.withReminder,
+      appearances.withReminder,
+      key,
+    ),
+  );
+
+  Future<ListAppearance> _decryptAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+    SecretKey key,
+  ) async {
+    final customBackground = appearance.customBackgroundImage;
+    return ListAppearance(
+      backgroundPreset: appearance.backgroundPreset,
+      backgroundBlur: appearance.backgroundBlur,
+      customBackgroundImage:
+          customBackground == null || !E2eeCipher.isCiphertext(customBackground)
+          ? customBackground
+          : await _cipher.decryptString(
+              customBackground,
+              key,
+              field: _aggregateBoardBackgroundField(scope),
+            ),
+    );
   }
 
   @override

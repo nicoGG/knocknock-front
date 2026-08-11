@@ -93,15 +93,65 @@ void main() {
 
     repository.dispose();
   });
+
+  test(
+    'encrypts custom aggregate board backgrounds before account sync',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final remote = _FakeE2eeRemote();
+      final repository = E2eeNotesRepository(
+        repository: CachedNotesRepository(
+          repository: remote,
+          preferences: preferences,
+          userIdProvider: () => 'user-1',
+        ),
+        userIdProvider: () => 'user-1',
+        keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+      );
+      await repository.fetchLists();
+      const clearAppearance = ListAppearance(
+        backgroundPreset: ListBackgroundPreset.custom,
+        backgroundBlur: 2,
+        customBackgroundImage: 'aW1hZ2UtYnl0ZXM=',
+      );
+
+      final saved = await repository.updateAggregateBoardAppearance(
+        AggregateBoardScope.pinned,
+        clearAppearance,
+      );
+
+      expect(saved.pinned, clearAppearance);
+      expect(
+        remote.aggregateBoardAppearances.pinned.customBackgroundImage,
+        startsWith(e2eeCiphertextPrefix),
+      );
+      expect(
+        remote.aggregateBoardAppearances.pinned.customBackgroundImage,
+        isNot(contains(clearAppearance.customBackgroundImage!)),
+      );
+      expect(
+        (await repository.fetchAggregateBoardAppearances()).pinned,
+        clearAppearance,
+      );
+
+      repository.dispose();
+    },
+  );
 }
 
 class _FakeE2eeRemote extends Fake
-    implements NotesRepository, E2eeNotesTransport {
+    implements
+        NotesRepository,
+        E2eeNotesTransport,
+        AggregateBoardAppearancesRepository {
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';
   List<EncryptionRecipient> recipients = const [];
   final storedEnvelopes = <_StoredEnvelope>[];
+  AggregateBoardAppearances aggregateBoardAppearances =
+      const AggregateBoardAppearances();
 
   late NoteList rawList = NoteList(
     id: 'home-user-1',
@@ -140,6 +190,22 @@ class _FakeE2eeRemote extends Fake
 
   @override
   Future<List<Note>> fetchNotes(String boardId) async => [rawNote];
+
+  @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async =>
+      aggregateBoardAppearances;
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    aggregateBoardAppearances = aggregateBoardAppearances.copyWithScope(
+      scope,
+      appearance,
+    );
+    return aggregateBoardAppearances;
+  }
 
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {

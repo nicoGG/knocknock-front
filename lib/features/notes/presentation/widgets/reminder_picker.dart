@@ -92,70 +92,112 @@ class _ReminderPickerSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 2, 20, 24),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '¿Cuándo te recordamos?',
-            style: Theme.of(context).textTheme.headlineSmall,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontSize: 26,
+              letterSpacing: -0.7,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
-            'Elige una opción rápida o una fecha exacta.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            'Elige una opción rápida o define tu propio momento.',
+            style: theme.textTheme.bodyMedium?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 18),
-          _ReminderPresetTile(
-            key: const ValueKey('reminder-preset-day'),
-            icon: Icons.today_rounded,
-            title: 'Dentro de 1 día',
-            date: reminderDateForPreset(ReminderPreset.day, now),
-            onTap: () => Navigator.pop(
-              context,
-              const _ReminderChoice.preset(ReminderPreset.day),
+          const SizedBox(height: 20),
+          Material(
+            key: const ValueKey('reminder-presets-group'),
+            color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.72),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.42),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _ReminderPresetTile(
+                  key: const ValueKey('reminder-preset-day'),
+                  icon: Icons.today_rounded,
+                  title: 'Dentro de 1 día',
+                  date: reminderDateForPreset(ReminderPreset.day, now),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _ReminderChoice.preset(ReminderPreset.day),
+                  ),
+                ),
+                const _ReminderDivider(),
+                _ReminderPresetTile(
+                  key: const ValueKey('reminder-preset-week'),
+                  icon: Icons.date_range_rounded,
+                  title: 'Dentro de 1 semana',
+                  date: reminderDateForPreset(ReminderPreset.week, now),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _ReminderChoice.preset(ReminderPreset.week),
+                  ),
+                ),
+                const _ReminderDivider(),
+                _ReminderPresetTile(
+                  key: const ValueKey('reminder-preset-month'),
+                  icon: Icons.calendar_month_rounded,
+                  title: 'Dentro de 1 mes',
+                  date: reminderDateForPreset(ReminderPreset.month, now),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _ReminderChoice.preset(ReminderPreset.month),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          _ReminderPresetTile(
-            key: const ValueKey('reminder-preset-week'),
-            icon: Icons.date_range_rounded,
-            title: 'Dentro de 1 semana',
-            date: reminderDateForPreset(ReminderPreset.week, now),
-            onTap: () => Navigator.pop(
-              context,
-              const _ReminderChoice.preset(ReminderPreset.week),
-            ),
-          ),
-          const SizedBox(height: 8),
-          _ReminderPresetTile(
-            key: const ValueKey('reminder-preset-month'),
-            icon: Icons.calendar_month_rounded,
-            title: 'Dentro de 1 mes',
-            date: reminderDateForPreset(ReminderPreset.month, now),
-            onTap: () => Navigator.pop(
-              context,
-              const _ReminderChoice.preset(ReminderPreset.month),
-            ),
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton.icon(
+            height: 56,
+            child: FilledButton.tonalIcon(
               key: const ValueKey('reminder-custom-date'),
               onPressed: () =>
                   Navigator.pop(context, const _ReminderChoice.custom()),
               icon: const Icon(Icons.edit_calendar_rounded),
               label: const Text('Elegir fecha y hora'),
+              style: FilledButton.styleFrom(
+                textStyle: theme.textTheme.titleMedium,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ReminderDivider extends StatelessWidget {
+  const _ReminderDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Divider(
+      height: 1,
+      indent: 76,
+      endIndent: 16,
+      color: colorScheme.outlineVariant.withValues(alpha: 0.48),
     );
   }
 }
@@ -176,49 +218,60 @@ class _ReminderPresetTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.primaryContainer.withValues(alpha: 0.46),
-      borderRadius: BorderRadius.circular(18),
+    final formattedDate = DateFormat("EEE d MMM · HH:mm", 'es').format(date);
+    return Semantics(
+      button: true,
+      label: '$title, $formattedDate',
+      excludeSemantics: true,
+      onTap: onTap,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
           child: Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
-                  color: colorScheme.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.82),
+                  borderRadius: BorderRadius.circular(15),
                 ),
-                child: Icon(icon, color: colorScheme.primary),
+                child: Icon(icon, color: colorScheme.onPrimaryContainer),
               ),
-              const SizedBox(width: 13),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    Text(title, style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 3),
                     Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      DateFormat("EEE d MMM · HH:mm", 'es').format(date),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      formattedDate,
+                      style: theme.textTheme.bodyMedium?.copyWith(
                         color: colorScheme.onSurfaceVariant,
+                        height: 1.2,
                       ),
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: colorScheme.onSurfaceVariant,
+              const SizedBox(width: 8),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.58),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),

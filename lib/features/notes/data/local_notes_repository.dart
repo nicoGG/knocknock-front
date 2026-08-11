@@ -11,7 +11,11 @@ typedef PreferencesLoader = Future<SharedPreferences> Function();
 
 /// Persists guest notes in this installation only.
 class LocalNotesRepository
-    implements NotesRepository, LocalNotesDataCleaner, LocalNotesDataReader {
+    implements
+        NotesRepository,
+        LocalNotesDataCleaner,
+        LocalNotesDataReader,
+        AggregateBoardAppearancesRepository {
   LocalNotesRepository({
     PreferencesLoader? preferencesLoader,
     this.uuid = const Uuid(),
@@ -26,6 +30,7 @@ class LocalNotesRepository
   SharedPreferences? _preferences;
   List<NoteList>? _lists;
   List<Note>? _notes;
+  AggregateBoardAppearances? _aggregateBoardAppearances;
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => _events.stream;
@@ -143,6 +148,29 @@ class LocalNotesRepository
       rethrow;
     }
     return updated;
+  }
+
+  @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async {
+    await _ensureLoaded();
+    return _aggregateBoardAppearances!;
+  }
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    await _ensureLoaded();
+    final previous = _aggregateBoardAppearances!;
+    _aggregateBoardAppearances = previous.copyWithScope(scope, appearance);
+    try {
+      await _persist();
+    } catch (_) {
+      _aggregateBoardAppearances = previous;
+      rethrow;
+    }
+    return _aggregateBoardAppearances!;
   }
 
   @override
@@ -360,22 +388,29 @@ class LocalNotesRepository
     await _ensureLoaded();
     final previousLists = _lists;
     final previousNotes = _notes;
+    final previousAggregateBoardAppearances = _aggregateBoardAppearances;
     final now = DateTime.now();
     _lists = [
       NoteList(id: 'home', name: 'Mis notas', createdAt: now, updatedAt: now),
     ];
     _notes = [];
+    _aggregateBoardAppearances = const AggregateBoardAppearances();
     try {
       await _persist();
     } catch (_) {
       _lists = previousLists;
       _notes = previousNotes;
+      _aggregateBoardAppearances = previousAggregateBoardAppearances;
       rethrow;
     }
   }
 
   Future<void> _ensureLoaded() async {
-    if (_lists != null && _notes != null) return;
+    if (_lists != null &&
+        _notes != null &&
+        _aggregateBoardAppearances != null) {
+      return;
+    }
     _preferences = await _preferencesLoader();
     final stored = _preferences!.getString(_storageKey);
     if (stored != null) {
@@ -392,18 +427,29 @@ class LocalNotesRepository
               (item) => Note.fromJson(Map<String, dynamic>.from(item as Map)),
             )
             .toList();
+        final rawAggregateBoardAppearances = json['aggregateBoardAppearances'];
+        _aggregateBoardAppearances = rawAggregateBoardAppearances is Map
+            ? AggregateBoardAppearances.fromJson(
+                Map<String, dynamic>.from(rawAggregateBoardAppearances),
+              )
+            : const AggregateBoardAppearances();
       } on Object {
         _lists = null;
         _notes = null;
+        _aggregateBoardAppearances = null;
       }
     }
 
-    if (_lists == null || _lists!.isEmpty || _notes == null) {
+    if (_lists == null ||
+        _lists!.isEmpty ||
+        _notes == null ||
+        _aggregateBoardAppearances == null) {
       final now = DateTime.now();
       _lists = [
         NoteList(id: 'home', name: 'Mis notas', createdAt: now, updatedAt: now),
       ];
       _notes = [];
+      _aggregateBoardAppearances = const AggregateBoardAppearances();
       await _persist();
     }
   }
@@ -414,6 +460,7 @@ class LocalNotesRepository
       jsonEncode({
         'lists': _lists!.map((list) => list.toJson()).toList(),
         'notes': _notes!.map((note) => note.toJson()).toList(),
+        'aggregateBoardAppearances': _aggregateBoardAppearances!.toJson(),
       }),
     );
     if (!didSave) throw const NotesPersistenceFailure();

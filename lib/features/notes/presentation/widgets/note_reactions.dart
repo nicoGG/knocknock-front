@@ -306,25 +306,33 @@ class _ReactionChip extends StatelessWidget {
                 ),
                 id: 'chip-$noteId-${reaction.emoji}',
                 emoji: reaction.emoji,
-                fontSize: 17,
+                fontSize: 16,
                 enabled: !MediaQuery.disableAnimationsOf(context),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Text('${reaction.count}'),
             ],
           ),
+          padding: EdgeInsets.zero,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           backgroundColor: selected
-              ? colorScheme.primaryContainer
+              ? colorScheme.primaryContainer.withValues(alpha: 0.82)
               : colorScheme.surfaceContainerHighest,
           side: BorderSide(
             color: selected
-                ? colorScheme.primary.withValues(alpha: 0.72)
+                ? colorScheme.primary.withValues(alpha: 0.58)
                 : colorScheme.outlineVariant,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
           labelStyle: TextStyle(
             color: selected
                 ? colorScheme.onPrimaryContainer
                 : colorScheme.onSurfaceVariant,
+            fontSize: 13,
             fontWeight: FontWeight.w800,
           ),
           onPressed: enabled ? onPressed : null,

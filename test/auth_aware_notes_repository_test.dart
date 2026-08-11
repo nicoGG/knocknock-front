@@ -126,6 +126,55 @@ void main() {
     repository.dispose();
     await authRepository.close();
   });
+
+  test(
+    'moves guest aggregate board backgrounds into the signed-in account',
+    () async {
+      final authRepository = _ControllableAuthRepository();
+      final localRepository = _TrackingNotesRepository(
+        'local',
+        initialAggregateBoardAppearances: const AggregateBoardAppearances(
+          pinned: ListAppearance(
+            backgroundPreset: ListBackgroundPreset.aurora,
+            backgroundBlur: 4,
+          ),
+        ),
+      );
+      final remoteRepository = _TrackingNotesRepository('remote');
+      final repository = AuthAwareNotesRepository(
+        authRepository: authRepository,
+        localRepository: localRepository,
+        remoteRepository: remoteRepository,
+      );
+
+      final events = expectLater(
+        repository.realtimeEvents,
+        emitsInOrder([
+          isA<GuestDataSyncStarted>(),
+          isA<GuestDataSyncCompleted>(),
+          isA<RealtimeConnectionChanged>(),
+          isA<NotesSourceChanged>(),
+        ]),
+      );
+      authRepository.setUser(
+        const AppUser(
+          id: 'google-user',
+          displayName: 'Nico',
+          email: 'nico@example.com',
+        ),
+      );
+      await events;
+
+      expect(
+        remoteRepository.aggregateBoardAppearances.pinned,
+        localRepository.initialAggregateBoardAppearances.pinned,
+      );
+      expect(localRepository.clearLocalDataCalls, 1);
+
+      repository.dispose();
+      await authRepository.close();
+    },
+  );
 }
 
 LocalNotesSnapshot _guestSnapshot() {
@@ -192,18 +241,23 @@ class _TrackingNotesRepository
         NotesRepository,
         LocalNotesDataCleaner,
         LocalNotesDataReader,
-        GuestDataSyncTarget {
+        GuestDataSyncTarget,
+        AggregateBoardAppearancesRepository {
   _TrackingNotesRepository(
     this.name, {
     LocalNotesSnapshot? snapshot,
     this.syncError,
-  }) : snapshot = snapshot ?? const LocalNotesSnapshot(lists: [], notes: []);
+    this.initialAggregateBoardAppearances = const AggregateBoardAppearances(),
+  }) : snapshot = snapshot ?? const LocalNotesSnapshot(lists: [], notes: []),
+       aggregateBoardAppearances = initialAggregateBoardAppearances;
 
   final String name;
   final LocalNotesSnapshot snapshot;
   final Object? syncError;
   int clearLocalDataCalls = 0;
   LocalNotesSnapshot? syncedSnapshot;
+  final AggregateBoardAppearances initialAggregateBoardAppearances;
+  AggregateBoardAppearances aggregateBoardAppearances;
 
   @override
   bool get isLocalDataActive => true;
@@ -252,6 +306,22 @@ class _TrackingNotesRepository
   ) => throw UnimplementedError();
 
   @override
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async =>
+      aggregateBoardAppearances;
+
+  @override
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) async {
+    aggregateBoardAppearances = aggregateBoardAppearances.copyWithScope(
+      scope,
+      appearance,
+    );
+    return aggregateBoardAppearances;
+  }
+
+  @override
   Future<List<Note>> fetchNotes(String boardId) => throw UnimplementedError();
 
   @override
@@ -280,7 +350,10 @@ class _TrackingNotesRepository
   Future<void> deleteNote(String id) => throw UnimplementedError();
 
   @override
-  Future<void> clearLocalData() async => clearLocalDataCalls++;
+  Future<void> clearLocalData() async {
+    clearLocalDataCalls++;
+    aggregateBoardAppearances = const AggregateBoardAppearances();
+  }
 
   @override
   Future<LocalNotesSnapshot> readLocalData() async => snapshot;

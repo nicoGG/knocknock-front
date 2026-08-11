@@ -1,6 +1,19 @@
 import 'package:equatable/equatable.dart';
 
-enum NoteColor { yellow, pink, blue, green, purple, orange, mint, coral, gray }
+enum NoteColor {
+  yellow,
+  pink,
+  blue,
+  green,
+  purple,
+  orange,
+  mint,
+  coral,
+  gray,
+  red,
+  teal,
+  brown,
+}
 
 enum NoteCategory {
   general,
@@ -32,6 +45,10 @@ const supportedNoteReactionEmojis = [
   '💯',
   '🚀',
   '😡',
+  '🐶',
+  '🐱',
+  '🐵',
+  '🐼',
 ];
 const localNoteReactionUserId = 'local-device';
 

@@ -201,6 +201,28 @@ void main() {
     reopened.dispose();
   });
 
+  test('persists aggregate board backgrounds on this device', () async {
+    final repository = LocalNotesRepository();
+    const appearance = ListAppearance(
+      backgroundPreset: ListBackgroundPreset.aurora,
+      backgroundBlur: 5,
+    );
+
+    await repository.updateAggregateBoardAppearance(
+      AggregateBoardScope.withReminder,
+      appearance,
+    );
+    repository.dispose();
+
+    final reopened = LocalNotesRepository();
+    final appearances = await reopened.fetchAggregateBoardAppearances();
+
+    expect(appearances.withReminder, appearance);
+    expect(appearances.assignedToMe, const ListAppearance());
+    expect(appearances.pinned, const ListAppearance());
+    reopened.dispose();
+  });
+
   test('lists notes with reminders ordered by reminder date', () async {
     final repository = LocalNotesRepository();
     final later = await repository.createNote(

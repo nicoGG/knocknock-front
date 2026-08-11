@@ -103,6 +103,69 @@ class ListAppearance extends Equatable {
   ];
 }
 
+enum AggregateBoardScope { assignedToMe, pinned, withReminder }
+
+class AggregateBoardAppearances extends Equatable {
+  const AggregateBoardAppearances({
+    this.assignedToMe = const ListAppearance(),
+    this.pinned = const ListAppearance(),
+    this.withReminder = const ListAppearance(),
+  });
+
+  factory AggregateBoardAppearances.fromJson(Map<String, dynamic>? json) {
+    Map<String, dynamic>? appearance(String key) {
+      final value = json?[key];
+      return value is Map ? Map<String, dynamic>.from(value) : null;
+    }
+
+    return AggregateBoardAppearances(
+      assignedToMe: ListAppearance.fromJson(appearance('assignedToMe')),
+      pinned: ListAppearance.fromJson(appearance('pinned')),
+      withReminder: ListAppearance.fromJson(appearance('withReminder')),
+    );
+  }
+
+  final ListAppearance assignedToMe;
+  final ListAppearance pinned;
+  final ListAppearance withReminder;
+
+  ListAppearance forScope(AggregateBoardScope scope) => switch (scope) {
+    AggregateBoardScope.assignedToMe => assignedToMe,
+    AggregateBoardScope.pinned => pinned,
+    AggregateBoardScope.withReminder => withReminder,
+  };
+
+  AggregateBoardAppearances copyWithScope(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  ) => switch (scope) {
+    AggregateBoardScope.assignedToMe => AggregateBoardAppearances(
+      assignedToMe: appearance,
+      pinned: pinned,
+      withReminder: withReminder,
+    ),
+    AggregateBoardScope.pinned => AggregateBoardAppearances(
+      assignedToMe: assignedToMe,
+      pinned: appearance,
+      withReminder: withReminder,
+    ),
+    AggregateBoardScope.withReminder => AggregateBoardAppearances(
+      assignedToMe: assignedToMe,
+      pinned: pinned,
+      withReminder: appearance,
+    ),
+  };
+
+  Map<String, dynamic> toJson() => {
+    'assignedToMe': assignedToMe.toJson(),
+    'pinned': pinned.toJson(),
+    'withReminder': withReminder.toJson(),
+  };
+
+  @override
+  List<Object?> get props => [assignedToMe, pinned, withReminder];
+}
+
 class ListCollaborator extends Equatable {
   const ListCollaborator({
     required this.uid,

@@ -87,6 +87,57 @@ void main() {
     await cubit.close();
   });
 
+  test(
+    'loads, saves, and receives account board backgrounds in real time',
+    () async {
+      final repository = _RealtimeLocalNotesRepository();
+      const pinnedAppearance = ListAppearance(
+        backgroundPreset: ListBackgroundPreset.lavender,
+        backgroundBlur: 3,
+      );
+      await repository.updateAggregateBoardAppearance(
+        AggregateBoardScope.pinned,
+        pinnedAppearance,
+      );
+      final cubit = NotesCubit(repository);
+
+      await cubit.load();
+      expect(cubit.state.aggregateBoardAppearances.pinned, pinnedAppearance);
+
+      const reminderAppearance = ListAppearance(
+        backgroundPreset: ListBackgroundPreset.ocean,
+        backgroundBlur: 6,
+      );
+      await expectLater(
+        cubit.updateAggregateBoardAppearance(
+          AggregateBoardScope.withReminder,
+          reminderAppearance,
+        ),
+        completion(isTrue),
+      );
+      expect(
+        (await repository.fetchAggregateBoardAppearances()).withReminder,
+        reminderAppearance,
+      );
+
+      const assignedAppearance = ListAppearance(
+        backgroundPreset: ListBackgroundPreset.aurora,
+      );
+      repository.emit(
+        const AggregateBoardAppearanceChanged(
+          AggregateBoardScope.assignedToMe,
+          assignedAppearance,
+        ),
+      );
+      expect(
+        cubit.state.aggregateBoardAppearances.assignedToMe,
+        assignedAppearance,
+      );
+
+      await cubit.close();
+    },
+  );
+
   test('refreshes when a list key envelope becomes available', () async {
     final repository = _RealtimeLocalNotesRepository();
     final cubit = NotesCubit(repository);

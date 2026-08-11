@@ -315,13 +315,15 @@ class _ChecklistMenuItem extends StatelessWidget {
   }
 }
 
-class NoteChecklistPreview extends StatelessWidget {
+class NoteChecklistPreview extends StatefulWidget {
   const NoteChecklistPreview({
     required this.items,
     required this.foregroundColor,
     required this.onToggle,
     this.maxItems = 4,
     this.showOpenHint = false,
+    this.completedExpanded,
+    this.onCompletedExpansionChanged,
     super.key,
   });
 
@@ -330,76 +332,267 @@ class NoteChecklistPreview extends StatelessWidget {
   final ValueChanged<NoteChecklistItem> onToggle;
   final int maxItems;
   final bool showOpenHint;
+  final bool? completedExpanded;
+  final ValueChanged<bool>? onCompletedExpansionChanged;
+
+  @override
+  State<NoteChecklistPreview> createState() => _NoteChecklistPreviewState();
+}
+
+class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
+  bool _locallyCompletedExpanded = true;
+
+  bool get _completedExpanded =>
+      widget.completedExpanded ?? _locallyCompletedExpanded;
+
+  @override
+  void didUpdateWidget(covariant NoteChecklistPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.completedExpanded != null) return;
+    final previousCompletedCount = oldWidget.items
+        .where((item) => item.isCompleted)
+        .length;
+    final completedCount = widget.items
+        .where((item) => item.isCompleted)
+        .length;
+    if (completedCount == 0 || previousCompletedCount == 0) {
+      _locallyCompletedExpanded = true;
+    }
+  }
+
+  void _toggleCompletedSection() {
+    final expanded = !_completedExpanded;
+    if (widget.onCompletedExpansionChanged case final onChanged?) {
+      onChanged(expanded);
+      return;
+    }
+    setState(() => _locallyCompletedExpanded = expanded);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final pendingItems = widget.items
+        .where((item) => !item.isCompleted)
+        .toList();
+    final completedItems = widget.items
+        .where((item) => item.isCompleted)
+        .toList();
+    final completedExpanded = _completedExpanded;
+    final animationDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        var visibleCount = items.length.clamp(0, maxItems);
-        if (!showOpenHint && constraints.maxHeight.isFinite) {
-          final rowCapacity = (constraints.maxHeight / 30).floor();
-          if (visibleCount > rowCapacity) visibleCount = rowCapacity;
-          if (items.length > visibleCount) {
-            final capacityWithSummary = ((constraints.maxHeight - 20) / 30)
-                .floor();
-            visibleCount = capacityWithSummary < 1
-                ? 1
-                : visibleCount.clamp(1, capacityWithSummary);
+        final totalVisibleCandidates =
+            pendingItems.length +
+            (completedExpanded ? completedItems.length : 0);
+        var visibleCapacity = totalVisibleCandidates < widget.maxItems
+            ? totalVisibleCandidates
+            : widget.maxItems;
+        if (constraints.maxHeight.isFinite) {
+          final completedHeaderHeight = completedItems.isEmpty ? 0.0 : 44.0;
+          final availableHeight = constraints.maxHeight - completedHeaderHeight;
+          final rowCapacity = availableHeight <= 0
+              ? 0
+              : (availableHeight / 30).floor();
+          if (visibleCapacity > rowCapacity) visibleCapacity = rowCapacity;
+          if (totalVisibleCandidates > visibleCapacity) {
+            final capacityWithSummary = availableHeight <= 20
+                ? 0
+                : ((availableHeight - 20) / 30).floor();
+            if (visibleCapacity > capacityWithSummary) {
+              visibleCapacity = capacityWithSummary;
+            }
           }
         }
-        final visible = items.take(visibleCount).toList();
+
+        var pendingVisibleCount = pendingItems.length < visibleCapacity
+            ? pendingItems.length
+            : visibleCapacity;
+        var completedVisibleCount = 0;
+        if (completedExpanded &&
+            completedItems.isNotEmpty &&
+            visibleCapacity > 0) {
+          final remainingCapacity = visibleCapacity - pendingVisibleCount;
+          if (remainingCapacity > 0) {
+            completedVisibleCount = completedItems.length < remainingCapacity
+                ? completedItems.length
+                : remainingCapacity;
+          } else if (pendingVisibleCount > 0) {
+            pendingVisibleCount -= 1;
+            completedVisibleCount = 1;
+          }
+        }
+
+        final visiblePending = pendingItems.take(pendingVisibleCount).toList();
+        final visibleCompleted = completedItems
+            .take(completedVisibleCount)
+            .toList();
+        final hiddenPendingCount = pendingItems.length - visiblePending.length;
+        final completedLabel = completedItems.length == 1
+            ? '1 elemento completado'
+            : '${completedItems.length} elementos completados';
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final item in visible)
-              Padding(
-                padding: EdgeInsets.only(left: item.indent * 18, bottom: 2),
-                child: Row(
-                  children: [
-                    SizedBox.square(
-                      dimension: 27,
-                      child: Checkbox(
-                        key: ValueKey('preview-check-${item.id}'),
-                        value: item.isCompleted,
-                        onChanged: (_) => onToggle(item),
-                        activeColor: foregroundColor,
-                        checkColor: Colors.black87,
-                        side: BorderSide(color: foregroundColor, width: 1.5),
-                      ),
-                    ),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        item.text.isEmpty ? 'Subtarea sin nombre' : item.text,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: foregroundColor,
-                          decoration: item.isCompleted
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            for (final item in visiblePending)
+              _ChecklistPreviewRow(
+                item: item,
+                foregroundColor: widget.foregroundColor,
+                onToggle: widget.onToggle,
               ),
-            if (items.length > visible.length)
+            if (hiddenPendingCount > 0)
               Padding(
                 padding: const EdgeInsets.only(left: 35, top: 2),
                 child: Text(
-                  showOpenHint
-                      ? '${items.length - visible.length} más'
-                      : '+${items.length - visible.length} más',
+                  widget.showOpenHint
+                      ? '$hiddenPendingCount más'
+                      : '+$hiddenPendingCount más',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: foregroundColor.withValues(alpha: 0.78),
+                    color: widget.foregroundColor.withValues(alpha: 0.78),
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
+            if (completedItems.isNotEmpty) ...[
+              Container(
+                height: 1,
+                margin: const EdgeInsets.only(top: 7, bottom: 2),
+                color: widget.foregroundColor.withValues(alpha: 0.28),
+              ),
+              Semantics(
+                button: true,
+                label: completedLabel,
+                hint: completedExpanded
+                    ? 'Contraer elementos completados'
+                    : 'Expandir elementos completados',
+                child: InkWell(
+                  key: const ValueKey('preview-completed-section-toggle'),
+                  onTap: _toggleCompletedSection,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 2,
+                      vertical: 4,
+                    ),
+                    child: Row(
+                      children: [
+                        AnimatedSwitcher(
+                          duration: animationDuration,
+                          child: Icon(
+                            completedExpanded
+                                ? Icons.expand_more_rounded
+                                : Icons.chevron_right_rounded,
+                            key: ValueKey(completedExpanded),
+                            size: 24,
+                            color: widget.foregroundColor.withValues(
+                              alpha: 0.76,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            completedLabel,
+                            key: const ValueKey(
+                              'preview-completed-section-label',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: widget.foregroundColor.withValues(
+                                    alpha: 0.76,
+                                  ),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              ClipRect(
+                child: AnimatedSize(
+                  duration: animationDuration,
+                  curve: Curves.easeInOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: completedExpanded
+                      ? Column(
+                          key: const ValueKey(
+                            'preview-completed-section-items',
+                          ),
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final item in visibleCompleted)
+                              _ChecklistPreviewRow(
+                                item: item,
+                                foregroundColor: widget.foregroundColor,
+                                onToggle: widget.onToggle,
+                              ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ),
+            ],
           ],
         );
       },
+    );
+  }
+}
+
+class _ChecklistPreviewRow extends StatelessWidget {
+  const _ChecklistPreviewRow({
+    required this.item,
+    required this.foregroundColor,
+    required this.onToggle,
+  });
+
+  final NoteChecklistItem item;
+  final Color foregroundColor;
+  final ValueChanged<NoteChecklistItem> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final itemColor = item.isCompleted
+        ? foregroundColor.withValues(alpha: 0.72)
+        : foregroundColor;
+    return Padding(
+      padding: EdgeInsets.only(left: item.indent * 18, bottom: 2),
+      child: Row(
+        children: [
+          SizedBox.square(
+            dimension: 27,
+            child: Checkbox(
+              key: ValueKey('preview-check-${item.id}'),
+              value: item.isCompleted,
+              onChanged: (_) => onToggle(item),
+              activeColor: itemColor,
+              checkColor: Colors.black87,
+              side: BorderSide(color: itemColor, width: 1.5),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              item.text.isEmpty ? 'Subtarea sin nombre' : item.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: itemColor,
+                decoration: item.isCompleted
+                    ? TextDecoration.lineThrough
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

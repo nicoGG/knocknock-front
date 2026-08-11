@@ -29,6 +29,13 @@ class ListAppearanceChanged extends NotesRealtimeEvent {
   final ListAppearance appearance;
 }
 
+class AggregateBoardAppearanceChanged extends NotesRealtimeEvent {
+  const AggregateBoardAppearanceChanged(this.scope, this.appearance);
+
+  final AggregateBoardScope scope;
+  final ListAppearance appearance;
+}
+
 class ListAccessRemoved extends NotesRealtimeEvent {
   const ListAccessRemoved(this.listId);
 
@@ -79,16 +86,30 @@ class GuestDataSyncFailed extends NotesRealtimeEvent {
 }
 
 class NotesCacheSnapshot {
-  const NotesCacheSnapshot({required this.lists, required this.notesByBoard});
+  const NotesCacheSnapshot({
+    required this.lists,
+    required this.notesByBoard,
+    this.aggregateBoardAppearances,
+  });
 
   final List<NoteList> lists;
   final Map<String, List<Note>> notesByBoard;
+  final AggregateBoardAppearances? aggregateBoardAppearances;
 }
 
 /// Optional capability for repositories that can serve account data from a
 /// device cache before refreshing it from the network.
 abstract interface class NotesCacheReader {
   Future<NotesCacheSnapshot?> readCache();
+}
+
+abstract interface class AggregateBoardAppearancesRepository {
+  Future<AggregateBoardAppearances> fetchAggregateBoardAppearances();
+
+  Future<AggregateBoardAppearances> updateAggregateBoardAppearance(
+    AggregateBoardScope scope,
+    ListAppearance appearance,
+  );
 }
 
 class NotesPersistenceFailure implements Exception {
