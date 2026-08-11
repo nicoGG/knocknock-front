@@ -292,10 +292,51 @@ class _SignedOutProfile extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _ProfileHeroCard(
+        _ProfileHeroCard(
           title: 'Tu espacio en NockNock',
           subtitle:
               'Inicia sesión con Google para proteger y sincronizar tus notas.',
+          footer: Column(
+            children: [
+              FilledButton.icon(
+                key: const ValueKey('google-sign-in-button'),
+                onPressed: isWorking ? null : onSignIn,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(54),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                icon: isWorking
+                    ? const SizedBox.square(
+                        dimension: 17,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const _GoogleMark(),
+                label: const Text(
+                  'Iniciar sesión con Google',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Tus notas locales permanecen en este dispositivo hasta que inicies sesión.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.52),
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 26),
         _ProfileThemePicker(themeController: themeController),
@@ -329,44 +370,6 @@ class _SignedOutProfile extends StatelessWidget {
               subtitle: 'Mantén tus tareas y avisos asociados a tu cuenta.',
             ),
           ],
-        ),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          key: const ValueKey('google-sign-in-button'),
-          onPressed: isWorking ? null : onSignIn,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(54),
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            foregroundColor: Theme.of(context).colorScheme.onPrimary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ),
-          icon: isWorking
-              ? const SizedBox.square(
-                  dimension: 17,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : const _GoogleMark(),
-          label: const Text(
-            'Continuar con Google',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Text(
-          'Tus notas locales permanecen en este dispositivo hasta que inicies sesión.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.52),
-            fontSize: 12,
-            height: 1.35,
-          ),
         ),
       ],
     );
@@ -464,11 +467,13 @@ class _ProfileHeroCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.user,
+    this.footer,
   });
 
   final String title;
   final String subtitle;
   final AppUser? user;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -550,6 +555,10 @@ class _ProfileHeroCard extends StatelessWidget {
                       height: 1.35,
                     ),
                   ),
+                  if (footer case final footer?) ...[
+                    const SizedBox(height: 18),
+                    SizedBox(width: double.infinity, child: footer),
+                  ],
                   if (signedIn) ...[
                     const SizedBox(height: 14),
                     Container(

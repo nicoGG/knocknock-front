@@ -2348,6 +2348,14 @@ void main() {
 
     expect(find.text('Perfil'), findsOneWidget);
     expect(find.byKey(const ValueKey('google-sign-in-button')), findsOneWidget);
+    expect(find.text('Iniciar sesión con Google'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('profile-hero-card')),
+        matching: find.byKey(const ValueKey('google-sign-in-button')),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Cifrado de extremo a extremo'), findsOneWidget);
     expect(
       find.text(
