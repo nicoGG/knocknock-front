@@ -68,6 +68,14 @@ class ApiNotesRepository
         final listId = _asJson(data)?['listId'] as String?;
         if (listId != null) _events.add(ListAccessRemoved(listId));
       })
+      ..on('encryption:key-share-requested', (data) {
+        final listId = _asJson(data)?['listId'] as String?;
+        if (listId != null) _events.add(ListKeyShareRequested(listId));
+      })
+      ..on('encryption:key-envelope-updated', (data) {
+        final listId = _asJson(data)?['listId'] as String?;
+        if (listId != null) _events.add(ListKeyEnvelopeUpdated(listId));
+      })
       ..on('notes:reordered', (data) {
         final json = _asJson(data);
         final boardId = json?['boardId'] as String?;

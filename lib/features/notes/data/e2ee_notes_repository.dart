@@ -821,6 +821,13 @@ class E2eeNotesRepository
           _noteBoards.removeWhere((_, boardId) => boardId == listId);
           await _keyStore.deleteListKey(userId, listId);
           _events.add(event);
+        case ListKeyShareRequested(:final listId):
+          final raw = _rawLists[listId];
+          if (raw == null || !raw.canInvite) return;
+          final key = await _listKeyOrNull(listId);
+          if (key != null) await _shareMissingKeys(raw, key);
+        case ListKeyEnvelopeUpdated():
+          _events.add(event);
         case NoteRemoved() ||
             RealtimeConnectionChanged() ||
             RealtimeConnectionAttemptStarted() ||

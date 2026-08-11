@@ -86,6 +86,20 @@ void main() {
 
     await cubit.close();
   });
+
+  test('refreshes when a list key envelope becomes available', () async {
+    final repository = _RealtimeLocalNotesRepository();
+    final cubit = NotesCubit(repository);
+    await cubit.load();
+
+    expect(repository.fetchListsCalls, 1);
+    repository.emit(ListKeyEnvelopeUpdated(cubit.state.selectedListId));
+    await pumpEventQueue(times: 10);
+
+    expect(repository.fetchListsCalls, 2);
+
+    await cubit.close();
+  });
 }
 
 class _RealtimeLocalNotesRepository extends LocalNotesRepository {
@@ -95,6 +109,14 @@ class _RealtimeLocalNotesRepository extends LocalNotesRepository {
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => _realtimeEvents.stream;
+
+  int fetchListsCalls = 0;
+
+  @override
+  Future<List<NoteList>> fetchLists() {
+    fetchListsCalls++;
+    return super.fetchLists();
+  }
 
   void emit(NotesRealtimeEvent event) => _realtimeEvents.add(event);
 

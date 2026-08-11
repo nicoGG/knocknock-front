@@ -35,6 +35,18 @@ class ListAccessRemoved extends NotesRealtimeEvent {
   final String listId;
 }
 
+class ListKeyShareRequested extends NotesRealtimeEvent {
+  const ListKeyShareRequested(this.listId);
+
+  final String listId;
+}
+
+class ListKeyEnvelopeUpdated extends NotesRealtimeEvent {
+  const ListKeyEnvelopeUpdated(this.listId);
+
+  final String listId;
+}
+
 class RealtimeConnectionChanged extends NotesRealtimeEvent {
   const RealtimeConnectionChanged(this.isConnected);
   final bool isConnected;

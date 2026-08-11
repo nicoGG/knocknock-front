@@ -794,6 +794,10 @@ class NotesCubit extends Cubit<NotesState> {
         if (state.lists.any((list) => list.id == listId)) {
           unawaited(_refreshAfterAccessRemoved());
         }
+      case ListKeyShareRequested():
+        break;
+      case ListKeyEnvelopeUpdated():
+        unawaited(load());
       case RealtimeConnectionChanged(:final isConnected):
         emit(
           state.copyWith(

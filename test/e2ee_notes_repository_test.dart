@@ -47,6 +47,52 @@ void main() {
 
     repository.dispose();
   });
+
+  test('shares the list key when a new recipient device registers', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    final recipientIdentity = await E2eeKeyStore(
+      storage: _MemorySecureStore(),
+    ).loadOrCreateIdentity('user-2');
+
+    await repository.fetchLists();
+    remote.recipients = [
+      EncryptionRecipient(
+        userUid: 'user-2',
+        deviceId: recipientIdentity.deviceId,
+        publicKey: await recipientIdentity.publicKeyEncoded(),
+        hasEnvelope: false,
+      ),
+    ];
+    remote.emit(const ListKeyShareRequested('home-user-1'));
+    await pumpEventQueue(times: 10);
+
+    expect(remote.storedEnvelopes, hasLength(1));
+    final sharedKey = await E2eeCipher().unwrapListKey(
+      remote.storedEnvelopes.single.envelope,
+      recipientIdentity.keyPair,
+    );
+    await expectLater(
+      E2eeCipher().decryptString(
+        remote.rawList.name,
+        sharedKey,
+        field: e2eeListNameField,
+      ),
+      completion('Mis notas'),
+    );
+
+    repository.dispose();
+  });
 }
 
 class _FakeE2eeRemote extends Fake
@@ -54,6 +100,8 @@ class _FakeE2eeRemote extends Fake
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';
+  List<EncryptionRecipient> recipients = const [];
+  final storedEnvelopes = <_StoredEnvelope>[];
 
   late NoteList rawList = NoteList(
     id: 'home-user-1',
@@ -116,12 +164,45 @@ class _FakeE2eeRemote extends Fake
   @override
   Future<List<EncryptionRecipient>> fetchEncryptionRecipients(
     String listId,
-  ) async => const [];
+  ) async => recipients;
+
+  @override
+  Future<void> storeListKeyEnvelope({
+    required String listId,
+    required String recipientUid,
+    required String deviceId,
+    required String envelope,
+  }) async {
+    storedEnvelopes.add(
+      _StoredEnvelope(
+        listId: listId,
+        recipientUid: recipientUid,
+        deviceId: deviceId,
+        envelope: envelope,
+      ),
+    );
+  }
+
+  void emit(NotesRealtimeEvent event) => _events.add(event);
 
   @override
   void dispose() {
     unawaited(_events.close());
   }
+}
+
+class _StoredEnvelope {
+  const _StoredEnvelope({
+    required this.listId,
+    required this.recipientUid,
+    required this.deviceId,
+    required this.envelope,
+  });
+
+  final String listId;
+  final String recipientUid;
+  final String deviceId;
+  final String envelope;
 }
 
 class _MemorySecureStore implements SecureKeyValueStore {
