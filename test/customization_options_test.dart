@@ -34,9 +34,25 @@ void main() {
     expect(ListBackgroundPreset.desert.displayName, 'Desierto');
     expect(ListBackgroundPreset.cherry.displayName, 'Cerezo');
     expect(ListBackgroundPreset.aurora.displayName, 'Aurora');
-    expect(
-      ListBackgroundPreset.aurora.backgroundColors(isDark: false),
-      hasLength(3),
-    );
+    expect(ListBackgroundPreset.mist.displayName, 'Bruma');
+    expect(ListBackgroundPreset.mocha.displayName, 'Moka');
+    expect(ListBackgroundPreset.citrus.displayName, 'Cítrico');
+    expect(ListBackgroundPreset.coral.displayName, 'Coral');
+    expect(ListBackgroundPreset.cobalt.displayName, 'Cobalto');
+    expect(ListBackgroundPreset.sage.displayName, 'Salvia');
+    for (final preset in [
+      ListBackgroundPreset.mist,
+      ListBackgroundPreset.mocha,
+      ListBackgroundPreset.citrus,
+      ListBackgroundPreset.coral,
+      ListBackgroundPreset.cobalt,
+      ListBackgroundPreset.sage,
+    ]) {
+      expect(preset.backgroundColors(isDark: false), hasLength(3));
+      final restored = ListAppearance.fromJson(
+        ListAppearance(backgroundPreset: preset).toJson(),
+      );
+      expect(restored.backgroundPreset, preset);
+    }
   });
 }

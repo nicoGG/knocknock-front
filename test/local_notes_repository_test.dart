@@ -204,7 +204,7 @@ void main() {
   test('persists aggregate board backgrounds on this device', () async {
     final repository = LocalNotesRepository();
     const appearance = ListAppearance(
-      backgroundPreset: ListBackgroundPreset.aurora,
+      backgroundPreset: ListBackgroundPreset.sage,
       backgroundBlur: 5,
     );
 

@@ -13,6 +13,12 @@ enum ListBackgroundPreset {
   desert,
   cherry,
   aurora,
+  mist,
+  mocha,
+  citrus,
+  coral,
+  cobalt,
+  sage,
   custom,
 }
 

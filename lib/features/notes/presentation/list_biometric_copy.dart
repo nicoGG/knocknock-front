@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 String listBiometricMethodLabel(TargetPlatform platform) => switch (platform) {
   TargetPlatform.iOS => 'Face ID',
-  TargetPlatform.android => 'huella o reconocimiento facial',
+  TargetPlatform.android => 'huella',
   _ => 'biometría del dispositivo',
 };
 

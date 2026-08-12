@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
+import 'package:nocknock/features/notes/data/note_search.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
@@ -16,7 +17,10 @@ class E2eeNotesRepository
         NotesRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        OfflineSyncRepository,
+        NotesSearchRepository,
+        PaginatedNotesRepository {
   E2eeNotesRepository({
     required NotesRepository repository,
     required E2eeUserIdProvider userIdProvider,
@@ -50,12 +54,16 @@ class E2eeNotesRepository
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final _listKeys = <String, SecretKey>{};
   final _rawLists = <String, NoteList>{};
+  final _clearLists = <String, NoteList>{};
   final _noteBoards = <String, String>{};
+  final _searchIndex = PrivateNoteSearchIndex();
+  final _fullyIndexedBoardIds = <String>{};
 
   late final StreamSubscription<NotesRealtimeEvent> _subscription;
   E2eeDeviceIdentity? _identity;
   String? _identityUserId;
   Future<void>? _registration;
+  Future<void>? _searchWarmup;
 
   E2eeNotesTransport get _transport => _repository as E2eeNotesTransport;
 
@@ -65,6 +73,14 @@ class E2eeNotesRepository
       throw const NotesPersistenceFailure();
     }
     return repository as AggregateBoardAppearancesRepository;
+  }
+
+  OfflineSyncRepository get _offlineRepository {
+    final repository = _repository;
+    if (repository is! OfflineSyncRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return repository as OfflineSyncRepository;
   }
 
   @override
@@ -80,6 +96,17 @@ class E2eeNotesRepository
   Future<List<NoteList>> fetchLists() async {
     final identity = await _ensureIdentity(register: true);
     final rawLists = List<NoteList>.of(await _repository.fetchLists());
+    final fetchedIds = rawLists.map((list) => list.id).toSet();
+    final removedIds = _rawLists.keys
+        .where((id) => !fetchedIds.contains(id))
+        .toList();
+    for (final id in removedIds) {
+      _rawLists.remove(id);
+      _clearLists.remove(id);
+      _noteBoards.removeWhere((_, boardId) => boardId == id);
+      _searchIndex.removeBoard(id);
+      _fullyIndexedBoardIds.remove(id);
+    }
     for (var index = 0; index < rawLists.length; index++) {
       final raw = rawLists[index];
       final migrated = raw.encryption.version == 0 && raw.canInvite
@@ -95,7 +122,11 @@ class E2eeNotesRepository
         await _shareMissingKeys(raw, key);
       }
     }
-    return Future.wait(rawLists.map(_decryptList));
+    final clearLists = await Future.wait(rawLists.map(_decryptList));
+    _clearLists
+      ..clear()
+      ..addEntries(clearLists.map((list) => MapEntry(list.id, list)));
+    return clearLists;
   }
 
   @override
@@ -118,7 +149,9 @@ class E2eeNotesRepository
     await _rememberListKey(raw.id, key);
     _rawLists[raw.id] = raw;
     await _shareMissingKeys(raw, key);
-    return _decryptList(raw);
+    final clear = await _decryptList(raw);
+    _clearLists[raw.id] = clear;
+    return clear;
   }
 
   @override
@@ -129,7 +162,9 @@ class E2eeNotesRepository
       await _cipher.encryptString(name.trim(), key, field: _listNameField),
     );
     _rawLists[listId] = raw;
-    return _decryptList(raw);
+    final clear = await _decryptList(raw);
+    _clearLists[listId] = clear;
+    return clear;
   }
 
   @override
@@ -138,7 +173,11 @@ class E2eeNotesRepository
     for (final list in rawLists) {
       _rawLists[list.id] = list;
     }
-    return Future.wait(rawLists.map(_decryptList));
+    final clearLists = await Future.wait(rawLists.map(_decryptList));
+    for (final list in clearLists) {
+      _clearLists[list.id] = list;
+    }
+    return clearLists;
   }
 
   @override
@@ -146,7 +185,10 @@ class E2eeNotesRepository
     await _repository.deleteList(listId);
     final userId = _requireUserId();
     _rawLists.remove(listId);
+    _clearLists.remove(listId);
     _noteBoards.removeWhere((_, boardId) => boardId == listId);
+    _searchIndex.removeBoard(listId);
+    _fullyIndexedBoardIds.remove(listId);
     if (listId != 'home-$userId') {
       _listKeys.remove(listId);
       await _keyStore.deleteListKey(userId, listId);
@@ -159,7 +201,9 @@ class E2eeNotesRepository
     _rawLists[listId] = raw;
     final key = await _requireListKey(listId);
     await _shareMissingKeys(raw, key);
-    return _decryptList(raw);
+    final clear = await _decryptList(raw);
+    _clearLists[listId] = clear;
+    return clear;
   }
 
   @override
@@ -169,7 +213,9 @@ class E2eeNotesRepository
   ) async {
     final raw = await _repository.removeCollaborator(listId, collaboratorUid);
     _rawLists[listId] = raw;
-    return _decryptList(raw);
+    final clear = await _decryptList(raw);
+    _clearLists[listId] = clear;
+    return clear;
   }
 
   @override
@@ -195,7 +241,9 @@ class E2eeNotesRepository
       encryptedAppearance,
     );
     _rawLists[listId] = raw;
-    return _decryptList(raw);
+    final clear = await _decryptList(raw);
+    _clearLists[listId] = clear;
+    return clear;
   }
 
   @override
@@ -239,7 +287,42 @@ class E2eeNotesRepository
     for (final note in rawNotes) {
       _noteBoards[note.id] = note.boardId;
     }
-    return Future.wait(rawNotes.map((note) => _decryptNote(note, key)));
+    final clearNotes = await Future.wait(
+      rawNotes.map((note) => _decryptNote(note, key)),
+    );
+    for (final note in clearNotes) {
+      _searchIndex.upsert(note);
+    }
+    _fullyIndexedBoardIds.add(boardId);
+    return clearNotes;
+  }
+
+  @override
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  }) async {
+    final key = await _listKeyOrNull(boardId);
+    if (key == null) return const NotesPage(items: [], nextCursor: null);
+    final repository = _repository;
+    if (repository is! PaginatedNotesRepository) {
+      if (cursor != null) return const NotesPage(items: [], nextCursor: null);
+      return NotesPage(items: await fetchNotes(boardId), nextCursor: null);
+    }
+    final rawPage = await (repository as PaginatedNotesRepository)
+        .fetchNotesPage(boardId, cursor: cursor, limit: limit);
+    for (final note in rawPage.items) {
+      _noteBoards[note.id] = note.boardId;
+    }
+    final clearNotes = await Future.wait(
+      rawPage.items.map((note) => _decryptNote(note, key)),
+    );
+    for (final note in clearNotes) {
+      _searchIndex.upsert(note);
+    }
+    if (!rawPage.hasMore) _fullyIndexedBoardIds.add(boardId);
+    return NotesPage(items: clearNotes, nextCursor: rawPage.nextCursor);
   }
 
   @override
@@ -250,7 +333,11 @@ class E2eeNotesRepository
     for (final raw in rawNotes) {
       _noteBoards[raw.id] = raw.boardId;
       final key = await _listKeyOrNull(raw.boardId);
-      if (key != null) clearNotes.add(await _decryptNote(raw, key));
+      if (key != null) {
+        final note = await _decryptNote(raw, key);
+        _searchIndex.upsert(note);
+        clearNotes.add(note);
+      }
     }
     return clearNotes;
   }
@@ -263,10 +350,100 @@ class E2eeNotesRepository
     for (final raw in rawNotes) {
       _noteBoards[raw.id] = raw.boardId;
       final key = await _listKeyOrNull(raw.boardId);
-      if (key != null) clearNotes.add(await _decryptNote(raw, key));
+      if (key != null) {
+        final note = await _decryptNote(raw, key);
+        _searchIndex.upsert(note);
+        clearNotes.add(note);
+      }
     }
     return clearNotes;
   }
+
+  @override
+  Future<List<NoteSearchResult>> searchNotes(String query) async {
+    if (_rawLists.isEmpty) await fetchLists();
+    await _ensureSearchIndexWarm();
+    return _searchIndex
+        .search(query)
+        .map(
+          (note) => NoteSearchResult(
+            note: note,
+            list:
+                _clearLists[note.boardId] ??
+                _rawLists[note.boardId]!.copyWith(
+                  name: 'Lista cifrada pendiente de llave',
+                ),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> _ensureSearchIndexWarm() async {
+    final active = _searchWarmup;
+    if (active != null) return active;
+    final missingBoardIds = _rawLists.keys
+        .where((id) => !_fullyIndexedBoardIds.contains(id))
+        .toList();
+    if (missingBoardIds.isEmpty) return;
+    final warmup = Future.wait(
+      missingBoardIds.map(_loadBoardIntoSearchIndex),
+    ).then((_) {});
+    _searchWarmup = warmup;
+    try {
+      await warmup;
+    } finally {
+      if (identical(_searchWarmup, warmup)) _searchWarmup = null;
+    }
+  }
+
+  Future<void> _loadBoardIntoSearchIndex(String boardId) async {
+    final key = await _listKeyOrNull(boardId);
+    if (key == null) {
+      _fullyIndexedBoardIds.add(boardId);
+      return;
+    }
+    final rawNotes = await _repository.fetchNotes(boardId);
+    for (final raw in rawNotes) {
+      _noteBoards[raw.id] = raw.boardId;
+      _searchIndex.upsert(await _decryptNote(raw, key));
+    }
+    _fullyIndexedBoardIds.add(boardId);
+  }
+
+  @override
+  Future<OfflineSyncSummary> offlineSyncSummary() =>
+      _offlineRepository.offlineSyncSummary();
+
+  @override
+  Future<void> syncPendingChanges() => _offlineRepository.syncPendingChanges();
+
+  @override
+  Future<List<NoteSyncConflict>> fetchNoteSyncConflicts() async {
+    if (_rawLists.isEmpty && _repository is NotesCacheReader) {
+      await readCache();
+    }
+    final rawConflicts = await _offlineRepository.fetchNoteSyncConflicts();
+    final clear = <NoteSyncConflict>[];
+    for (final conflict in rawConflicts) {
+      final key = await _listKeyOrNull(conflict.remoteNote.boardId);
+      if (key == null) continue;
+      clear.add(
+        NoteSyncConflict(
+          mutationId: conflict.mutationId,
+          kind: conflict.kind,
+          localNote: await _decryptNote(conflict.localNote, key),
+          remoteNote: await _decryptNote(conflict.remoteNote, key),
+        ),
+      );
+    }
+    return clear;
+  }
+
+  @override
+  Future<void> resolveNoteSyncConflict(
+    String mutationId,
+    NoteConflictResolution resolution,
+  ) => _offlineRepository.resolveNoteSyncConflict(mutationId, resolution);
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
@@ -276,7 +453,9 @@ class E2eeNotesRepository
       await _encryptDraft(draft, key),
     );
     _noteBoards[raw.id] = raw.boardId;
-    return _decryptNote(raw, key);
+    final note = await _decryptNote(raw, key);
+    _searchIndex.upsert(note);
+    return note;
   }
 
   @override
@@ -287,7 +466,9 @@ class E2eeNotesRepository
     final encryptedChanges = await _encryptChanges(changes, key);
     final raw = await _repository.updateNote(id, encryptedChanges);
     _noteBoards[raw.id] = raw.boardId;
-    return _decryptNote(raw, key);
+    final note = await _decryptNote(raw, key);
+    _searchIndex.upsert(note);
+    return note;
   }
 
   @override
@@ -297,7 +478,9 @@ class E2eeNotesRepository
     final key = await _requireListKey(boardId);
     final raw = await _repository.setNoteReaction(id, emoji, active);
     _noteBoards[raw.id] = raw.boardId;
-    return _decryptNote(raw, key);
+    final note = await _decryptNote(raw, key);
+    _searchIndex.upsert(note);
+    return note;
   }
 
   @override
@@ -310,13 +493,29 @@ class E2eeNotesRepository
     for (final note in rawNotes) {
       _noteBoards[note.id] = note.boardId;
     }
-    return Future.wait(rawNotes.map((note) => _decryptNote(note, key)));
+    final clearNotes = await Future.wait(
+      rawNotes.map((note) => _decryptNote(note, key)),
+    );
+    for (final note in clearNotes) {
+      _searchIndex.upsert(note);
+    }
+    _fullyIndexedBoardIds.add(boardId);
+    return clearNotes;
   }
 
   @override
-  Future<void> deleteNote(String id) async {
-    await _repository.deleteNote(id);
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) async {
+    await _repository.deleteNote(
+      id,
+      expectedRevision: expectedRevision,
+      clientMutationId: clientMutationId,
+    );
     _noteBoards.remove(id);
+    _searchIndex.remove(id);
   }
 
   @override
@@ -332,6 +531,9 @@ class E2eeNotesRepository
       await _resolveListKey(list, _identity!);
       clearLists.add(await _decryptList(list));
     }
+    _clearLists
+      ..clear()
+      ..addEntries(clearLists.map((list) => MapEntry(list.id, list)));
     final clearNotes = <String, List<Note>>{};
     for (final entry in raw.notesByBoard.entries) {
       final key = await _listKeyOrNull(entry.key);
@@ -342,7 +544,11 @@ class E2eeNotesRepository
           return _decryptNote(note, key);
         }),
       );
+      for (final note in clearNotes[entry.key]!) {
+        _searchIndex.upsert(note);
+      }
     }
+    _fullyIndexedBoardIds.addAll(raw.fullyLoadedBoardIds);
     final aggregateBoardAppearances = raw.aggregateBoardAppearances;
     return NotesCacheSnapshot(
       lists: clearLists,
@@ -353,6 +559,7 @@ class E2eeNotesRepository
               aggregateBoardAppearances,
               await _aggregateBoardAppearanceKey(),
             ),
+      fullyLoadedBoardIds: raw.fullyLoadedBoardIds,
     );
   }
 
@@ -434,7 +641,11 @@ class E2eeNotesRepository
       _registration = null;
       _listKeys.clear();
       _rawLists.clear();
+      _clearLists.clear();
       _noteBoards.clear();
+      _searchIndex.clear();
+      _fullyIndexedBoardIds.clear();
+      _searchWarmup = null;
     }
     final identity = _identity ??= await _keyStore.loadOrCreateIdentity(userId);
     if (register) {
@@ -618,6 +829,13 @@ class E2eeNotesRepository
           ),
         ),
         reminderAt: draft.reminderAt,
+        clientNoteId: draft.clientNoteId,
+        clientMutationId: draft.clientMutationId,
+        isCompleted: draft.isCompleted,
+        isPinned: draft.isPinned,
+        sortOrder: draft.sortOrder,
+        positionX: draft.positionX,
+        positionY: draft.positionY,
       );
 
   Future<Map<String, dynamic>> _encryptChanges(
@@ -781,6 +999,7 @@ class E2eeNotesRepository
     positionX: note.positionX,
     positionY: note.positionY,
     reminderAt: note.reminderAt,
+    revision: note.revision,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   );
@@ -841,17 +1060,21 @@ class E2eeNotesRepository
           _noteBoards[note.id] = note.boardId;
           final key = await _listKeyOrNull(note.boardId);
           if (key != null) {
-            _events.add(NoteChanged(await _decryptNote(note, key)));
+            final clear = await _decryptNote(note, key);
+            _searchIndex.upsert(clear);
+            _events.add(NoteChanged(clear));
           }
         case NotesReordered(:final boardId, :final notes):
           final key = await _listKeyOrNull(boardId);
           if (key != null) {
-            _events.add(
-              NotesReordered(
-                boardId,
-                await Future.wait(notes.map((note) => _decryptNote(note, key))),
-              ),
+            final clearNotes = await Future.wait(
+              notes.map((note) => _decryptNote(note, key)),
             );
+            for (final note in clearNotes) {
+              _searchIndex.upsert(note);
+            }
+            _fullyIndexedBoardIds.add(boardId);
+            _events.add(NotesReordered(boardId, clearNotes));
           }
         case ListAppearanceChanged(:final listId, :final appearance):
           final key = await _listKeyOrNull(listId);
@@ -884,8 +1107,11 @@ class E2eeNotesRepository
         case ListAccessRemoved(:final listId):
           final userId = _requireUserId();
           _rawLists.remove(listId);
+          _clearLists.remove(listId);
           _listKeys.remove(listId);
           _noteBoards.removeWhere((_, boardId) => boardId == listId);
+          _searchIndex.removeBoard(listId);
+          _fullyIndexedBoardIds.remove(listId);
           await _keyStore.deleteListKey(userId, listId);
           _events.add(event);
         case ListKeyShareRequested(:final listId):
@@ -895,13 +1121,18 @@ class E2eeNotesRepository
           if (key != null) await _shareMissingKeys(raw, key);
         case ListKeyEnvelopeUpdated():
           _events.add(event);
-        case NoteRemoved() ||
-            RealtimeConnectionChanged() ||
+        case NoteRemoved(:final id):
+          _noteBoards.remove(id);
+          _searchIndex.remove(id);
+          _events.add(event);
+        case RealtimeConnectionChanged() ||
             RealtimeConnectionAttemptStarted() ||
             NotesSourceChanged() ||
             GuestDataSyncStarted() ||
             GuestDataSyncCompleted() ||
-            GuestDataSyncFailed():
+            GuestDataSyncFailed() ||
+            OfflineSyncStateChanged() ||
+            OfflineSyncOperationDiscarded():
           _events.add(event);
       }
     } on Object {

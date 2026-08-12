@@ -75,6 +75,33 @@ void main() {
     expect(find.byKey(const ValueKey('share-list-button')), findsOneWidget);
   });
 
+  testWidgets('opens the private global note search from the app bar', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('global-note-search-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('global-note-search-field')),
+      findsOneWidget,
+    );
+    expect(find.text('Buscar en NockNock'), findsOneWidget);
+    expect(
+      find.text(
+        'Encuentra información en todas tus listas sin enviarla a un buscador externo.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('collaborator avatars float softly with staggered movement', (
     tester,
   ) async {
@@ -235,10 +262,10 @@ void main() {
     expect(clearCategoryFilter, findsOneWidget);
     expect(
       tester.getRect(anaFilter).left,
-      greaterThan(
+      lessThan(
         tester
-            .getRect(find.byKey(const ValueKey('category-filter-shopping')))
-            .right,
+            .getRect(find.byKey(const ValueKey('category-filter-general')))
+            .left,
       ),
     );
     expect(
@@ -261,6 +288,8 @@ void main() {
       findsOneWidget,
     );
 
+    await tester.drag(categoryBar, const Offset(-180, 0));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('category-filter-shopping')));
     await tester.pumpAndSettle();
 
@@ -273,6 +302,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nota 2'), findsOneWidget);
 
+    await tester.drag(categoryBar, const Offset(500, 0));
+    await tester.pumpAndSettle();
     await tester.tap(anaFilter);
     await tester.pumpAndSettle();
     expect(find.text('Comprar café'), findsOneWidget);
@@ -297,6 +328,76 @@ void main() {
     expect(anaFilter, findsNothing);
     expect(find.text('Comprar café'), findsNothing);
     expect(find.text('Nota 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reorders category filters by long drag and restores the order', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    Widget buildApp() => NockNockApp(
+      repository: _FakeNotesRepository(
+        noteCount: 3,
+        category: NoteCategory.shopping,
+        withInvitedPeople: true,
+      ),
+      authRepository: _FakeAuthRepository(),
+    );
+
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    final assignee = find.byKey(const ValueKey('assignee-filter-person-ana'));
+    final general = find.byKey(const ValueKey('category-filter-general'));
+    final shopping = find.byKey(const ValueKey('category-filter-shopping'));
+    expect(
+      tester.getRect(assignee).right,
+      lessThan(tester.getRect(general).left),
+    );
+    expect(
+      tester.getRect(general).left,
+      lessThan(tester.getRect(shopping).left),
+    );
+
+    await tester.drag(
+      find.byKey(const ValueKey('category-filter-bar')),
+      const Offset(-80, 0),
+    );
+    await tester.pumpAndSettle();
+    final shoppingCenter = tester.getCenter(shopping);
+    final gesture = await tester.startGesture(tester.getCenter(general));
+    await tester.pump(const Duration(milliseconds: 650));
+    await gesture.moveTo(shoppingCenter);
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(assignee).right,
+      lessThan(tester.getRect(shopping).left),
+    );
+    expect(
+      tester.getRect(shopping).left,
+      lessThan(tester.getRect(general).left),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(assignee).right,
+      lessThan(tester.getRect(shopping).left),
+    );
+    expect(
+      tester.getRect(shopping).left,
+      lessThan(tester.getRect(general).left),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -3401,11 +3502,22 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('list-options-button')));
     await tester.pumpAndSettle();
+    final listMenuButton = tester.widget<PopupMenuButton>(
+      find.byKey(const ValueKey('list-options-button')),
+    );
+    expect(
+      listMenuButton.popUpAnimationStyle?.duration,
+      const Duration(milliseconds: 180),
+    );
     expect(find.text('Cambiar fondo'), findsOneWidget);
     expect(find.text('Editar nombre'), findsOneWidget);
     expect(find.text('Eliminar lista'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('list-options-glass-blur')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('list-options-glass-repaint-boundary')),
       findsOneWidget,
     );
     final glassMenu = tester.widget<ClipRRect>(
@@ -3473,10 +3585,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('list-options-button')));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Proteger con huella o reconocimiento facial'),
-      findsOneWidget,
-    );
+    expect(find.text('Proteger con huella'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('protect-list-menu-item')));
     await tester.pumpAndSettle();
 
@@ -3525,10 +3634,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Proteger con Face ID'), findsOneWidget);
-    expect(
-      find.text('Proteger con huella o reconocimiento facial'),
-      findsNothing,
-    );
+    expect(find.text('Proteger con huella'), findsNothing);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -3732,7 +3838,11 @@ void main() {
       find.byKey(const ValueKey('customize-background-menu-item')),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('background-preset-lagoon')));
+    final lagoonPreset = find.byKey(const ValueKey('background-preset-lagoon'));
+    await tester.ensureVisible(lagoonPreset);
+    await tester.pumpAndSettle();
+    await tester.tap(lagoonPreset);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('save-background-button')));
     await tester.pumpAndSettle();
     expect(
@@ -3808,7 +3918,13 @@ void main() {
       find.byKey(const ValueKey('background-live-preview')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('background-preset-lavender')));
+    final lavenderPreset = find.byKey(
+      const ValueKey('background-preset-lavender'),
+    );
+    await tester.ensureVisible(lavenderPreset);
+    await tester.pumpAndSettle();
+    await tester.tap(lavenderPreset);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('save-background-button')));
     await tester.pumpAndSettle();
     expect(repository.lastAggregateAppearanceScope, AggregateBoardScope.pinned);
@@ -3894,7 +4010,11 @@ void main() {
       find.byKey(const ValueKey('customize-background-menu-item')),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('background-preset-lagoon')));
+    final lagoonPreset = find.byKey(const ValueKey('background-preset-lagoon'));
+    await tester.ensureVisible(lagoonPreset);
+    await tester.pumpAndSettle();
+    await tester.tap(lagoonPreset);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('save-background-button')));
     await tester.pumpAndSettle();
     expect(
@@ -5006,7 +5126,11 @@ class _FakeNotesRepository
   }
 
   @override
-  Future<void> deleteNote(String id) async => deletedNoteId = id;
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) async => deletedNoteId = id;
 
   @override
   Future<void> clearLocalData() async {

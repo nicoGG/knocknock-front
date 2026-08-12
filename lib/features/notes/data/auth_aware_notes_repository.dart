@@ -12,7 +12,10 @@ class AuthAwareNotesRepository
         NotesRepository,
         LocalNotesDataCleaner,
         NotesCacheReader,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        OfflineSyncRepository,
+        NotesSearchRepository,
+        PaginatedNotesRepository {
   AuthAwareNotesRepository({
     required AuthRepository authRepository,
     required this.localRepository,
@@ -133,12 +136,72 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.fetchNotes(boardId));
 
   @override
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  }) => _whenReady((repository) async {
+    if (repository is PaginatedNotesRepository) {
+      return (repository as PaginatedNotesRepository).fetchNotesPage(
+        boardId,
+        cursor: cursor,
+        limit: limit,
+      );
+    }
+    if (cursor != null) return const NotesPage(items: [], nextCursor: null);
+    return NotesPage(
+      items: await repository.fetchNotes(boardId),
+      nextCursor: null,
+    );
+  });
+
+  @override
   Future<List<Note>> fetchPinnedNotes() =>
       _whenReady((repository) => repository.fetchPinnedNotes());
 
   @override
   Future<List<Note>> fetchReminderNotes() =>
       _whenReady((repository) => repository.fetchReminderNotes());
+
+  @override
+  Future<List<NoteSearchResult>> searchNotes(String query) =>
+      _whenReady((repository) {
+        if (repository is! NotesSearchRepository) return Future.value(const []);
+        return (repository as NotesSearchRepository).searchNotes(query);
+      });
+
+  @override
+  Future<OfflineSyncSummary> offlineSyncSummary() => _whenReady((repository) {
+    if (repository is! OfflineSyncRepository) {
+      return Future.value(const OfflineSyncSummary());
+    }
+    return (repository as OfflineSyncRepository).offlineSyncSummary();
+  });
+
+  @override
+  Future<void> syncPendingChanges() => _whenReady((repository) {
+    if (repository is! OfflineSyncRepository) return Future.value();
+    return (repository as OfflineSyncRepository).syncPendingChanges();
+  });
+
+  @override
+  Future<List<NoteSyncConflict>> fetchNoteSyncConflicts() =>
+      _whenReady((repository) {
+        if (repository is! OfflineSyncRepository) return Future.value(const []);
+        return (repository as OfflineSyncRepository).fetchNoteSyncConflicts();
+      });
+
+  @override
+  Future<void> resolveNoteSyncConflict(
+    String mutationId,
+    NoteConflictResolution resolution,
+  ) => _whenReady((repository) {
+    if (repository is! OfflineSyncRepository) return Future.value();
+    return (repository as OfflineSyncRepository).resolveNoteSyncConflict(
+      mutationId,
+      resolution,
+    );
+  });
 
   @override
   Future<NotesCacheSnapshot?> readCache() async {
@@ -164,8 +227,17 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.reorderNotes(boardId, orderedIds));
 
   @override
-  Future<void> deleteNote(String id) =>
-      _whenReady((repository) => repository.deleteNote(id));
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) => _whenReady(
+    (repository) => repository.deleteNote(
+      id,
+      expectedRevision: expectedRevision,
+      clientMutationId: clientMutationId,
+    ),
+  );
 
   @override
   bool get isLocalDataActive => !_isSignedIn;

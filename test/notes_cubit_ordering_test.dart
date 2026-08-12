@@ -151,6 +151,66 @@ void main() {
 
     await cubit.close();
   });
+
+  test('loads a large board progressively without duplicating notes', () async {
+    final repository = _PaginatedLocalNotesRepository(65);
+    final cubit = NotesCubit(repository);
+
+    await cubit.load();
+
+    expect(cubit.state.notes, hasLength(40));
+    expect(cubit.state.hasMoreNotes, isTrue);
+    expect(cubit.state.nextNotesCursor, 'page-2');
+
+    await cubit.loadMoreNotes();
+
+    expect(cubit.state.notes, hasLength(65));
+    expect(cubit.state.notes.map((note) => note.id).toSet(), hasLength(65));
+    expect(cubit.state.hasMoreNotes, isFalse);
+    expect(cubit.state.nextNotesCursor, isNull);
+    expect(repository.pageRequests, [null, 'page-2']);
+    await cubit.close();
+  });
+}
+
+class _PaginatedLocalNotesRepository extends LocalNotesRepository
+    implements PaginatedNotesRepository {
+  _PaginatedLocalNotesRepository(int count)
+    : notes = [
+        for (var index = 0; index < count; index++)
+          Note(
+            id: 'note-${index.toString().padLeft(3, '0')}',
+            boardId: 'home',
+            title: 'Nota $index',
+            content: '',
+            color: NoteColor.yellow,
+            authorName: 'Invitado',
+            isCompleted: false,
+            sortOrder: index,
+            positionX: 0,
+            positionY: 0,
+            createdAt: DateTime.utc(2026, 8, 12),
+            updatedAt: DateTime.utc(2026, 8, 12),
+          ),
+      ];
+
+  final List<Note> notes;
+  final pageRequests = <String?>[];
+
+  @override
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  }) async {
+    pageRequests.add(cursor);
+    final start = cursor == null ? 0 : limit;
+    final end = (start + limit).clamp(0, notes.length);
+    return NotesPage(
+      items: notes.sublist(start, end),
+      nextCursor: end < notes.length ? 'page-2' : null,
+    );
+  }
 }
 
 class _RealtimeLocalNotesRepository extends LocalNotesRepository {

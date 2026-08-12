@@ -347,7 +347,11 @@ class _TrackingNotesRepository
       throw UnimplementedError();
 
   @override
-  Future<void> deleteNote(String id) => throw UnimplementedError();
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> clearLocalData() async {

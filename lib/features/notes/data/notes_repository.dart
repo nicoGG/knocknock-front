@@ -63,6 +63,24 @@ class RealtimeConnectionAttemptStarted extends NotesRealtimeEvent {
   const RealtimeConnectionAttemptStarted();
 }
 
+class OfflineSyncStateChanged extends NotesRealtimeEvent {
+  const OfflineSyncStateChanged({
+    required this.pendingCount,
+    required this.conflictCount,
+    required this.isSyncing,
+  });
+
+  final int pendingCount;
+  final int conflictCount;
+  final bool isSyncing;
+}
+
+class OfflineSyncOperationDiscarded extends NotesRealtimeEvent {
+  const OfflineSyncOperationDiscarded(this.message);
+
+  final String message;
+}
+
 class NotesSourceChanged extends NotesRealtimeEvent {
   const NotesSourceChanged();
 }
@@ -90,11 +108,13 @@ class NotesCacheSnapshot {
     required this.lists,
     required this.notesByBoard,
     this.aggregateBoardAppearances,
+    this.fullyLoadedBoardIds = const {},
   });
 
   final List<NoteList> lists;
   final Map<String, List<Note>> notesByBoard;
   final AggregateBoardAppearances? aggregateBoardAppearances;
+  final Set<String> fullyLoadedBoardIds;
 }
 
 /// Optional capability for repositories that can serve account data from a
@@ -114,6 +134,79 @@ abstract interface class AggregateBoardAppearancesRepository {
 
 class NotesPersistenceFailure implements Exception {
   const NotesPersistenceFailure();
+}
+
+enum NoteConflictResolution { keepLocal, keepRemote }
+
+enum OfflineMutationKind { create, update, delete, reaction, reorder }
+
+class NoteSyncConflict {
+  const NoteSyncConflict({
+    required this.mutationId,
+    required this.kind,
+    required this.localNote,
+    required this.remoteNote,
+  });
+
+  final String mutationId;
+  final OfflineMutationKind kind;
+  final Note localNote;
+  final Note remoteNote;
+}
+
+class OfflineSyncSummary {
+  const OfflineSyncSummary({
+    this.pendingCount = 0,
+    this.conflictCount = 0,
+    this.isSyncing = false,
+  });
+
+  final int pendingCount;
+  final int conflictCount;
+  final bool isSyncing;
+}
+
+abstract interface class OfflineSyncRepository {
+  Future<OfflineSyncSummary> offlineSyncSummary();
+
+  Future<void> syncPendingChanges();
+
+  Future<List<NoteSyncConflict>> fetchNoteSyncConflicts();
+
+  Future<void> resolveNoteSyncConflict(
+    String mutationId,
+    NoteConflictResolution resolution,
+  );
+}
+
+class NoteSearchResult {
+  const NoteSearchResult({required this.note, required this.list});
+
+  final Note note;
+  final NoteList list;
+}
+
+abstract interface class NotesSearchRepository {
+  Future<List<NoteSearchResult>> searchNotes(String query);
+}
+
+class NotesPage {
+  const NotesPage({required this.items, required this.nextCursor});
+
+  final List<Note> items;
+  final String? nextCursor;
+
+  bool get hasMore => nextCursor != null;
+}
+
+/// Optional capability that lets large boards load progressively while older
+/// repository implementations keep using [NotesRepository.fetchNotes].
+abstract interface class PaginatedNotesRepository {
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  });
 }
 
 class CollaborationRequiresSignInFailure implements Exception {
@@ -253,7 +346,11 @@ abstract interface class NotesRepository {
 
   Future<List<Note>> reorderNotes(String boardId, List<String> orderedIds);
 
-  Future<void> deleteNote(String id);
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  });
 
   void dispose();
 }

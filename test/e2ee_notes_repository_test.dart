@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/data/cached_notes_repository.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
 import 'package:nocknock/features/notes/data/e2ee_notes_repository.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
+import 'package:nocknock/features/notes/data/offline_mutation_store.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -138,6 +140,94 @@ void main() {
       repository.dispose();
     },
   );
+
+  test('persists offline note changes as ciphertext', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final store = InMemoryOfflineMutationStore();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+        mutationStore: store,
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    final note = (await repository.fetchNotes('home-user-1')).single;
+    remote.isOffline = true;
+
+    final local = await repository.updateNote(note.id, {
+      'title': 'Idea privada sin conexión',
+    });
+    final stored = (await store.listForUser('user-1')).single;
+
+    expect(local.title, 'Idea privada sin conexión');
+    expect(stored.payload, contains(e2eeCiphertextPrefix));
+    expect(stored.payload, isNot(contains('Idea privada sin conexión')));
+    expect(stored.localNoteJson, isNot(contains('Idea privada sin conexión')));
+    repository.dispose();
+  });
+
+  test('persists offline reactions without copying plaintext', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final store = InMemoryOfflineMutationStore();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+        mutationStore: store,
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    final note = (await repository.fetchNotes('home-user-1')).single;
+    remote.isOffline = true;
+
+    final local = await repository.setNoteReaction(note.id, '🚀', true);
+    final stored = (await store.listForUser('user-1')).single;
+
+    expect(local.title, 'Comprar pan');
+    expect(local.reactions.single.userUids, ['user-1']);
+    expect(stored.kind, StoredMutationKind.reaction);
+    expect(stored.localNoteJson, contains(e2eeCiphertextPrefix));
+    expect(stored.localNoteJson, isNot(contains('Comprar pan')));
+    repository.dispose();
+  });
+
+  test('reuses a private in-memory index across search queries', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+
+    await repository.fetchLists();
+    final first = await repository.searchNotes('comprar');
+    final second = await repository.searchNotes('pan');
+
+    expect(first.single.note.title, 'Comprar pan');
+    expect(second.single.note.id, first.single.note.id);
+    expect(remote.fetchNotesCalls, 2);
+    await pumpEventQueue();
+    final persisted = preferences.getString(CachedNotesRepository.storageKey);
+    expect(persisted, isNot(contains('Comprar pan')));
+    repository.dispose();
+  });
 }
 
 class _FakeE2eeRemote extends Fake
@@ -152,6 +242,8 @@ class _FakeE2eeRemote extends Fake
   final storedEnvelopes = <_StoredEnvelope>[];
   AggregateBoardAppearances aggregateBoardAppearances =
       const AggregateBoardAppearances();
+  bool isOffline = false;
+  int fetchNotesCalls = 0;
 
   late NoteList rawList = NoteList(
     id: 'home-user-1',
@@ -189,7 +281,10 @@ class _FakeE2eeRemote extends Fake
   Future<List<NoteList>> fetchLists() async => [rawList];
 
   @override
-  Future<List<Note>> fetchNotes(String boardId) async => [rawNote];
+  Future<List<Note>> fetchNotes(String boardId) async {
+    fetchNotesCalls++;
+    return [rawNote];
+  }
 
   @override
   Future<AggregateBoardAppearances> fetchAggregateBoardAppearances() async =>
@@ -209,7 +304,43 @@ class _FakeE2eeRemote extends Fake
 
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
+    if (isOffline) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/notes/$id'),
+        type: DioExceptionType.connectionError,
+      );
+    }
     rawNote = Note.fromJson({...rawNote.toJson(), ...changes});
+    return rawNote;
+  }
+
+  @override
+  Future<Note> setNoteReaction(String id, String emoji, bool active) async {
+    if (isOffline) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/notes/$id/reactions'),
+        type: DioExceptionType.connectionError,
+      );
+    }
+    final reactions = List<NoteReaction>.of(rawNote.reactions);
+    final index = reactions.indexWhere((reaction) => reaction.emoji == emoji);
+    final users = index == -1 ? <String>{} : reactions[index].userUids.toSet();
+    if (active) {
+      users.add('user-1');
+    } else {
+      users.remove('user-1');
+    }
+    if (users.isEmpty) {
+      if (index != -1) reactions.removeAt(index);
+    } else {
+      final reaction = NoteReaction(emoji: emoji, userUids: users.toList());
+      if (index == -1) {
+        reactions.add(reaction);
+      } else {
+        reactions[index] = reaction;
+      }
+    }
+    rawNote = rawNote.copyWith(reactions: reactions, updatedAt: DateTime.now());
     return rawNote;
   }
 

@@ -13,6 +13,7 @@ import 'package:nocknock/features/notes/data/auth_aware_notes_repository.dart';
 import 'package:nocknock/features/notes/data/cached_notes_repository.dart';
 import 'package:nocknock/features/notes/data/e2ee_notes_repository.dart';
 import 'package:nocknock/features/notes/data/local_notes_repository.dart';
+import 'package:nocknock/features/notes/data/offline_mutation_store.dart';
 import 'package:nocknock/firebase_options.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:nocknock/features/notifications/logic/encrypted_notification_content.dart';
@@ -75,6 +76,7 @@ Future<void> main() async {
           repository: CachedNotesRepository(
             preferences: preferences,
             userIdProvider: () => authRepository.currentUser?.id,
+            mutationStore: createPersistentOfflineMutationStore(preferences),
             repository: ApiNotesRepository(
               apiBaseUrl: AppConfig.apiBaseUrl,
               socketBaseUrl: AppConfig.socketBaseUrl,

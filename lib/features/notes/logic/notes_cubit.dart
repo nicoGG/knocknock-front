@@ -18,8 +18,10 @@ class NotesCubit extends Cubit<NotesState> {
   final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
   int _loadGeneration = 0;
+  static const _notesPageSize = 40;
 
   Future<void> load() async {
+    unawaited(_refreshOfflineSyncSummary());
     final generation = ++_loadGeneration;
     emit(
       state.copyWith(
@@ -32,6 +34,9 @@ class NotesCubit extends Cubit<NotesState> {
         aggregateBoardAppearances: const AggregateBoardAppearances(),
         isLoadingPinned: false,
         isLoadingReminderNotes: false,
+        isLoadingMoreNotes: false,
+        hasMoreNotes: false,
+        clearNextNotesCursor: true,
       ),
     );
     _realtimeSubscription ??= _repository.realtimeEvents.listen(_onRealtime);
@@ -53,7 +58,7 @@ class NotesCubit extends Cubit<NotesState> {
             status: NotesStatus.ready,
             lists: cached.lists,
             selectedListId: cachedListId,
-            notes: _sortedNotes(cachedNotes),
+            notes: _cachedInitialNotes(cachedNotes),
             aggregateBoardAppearances:
                 cached.aggregateBoardAppearances ??
                 state.aggregateBoardAppearances,
@@ -74,9 +79,9 @@ class NotesCubit extends Cubit<NotesState> {
       final selectedListId = _resolveSelectedListId(lists, rememberedListId);
       unawaited(_rememberSelectedList(selectedListId));
       unawaited(_connectBestEffort(selectedListId));
-      final notesFuture = _repository.fetchNotes(selectedListId);
+      final notesFuture = _fetchNotesPage(selectedListId);
       final appearancesFuture = _fetchAggregateBoardAppearances();
-      final notes = await notesFuture;
+      final notesPage = await notesFuture;
       final aggregateBoardAppearances = await appearancesFuture;
       if (generation != _loadGeneration || isClosed) return;
       emit(
@@ -84,7 +89,10 @@ class NotesCubit extends Cubit<NotesState> {
           status: NotesStatus.ready,
           lists: lists,
           selectedListId: selectedListId,
-          notes: _sortedNotes(notes),
+          notes: _sortedNotes(notesPage.items),
+          nextNotesCursor: notesPage.nextCursor,
+          clearNextNotesCursor: notesPage.nextCursor == null,
+          hasMoreNotes: notesPage.hasMore,
           aggregateBoardAppearances:
               aggregateBoardAppearances ?? state.aggregateBoardAppearances,
         ),
@@ -118,6 +126,9 @@ class NotesCubit extends Cubit<NotesState> {
         status: NotesStatus.loading,
         selectedListId: listId,
         notes: const [],
+        isLoadingMoreNotes: false,
+        hasMoreNotes: false,
+        clearNextNotesCursor: true,
       ),
     );
     unawaited(_rememberSelectedList(listId));
@@ -132,20 +143,26 @@ class NotesCubit extends Cubit<NotesState> {
       emit(
         state.copyWith(
           status: NotesStatus.ready,
-          notes: _sortedNotes(cachedNotes),
+          notes: _cachedInitialNotes(cachedNotes),
         ),
       );
     }
 
     try {
-      final notes = await _repository.fetchNotes(listId);
+      final notesPage = await _fetchNotesPage(listId);
       if (generation != _loadGeneration ||
           state.selectedListId != listId ||
           isClosed) {
         return;
       }
       emit(
-        state.copyWith(status: NotesStatus.ready, notes: _sortedNotes(notes)),
+        state.copyWith(
+          status: NotesStatus.ready,
+          notes: _sortedNotes(notesPage.items),
+          nextNotesCursor: notesPage.nextCursor,
+          clearNextNotesCursor: notesPage.nextCursor == null,
+          hasMoreNotes: notesPage.hasMore,
+        ),
       );
     } catch (error) {
       if (generation != _loadGeneration ||
@@ -189,6 +206,54 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<void> loadMoreNotes() async {
+    final repository = _repository;
+    final cursor = state.nextNotesCursor;
+    if (repository is! PaginatedNotesRepository ||
+        state.status != NotesStatus.ready ||
+        state.isLoadingMoreNotes ||
+        !state.hasMoreNotes ||
+        cursor == null) {
+      return;
+    }
+    final listId = state.selectedListId;
+    final generation = _loadGeneration;
+    emit(state.copyWith(isLoadingMoreNotes: true));
+    try {
+      final page = await (repository as PaginatedNotesRepository)
+          .fetchNotesPage(listId, cursor: cursor, limit: _notesPageSize);
+      if (generation != _loadGeneration ||
+          state.selectedListId != listId ||
+          isClosed) {
+        return;
+      }
+      final merged = {
+        for (final note in state.notes) note.id: note,
+        for (final note in page.items) note.id: note,
+      };
+      emit(
+        state.copyWith(
+          notes: _sortedNotes(merged.values),
+          isLoadingMoreNotes: false,
+          hasMoreNotes: page.hasMore,
+          nextNotesCursor: page.nextCursor,
+          clearNextNotesCursor: page.nextCursor == null,
+        ),
+      );
+    } catch (error) {
+      if (generation == _loadGeneration &&
+          state.selectedListId == listId &&
+          !isClosed) {
+        emit(
+          state.copyWith(
+            isLoadingMoreNotes: false,
+            message: _friendlyMessage(error),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> loadReminderNotes() async {
     if (state.isLoadingReminderNotes) return;
     emit(state.copyWith(isLoadingReminderNotes: true));
@@ -223,13 +288,24 @@ class NotesCubit extends Cubit<NotesState> {
           selectedListId: list.id,
           notes: const [],
           isSavingList: false,
+          isLoadingMoreNotes: false,
+          hasMoreNotes: false,
+          clearNextNotesCursor: true,
         ),
       );
       await _rememberSelectedList(list.id);
       await _repository.connect(list.id);
-      final notes = await _repository.fetchNotes(list.id);
+      final notesPage = await _fetchNotesPage(list.id);
       if (state.selectedListId != list.id) return;
-      emit(state.copyWith(status: NotesStatus.ready, notes: notes));
+      emit(
+        state.copyWith(
+          status: NotesStatus.ready,
+          notes: notesPage.items,
+          nextNotesCursor: notesPage.nextCursor,
+          clearNextNotesCursor: notesPage.nextCursor == null,
+          hasMoreNotes: notesPage.hasMore,
+        ),
+      );
     } catch (error) {
       emit(
         state.copyWith(isSavingList: false, message: _friendlyMessage(error)),
@@ -327,14 +403,25 @@ class NotesCubit extends Cubit<NotesState> {
               .where((note) => note.boardId != selected.id)
               .toList(),
           isSavingList: false,
+          isLoadingMoreNotes: false,
+          hasMoreNotes: false,
+          clearNextNotesCursor: true,
           message: 'Lista eliminada.',
         ),
       );
       await _rememberSelectedList(nextList.id);
       await _repository.connect(nextList.id);
-      final notes = await _repository.fetchNotes(nextList.id);
+      final notesPage = await _fetchNotesPage(nextList.id);
       if (state.selectedListId == nextList.id) {
-        emit(state.copyWith(status: NotesStatus.ready, notes: notes));
+        emit(
+          state.copyWith(
+            status: NotesStatus.ready,
+            notes: notesPage.items,
+            nextNotesCursor: notesPage.nextCursor,
+            clearNextNotesCursor: notesPage.nextCursor == null,
+            hasMoreNotes: notesPage.hasMore,
+          ),
+        );
       }
       return true;
     } catch (error) {
@@ -513,6 +600,26 @@ class NotesCubit extends Cubit<NotesState> {
     } on Object {
       return null;
     }
+  }
+
+  Future<NotesPage> _fetchNotesPage(String boardId) async {
+    final repository = _repository;
+    if (repository is PaginatedNotesRepository) {
+      return (repository as PaginatedNotesRepository).fetchNotesPage(
+        boardId,
+        limit: _notesPageSize,
+      );
+    }
+    return NotesPage(
+      items: await repository.fetchNotes(boardId),
+      nextCursor: null,
+    );
+  }
+
+  List<Note> _cachedInitialNotes(List<Note> notes) {
+    final sorted = _sortedNotes(notes);
+    if (_repository is! PaginatedNotesRepository) return sorted;
+    return sorted.take(_notesPageSize).toList();
   }
 
   Future<AggregateBoardAppearances?> _fetchAggregateBoardAppearances() async {
@@ -798,7 +905,7 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void> deleteNote(Note note) async {
     _remove(note.id);
     try {
-      await _repository.deleteNote(note.id);
+      await _repository.deleteNote(note.id, expectedRevision: note.revision);
     } catch (error) {
       _upsert(note);
       emit(state.copyWith(message: _friendlyMessage(error)));
@@ -819,6 +926,70 @@ class NotesCubit extends Cubit<NotesState> {
       return false;
     } finally {
       emit(state.copyWith(isSaving: false));
+    }
+  }
+
+  Future<List<NoteSearchResult>> searchNotes(String query) async {
+    final repository = _repository;
+    if (repository is! NotesSearchRepository || query.trim().isEmpty) {
+      return const [];
+    }
+    return (repository as NotesSearchRepository).searchNotes(query.trim());
+  }
+
+  Future<List<NoteSyncConflict>> fetchSyncConflicts() async {
+    final repository = _repository;
+    if (repository is! OfflineSyncRepository) return const [];
+    return (repository as OfflineSyncRepository).fetchNoteSyncConflicts();
+  }
+
+  Future<void> resolveSyncConflict(
+    String mutationId,
+    NoteConflictResolution resolution,
+  ) async {
+    final repository = _repository;
+    if (repository is! OfflineSyncRepository) return;
+    await (repository as OfflineSyncRepository).resolveNoteSyncConflict(
+      mutationId,
+      resolution,
+    );
+    await _refreshOfflineSyncSummary();
+  }
+
+  Future<void> retryOfflineSync() async {
+    final repository = _repository;
+    if (repository is! OfflineSyncRepository) return;
+    try {
+      await (repository as OfflineSyncRepository).syncPendingChanges();
+      await _refreshOfflineSyncSummary();
+    } on Object {
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            message:
+                'No pudimos sincronizar todavía. Tus cambios siguen guardados en este dispositivo.',
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _refreshOfflineSyncSummary() async {
+    final repository = _repository;
+    if (repository is! OfflineSyncRepository) return;
+    try {
+      final summary = await (repository as OfflineSyncRepository)
+          .offlineSyncSummary();
+      if (isClosed) return;
+      emit(
+        state.copyWith(
+          pendingSyncCount: summary.pendingCount,
+          syncConflictCount: summary.conflictCount,
+          isSyncingOfflineChanges: summary.isSyncing,
+        ),
+      );
+    } on Object {
+      // Loading the board remains usable even if the local sync index fails.
     }
   }
 
@@ -907,6 +1078,20 @@ class NotesCubit extends Cubit<NotesState> {
                 'No pudimos sincronizar tus notas locales. Siguen seguras en este dispositivo y volveremos a intentarlo.',
           ),
         );
+      case OfflineSyncStateChanged(
+        :final pendingCount,
+        :final conflictCount,
+        :final isSyncing,
+      ):
+        emit(
+          state.copyWith(
+            pendingSyncCount: pendingCount,
+            syncConflictCount: conflictCount,
+            isSyncingOfflineChanges: isSyncing,
+          ),
+        );
+      case OfflineSyncOperationDiscarded(:final message):
+        emit(state.copyWith(message: message));
     }
   }
 

@@ -15,7 +15,8 @@ class ApiNotesRepository
         NotesRepository,
         GuestDataSyncTarget,
         E2eeNotesTransport,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        PaginatedNotesRepository {
   ApiNotesRepository({
     required String apiBaseUrl,
     required String socketBaseUrl,
@@ -339,6 +340,25 @@ class ApiNotesRepository
   }
 
   @override
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/notes/page',
+      queryParameters: {'boardId': boardId, 'limit': limit, 'cursor': ?cursor},
+    );
+    final data = response.data ?? const <String, dynamic>{};
+    return NotesPage(
+      items: (data['items'] as List<dynamic>? ?? const [])
+          .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(),
+      nextCursor: data['nextCursor'] as String?,
+    );
+  }
+
+  @override
   Future<List<Note>> fetchPinnedNotes() async {
     final response = await _dio.get<List<dynamic>>('/notes/pinned');
     return (response.data ?? const [])
@@ -398,7 +418,17 @@ class ApiNotesRepository
   }
 
   @override
-  Future<void> deleteNote(String id) => _dio.delete<void>('/notes/$id');
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) => _dio.delete<void>(
+    '/notes/$id',
+    data: {
+      'expectedRevision': ?expectedRevision,
+      'clientMutationId': ?clientMutationId,
+    },
+  );
 
   @override
   Future<GuestDataSyncResult> syncGuestData(LocalNotesSnapshot snapshot) async {

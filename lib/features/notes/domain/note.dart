@@ -168,6 +168,7 @@ class Note extends Equatable {
     this.assigneeUid,
     this.reminderAt,
     this.contentDelta,
+    this.revision = 0,
   });
 
   factory Note.fromJson(Map<String, dynamic> json) {
@@ -207,6 +208,7 @@ class Note extends Equatable {
       positionX: (json['positionX'] as num?)?.toDouble() ?? 0,
       positionY: (json['positionY'] as num?)?.toDouble() ?? 0,
       reminderAt: DateTime.tryParse(json['reminderAt'] as String? ?? ''),
+      revision: (json['revision'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
@@ -229,6 +231,7 @@ class Note extends Equatable {
   final double positionX;
   final double positionY;
   final DateTime? reminderAt;
+  final int revision;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -250,6 +253,7 @@ class Note extends Equatable {
     'positionX': positionX,
     'positionY': positionY,
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    'revision': revision,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };
@@ -262,6 +266,7 @@ class Note extends Equatable {
     List<NoteChecklistItem>? checklist,
     List<NoteReaction>? reactions,
     DateTime? updatedAt,
+    int? revision,
   }) => Note(
     id: id,
     boardId: boardId,
@@ -280,6 +285,7 @@ class Note extends Equatable {
     positionX: positionX,
     positionY: positionY,
     reminderAt: reminderAt,
+    revision: revision ?? this.revision,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -303,6 +309,7 @@ class Note extends Equatable {
     positionX,
     positionY,
     reminderAt,
+    revision,
     createdAt,
     updatedAt,
   ];
@@ -319,7 +326,45 @@ class NoteDraft extends Equatable {
     this.assigneeUid,
     this.reminderAt,
     this.contentDelta,
+    this.clientNoteId,
+    this.clientMutationId,
+    this.isCompleted = false,
+    this.isPinned = false,
+    this.sortOrder,
+    this.positionX = 0,
+    this.positionY = 0,
   });
+
+  factory NoteDraft.fromJson(Map<String, dynamic> json) => NoteDraft(
+    title: json['title'] as String,
+    content: json['content'] as String? ?? '',
+    contentDelta: json['contentDelta'] as String?,
+    color: NoteColor.values.firstWhere(
+      (color) => color.name == json['color'],
+      orElse: () => NoteColor.yellow,
+    ),
+    authorName: json['authorName'] as String? ?? 'Invitado',
+    assigneeUid: json['assigneeUid'] as String?,
+    category: NoteCategory.values.firstWhere(
+      (category) => category.name == json['category'],
+      orElse: () => NoteCategory.general,
+    ),
+    checklist: (json['checklist'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => NoteChecklistItem.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList(),
+    reminderAt: DateTime.tryParse(json['reminderAt'] as String? ?? ''),
+    clientNoteId: json['clientNoteId'] as String?,
+    clientMutationId: json['clientMutationId'] as String?,
+    isCompleted: json['isCompleted'] as bool? ?? false,
+    isPinned: json['isPinned'] as bool? ?? false,
+    sortOrder: (json['sortOrder'] as num?)?.toInt(),
+    positionX: (json['positionX'] as num?)?.toDouble() ?? 0,
+    positionY: (json['positionY'] as num?)?.toDouble() ?? 0,
+  );
 
   final String title;
   final String content;
@@ -330,6 +375,35 @@ class NoteDraft extends Equatable {
   final NoteCategory category;
   final List<NoteChecklistItem> checklist;
   final DateTime? reminderAt;
+  final String? clientNoteId;
+  final String? clientMutationId;
+  final bool isCompleted;
+  final bool isPinned;
+  final int? sortOrder;
+  final double positionX;
+  final double positionY;
+
+  NoteDraft withSyncContext({
+    required String clientNoteId,
+    required String clientMutationId,
+  }) => NoteDraft(
+    title: title,
+    content: content,
+    contentDelta: contentDelta,
+    color: color,
+    authorName: authorName,
+    assigneeUid: assigneeUid,
+    category: category,
+    checklist: checklist,
+    reminderAt: reminderAt,
+    clientNoteId: clientNoteId,
+    clientMutationId: clientMutationId,
+    isCompleted: isCompleted,
+    isPinned: isPinned,
+    sortOrder: sortOrder,
+    positionX: positionX,
+    positionY: positionY,
+  );
 
   Map<String, dynamic> toJson() => {
     'title': title,
@@ -341,6 +415,13 @@ class NoteDraft extends Equatable {
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    if (clientNoteId != null) 'clientNoteId': clientNoteId,
+    if (clientMutationId != null) 'clientMutationId': clientMutationId,
+    'isCompleted': isCompleted,
+    'isPinned': isPinned,
+    if (sortOrder != null) 'sortOrder': sortOrder,
+    'positionX': positionX,
+    'positionY': positionY,
   };
 
   @override
@@ -354,5 +435,12 @@ class NoteDraft extends Equatable {
     category,
     checklist,
     reminderAt,
+    clientNoteId,
+    clientMutationId,
+    isCompleted,
+    isPinned,
+    sortOrder,
+    positionX,
+    positionY,
   ];
 }

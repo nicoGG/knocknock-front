@@ -22,6 +22,12 @@ class NotesState extends Equatable {
     this.isSavingAppearance = false,
     this.isLoadingPinned = false,
     this.isLoadingReminderNotes = false,
+    this.isLoadingMoreNotes = false,
+    this.hasMoreNotes = false,
+    this.nextNotesCursor,
+    this.pendingSyncCount = 0,
+    this.syncConflictCount = 0,
+    this.isSyncingOfflineChanges = false,
     this.message,
   });
 
@@ -41,6 +47,12 @@ class NotesState extends Equatable {
   final bool isSavingAppearance;
   final bool isLoadingPinned;
   final bool isLoadingReminderNotes;
+  final bool isLoadingMoreNotes;
+  final bool hasMoreNotes;
+  final String? nextNotesCursor;
+  final int pendingSyncCount;
+  final int syncConflictCount;
+  final bool isSyncingOfflineChanges;
   final String? message;
 
   NoteList? get selectedList {
@@ -67,6 +79,13 @@ class NotesState extends Equatable {
     bool? isSavingAppearance,
     bool? isLoadingPinned,
     bool? isLoadingReminderNotes,
+    bool? isLoadingMoreNotes,
+    bool? hasMoreNotes,
+    String? nextNotesCursor,
+    bool clearNextNotesCursor = false,
+    int? pendingSyncCount,
+    int? syncConflictCount,
+    bool? isSyncingOfflineChanges,
     String? message,
   }) => NotesState(
     status: status ?? this.status,
@@ -88,6 +107,15 @@ class NotesState extends Equatable {
     isLoadingPinned: isLoadingPinned ?? this.isLoadingPinned,
     isLoadingReminderNotes:
         isLoadingReminderNotes ?? this.isLoadingReminderNotes,
+    isLoadingMoreNotes: isLoadingMoreNotes ?? this.isLoadingMoreNotes,
+    hasMoreNotes: hasMoreNotes ?? this.hasMoreNotes,
+    nextNotesCursor: clearNextNotesCursor
+        ? null
+        : nextNotesCursor ?? this.nextNotesCursor,
+    pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
+    syncConflictCount: syncConflictCount ?? this.syncConflictCount,
+    isSyncingOfflineChanges:
+        isSyncingOfflineChanges ?? this.isSyncingOfflineChanges,
     message: message,
   );
 
@@ -109,6 +137,12 @@ class NotesState extends Equatable {
     isSavingAppearance,
     isLoadingPinned,
     isLoadingReminderNotes,
+    isLoadingMoreNotes,
+    hasMoreNotes,
+    nextNotesCursor,
+    pendingSyncCount,
+    syncConflictCount,
+    isSyncingOfflineChanges,
     message,
   ];
 }

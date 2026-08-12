@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:nocknock/features/notes/data/notes_repository.dart';
+import 'package:nocknock/features/notes/data/note_search.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,7 +16,8 @@ class LocalNotesRepository
         NotesRepository,
         LocalNotesDataCleaner,
         LocalNotesDataReader,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        NotesSearchRepository {
   LocalNotesRepository({
     PreferencesLoader? preferencesLoader,
     this.uuid = const Uuid(),
@@ -198,6 +200,22 @@ class LocalNotesRepository
   }
 
   @override
+  Future<List<NoteSearchResult>> searchNotes(String query) async {
+    await _ensureLoaded();
+    final listsById = {for (final list in _lists!) list.id: list};
+    final results =
+        _notes!
+            .where((note) => noteMatchesQuery(note, query))
+            .map(
+              (note) =>
+                  NoteSearchResult(note: note, list: listsById[note.boardId]!),
+            )
+            .toList()
+          ..sort((a, b) => b.note.updatedAt.compareTo(a.note.updatedAt));
+    return results;
+  }
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     await _ensureLoaded();
     final now = DateTime.now();
@@ -363,7 +381,11 @@ class LocalNotesRepository
   }
 
   @override
-  Future<void> deleteNote(String id) async {
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) async {
     await _ensureLoaded();
     final index = _notes!.indexWhere((note) => note.id == id);
     if (index == -1) throw const NotesPersistenceFailure();
