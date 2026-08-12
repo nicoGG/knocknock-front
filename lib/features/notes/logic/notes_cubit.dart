@@ -667,8 +667,13 @@ class NotesCubit extends Cubit<NotesState> {
           'category': draft.category.name,
           'checklist': draft.checklist.map((item) => item.toJson()).toList(),
           'authorName': draft.authorName,
-          if (draft.assigneeUid != null || note.assigneeUid != null)
+          if (draft.assigneeUid != note.assigneeUid ||
+              draft.customAssigneeName != note.customAssigneeName) ...{
             'assigneeUid': draft.assigneeUid,
+            'customAssigneeName': draft.customAssigneeName,
+          },
+          if (draft.attachment != note.attachment)
+            'attachment': draft.attachment?.toJson(),
           'reminderAt': draft.reminderAt?.toIso8601String(),
         }),
       );
@@ -700,8 +705,22 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void> updateNoteReminder(Note note, DateTime? reminderAt) =>
       _updateNoteFields(note, {'reminderAt': reminderAt?.toIso8601String()});
 
-  Future<void> updateNoteAssignee(Note note, String? assigneeUid) =>
-      _updateNoteFields(note, {'assigneeUid': assigneeUid});
+  Future<void> updateNoteAssignee(
+    Note note, {
+    String? assigneeUid,
+    String? customAssigneeName,
+  }) => _updateNoteFields(note, {
+    'assigneeUid': assigneeUid,
+    'customAssigneeName': customAssigneeName,
+  });
+
+  Future<NoteAttachment> loadAttachment(Note note) async {
+    final repository = _repository;
+    if (repository is! NoteAttachmentsRepository || note.attachment == null) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteAttachmentsRepository).fetchAttachment(note.id);
+  }
 
   Future<void> toggleReaction(
     Note note,
@@ -1021,6 +1040,17 @@ class NotesCubit extends Cubit<NotesState> {
             state.copyWith(
               lists: _replaceList(
                 state.lists[index].copyWith(appearance: appearance),
+              ),
+            ),
+          );
+        }
+      case ListNameChanged(:final listId, :final name, :final updatedAt):
+        final index = state.lists.indexWhere((list) => list.id == listId);
+        if (index != -1) {
+          emit(
+            state.copyWith(
+              lists: _replaceList(
+                state.lists[index].copyWith(name: name, updatedAt: updatedAt),
               ),
             ),
           );

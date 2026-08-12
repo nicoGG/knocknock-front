@@ -2,7 +2,7 @@ name: nocknock
 description: "NockNock collaborative post-it reminders and tasks."
 publish_to: "none"
 
-version: 1.0.0+511
+version: 1.0.0+512
 
 environment:
   sdk: ^3.12.2
@@ -17,6 +17,7 @@ dependencies:
   flutter_bloc: ^9.1.1
   equatable: ^2.1.0
   dio: ^5.11.0
+  html: ^0.15.6
   socket_io_client: ^3.1.6
   uuid: ^4.6.0
   intl: ^0.20.2
@@ -29,6 +30,7 @@ dependencies:
   shared_preferences: ^2.5.5
   flutter_quill: ^11.5.1
   image_picker: ^1.2.1
+  file_selector: ^1.1.0
   firebase_messaging: ^16.5.0
   flutter_local_notifications: ^22.2.0
   package_info_plus: ^10.2.1

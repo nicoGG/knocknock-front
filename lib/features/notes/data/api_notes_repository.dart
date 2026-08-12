@@ -16,6 +16,7 @@ class ApiNotesRepository
         GuestDataSyncTarget,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
+        NoteAttachmentsRepository,
         PaginatedNotesRepository {
   ApiNotesRepository({
     required String apiBaseUrl,
@@ -69,6 +70,7 @@ class ApiNotesRepository
       ..on('note:created', _onNoteChanged)
       ..on('note:updated', _onNoteChanged)
       ..on('list:appearance-updated', _onListAppearanceChanged)
+      ..on('list:name-updated', _onListNameChanged)
       ..on(
         'account:aggregate-board-appearance-updated',
         _onAggregateBoardAppearanceChanged,
@@ -385,6 +387,14 @@ class ApiNotesRepository
   }
 
   @override
+  Future<NoteAttachment> fetchAttachment(String noteId) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/notes/$noteId/attachment',
+    );
+    return NoteAttachment.fromJson(response.data!);
+  }
+
+  @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     final response = await _dio.patch<Map<String, dynamic>>(
       '/notes/$id',
@@ -466,6 +476,10 @@ class ApiNotesRepository
                     .toList(),
                 'authorName': note.authorName,
                 if (note.assigneeUid != null) 'assigneeUid': note.assigneeUid,
+                if (note.customAssigneeName != null)
+                  'customAssigneeName': note.customAssigneeName,
+                if (note.attachment != null)
+                  'attachment': note.attachment!.toJson(),
                 'isCompleted': note.isCompleted,
                 'isPinned': note.isPinned,
                 'sortOrder': note.sortOrder,
@@ -519,6 +533,16 @@ class ApiNotesRepository
           ListAppearance.fromJson(Map<String, dynamic>.from(rawAppearance)),
         ),
       );
+    }
+  }
+
+  void _onListNameChanged(dynamic data) {
+    final json = _asJson(data);
+    final listId = json?['listId'] as String?;
+    final name = json?['name'] as String?;
+    final updatedAt = DateTime.tryParse(json?['updatedAt'] as String? ?? '');
+    if (listId != null && name != null && updatedAt != null) {
+      _events.add(ListNameChanged(listId, name, updatedAt));
     }
   }
 

@@ -87,6 +87,22 @@ void main() {
     await cubit.close();
   });
 
+  test('applies list name changes received in real time', () async {
+    final repository = _RealtimeLocalNotesRepository();
+    final cubit = NotesCubit(repository);
+    await cubit.load();
+    final updatedAt = DateTime.utc(2026, 8, 12, 12, 30);
+
+    repository.emit(
+      ListNameChanged(cubit.state.selectedListId, 'Me deben', updatedAt),
+    );
+
+    expect(cubit.state.selectedList?.name, 'Me deben');
+    expect(cubit.state.selectedList?.updatedAt, updatedAt);
+
+    await cubit.close();
+  });
+
   test(
     'loads, saves, and receives account board backgrounds in real time',
     () async {

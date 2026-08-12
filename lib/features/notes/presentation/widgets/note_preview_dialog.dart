@@ -3,9 +3,11 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
+import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
+import 'package:nocknock/features/notes/presentation/note_attachment_picker.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
@@ -41,42 +43,17 @@ Future<bool> showNotePreviewDialog({
     barrierColor: Colors.black.withValues(alpha: 0.48),
     transitionDuration: disableAnimations
         ? Duration.zero
-        : const Duration(milliseconds: 360),
-    pageBuilder: (dialogContext, _, _) => _NotePreviewDialog(
+        : const Duration(milliseconds: 230),
+    pageBuilder: (dialogContext, animation, _) => _NotePreviewDialog(
+      transitionAnimation: animation,
+      disableAnimations: disableAnimations,
       cardBuilder: cardBuilder,
       noteProvider: noteProvider,
       assigneesProvider: assigneesProvider,
       onSave: onSave,
       onDelete: onDelete,
     ),
-    transitionBuilder: (context, animation, secondaryAnimation, child) {
-      if (disableAnimations) return child;
-      final entrance = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutBack,
-        reverseCurve: Curves.easeInCubic,
-      );
-      final fade = CurvedAnimation(
-        parent: animation,
-        curve: const Interval(0, 0.72, curve: Curves.easeOut),
-        reverseCurve: Curves.easeIn,
-      );
-      return FadeTransition(
-        key: const ValueKey('note-preview-fade-transition'),
-        opacity: fade,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.055),
-            end: Offset.zero,
-          ).animate(entrance),
-          child: ScaleTransition(
-            key: const ValueKey('note-preview-scale-transition'),
-            scale: Tween<double>(begin: 0.86, end: 1).animate(entrance),
-            child: child,
-          ),
-        ),
-      );
-    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) => child,
   );
   return shouldOpen ?? false;
 }
@@ -161,39 +138,43 @@ class _CreateNoteDialog extends StatelessWidget {
           filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
           child: const ColoredBox(color: Colors.transparent),
         ),
-        SafeArea(
-          child: Center(
-            child: Material(
-              key: const ValueKey('note-create-transparent-shell'),
-              type: MaterialType.transparency,
-              child: SizedBox(
-                key: const ValueKey('note-create-dialog'),
-                width: dialogWidth,
-                height: dialogHeight,
-                child: Column(
-                  children: [
-                    _PreviewHeader(
-                      isEditing: true,
-                      isSaving: false,
-                      editingLabel: 'Nueva nota',
-                      closeButtonKey: const ValueKey(
-                        'close-note-editor-button',
-                      ),
-                      onClose: () => Navigator.pop(context),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: _QuickNoteEditor(
-                        note: note,
-                        assignees: assignees,
+        Padding(
+          key: const ValueKey('note-create-keyboard-viewport'),
+          padding: EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom),
+          child: SafeArea(
+            child: Center(
+              child: Material(
+                key: const ValueKey('note-create-transparent-shell'),
+                type: MaterialType.transparency,
+                child: SizedBox(
+                  key: const ValueKey('note-create-dialog'),
+                  width: dialogWidth,
+                  height: dialogHeight,
+                  child: Column(
+                    children: [
+                      _PreviewHeader(
+                        isEditing: true,
                         isSaving: false,
-                        isCreating: true,
-                        showAuthorField: showAuthorField,
-                        onCancel: () => Navigator.pop(context),
-                        onSave: (draft) => Navigator.pop(context, draft),
+                        editingLabel: 'Nueva nota',
+                        closeButtonKey: const ValueKey(
+                          'close-note-editor-button',
+                        ),
+                        onClose: () => Navigator.pop(context),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: _QuickNoteEditor(
+                          note: note,
+                          assignees: assignees,
+                          isSaving: false,
+                          isCreating: true,
+                          showAuthorField: showAuthorField,
+                          onCancel: () => Navigator.pop(context),
+                          onSave: (draft) => Navigator.pop(context, draft),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -206,6 +187,8 @@ class _CreateNoteDialog extends StatelessWidget {
 
 class _NotePreviewDialog extends StatefulWidget {
   const _NotePreviewDialog({
+    required this.transitionAnimation,
+    required this.disableAnimations,
     required this.cardBuilder,
     required this.noteProvider,
     required this.assigneesProvider,
@@ -213,6 +196,8 @@ class _NotePreviewDialog extends StatefulWidget {
     required this.onDelete,
   });
 
+  final Animation<double> transitionAnimation;
+  final bool disableAnimations;
   final NotePreviewCardBuilder cardBuilder;
   final NotePreviewNoteProvider noteProvider;
   final NotePreviewAssigneesProvider assigneesProvider;
@@ -402,27 +387,73 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
 
   Future<void> _editAssignee() async {
     final initialNote = widget.noteProvider();
-    final assigneeUid = await showModalBottomSheet<String>(
+    final selection = await showModalBottomSheet<_AssigneeSelection>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => _PreviewAssigneePickerSheet(
         selectedUid: initialNote.assigneeUid,
+        customName: initialNote.customAssigneeName,
         assignees: widget.assigneesProvider(),
       ),
     );
-    if (!mounted || assigneeUid == null) return;
-    final normalizedUid = assigneeUid.isEmpty ? null : assigneeUid;
-    if (normalizedUid == initialNote.assigneeUid) return;
+    if (!mounted || selection == null) return;
+    if (selection.uid == initialNote.assigneeUid &&
+        selection.customName == initialNote.customAssigneeName) {
+      return;
+    }
     final note = widget.noteProvider();
     await _persistDraft(
       note,
-      _draftFromNote(note, assigneeUid: normalizedUid, replaceAssignee: true),
+      _draftFromNote(
+        note,
+        assigneeUid: selection.uid,
+        customAssigneeName: selection.customName,
+        replaceAssignee: true,
+      ),
     );
+  }
+
+  Future<void> _editAttachment() async {
+    final note = widget.noteProvider();
+    var shouldPick = true;
+    if (note.attachment != null) {
+      final action = await showModalBottomSheet<_AttachmentAction>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => _AttachmentActionsSheet(attachment: note.attachment!),
+      );
+      if (!mounted || action == null) return;
+      if (action == _AttachmentAction.remove) {
+        await _persistDraft(
+          note,
+          _draftFromNote(note, replaceAttachment: true),
+        );
+        return;
+      }
+      shouldPick = action == _AttachmentAction.replace;
+    }
+    if (!shouldPick || !mounted) return;
+    try {
+      final attachment = await pickNoteAttachment();
+      if (!mounted || attachment == null) return;
+      final latest = widget.noteProvider();
+      await _persistDraft(
+        latest,
+        _draftFromNote(latest, attachment: attachment, replaceAttachment: true),
+      );
+    } on NoteAttachmentPickFailure catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
+    final useBackdropBlur =
+        Theme.of(context).platform != TargetPlatform.android;
     final availableHeight =
         mediaQuery.size.height -
         mediaQuery.padding.vertical -
@@ -430,14 +461,18 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
         40;
     final dialogHeight = math.min(680.0, math.max(300.0, availableHeight));
     final dialogWidth = math.min(480.0, mediaQuery.size.width - 32);
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-          child: const ColoredBox(color: Colors.transparent),
-        ),
-        SafeArea(
+    final background = BackdropFilter(
+      key: const ValueKey('note-preview-background-blur'),
+      enabled: useBackdropBlur,
+      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+      child: const ColoredBox(color: Colors.transparent),
+    );
+    final content = RepaintBoundary(
+      key: const ValueKey('note-preview-transition-boundary'),
+      child: Padding(
+        key: const ValueKey('note-preview-keyboard-viewport'),
+        padding: EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom),
+        child: SafeArea(
           child: Center(
             child: Semantics(
               namesRoute: true,
@@ -481,6 +516,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                         onColor: _editColor,
                         onCategory: _editCategory,
                         onReminder: _editReminder,
+                        onAttachment: _editAttachment,
                         onDelete: _confirmDelete,
                         onOpenDetail: _openNote,
                       ),
@@ -488,6 +524,41 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                   ),
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (widget.disableAnimations) {
+      return Stack(fit: StackFit.expand, children: [background, content]);
+    }
+
+    final entrance = CurvedAnimation(
+      parent: widget.transitionAnimation,
+      curve: const Cubic(0.16, 1, 0.3, 1),
+      reverseCurve: Curves.easeInCubic,
+    );
+    final fade = CurvedAnimation(
+      parent: widget.transitionAnimation,
+      curve: const Interval(0, 0.76, curve: Curves.easeOutCubic),
+      reverseCurve: Curves.easeInCubic,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        FadeTransition(opacity: fade, child: background),
+        FadeTransition(
+          key: const ValueKey('note-preview-fade-transition'),
+          opacity: fade,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.018),
+              end: Offset.zero,
+            ).animate(entrance),
+            child: ScaleTransition(
+              key: const ValueKey('note-preview-scale-transition'),
+              scale: Tween<double>(begin: 0.975, end: 1).animate(entrance),
+              child: content,
             ),
           ),
         ),
@@ -607,6 +678,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   late NoteColor _color;
   late NoteCategory _category;
   late String? _assigneeUid;
+  late String? _customAssigneeName;
+  late NoteAttachment? _attachment;
   late DateTime? _reminderAt;
   late bool _descriptionExpanded;
 
@@ -634,6 +707,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     _color = note.color;
     _category = note.category;
     _assigneeUid = note.assigneeUid;
+    _customAssigneeName = note.customAssigneeName;
+    _attachment = note.attachment;
     _reminderAt = note.reminderAt;
     _descriptionExpanded = note.content.trim().isNotEmpty;
   }
@@ -783,13 +858,23 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                                       cursorColor: foregroundColor,
                                       textCapitalization:
                                           TextCapitalization.sentences,
-                                      inputFormatters: const [
-                                        InitialUppercaseTextFormatter(),
-                                      ],
+                                      keyboardType:
+                                          _category == NoteCategory.money
+                                          ? TextInputType.number
+                                          : TextInputType.text,
+                                      inputFormatters:
+                                          _category == NoteCategory.money
+                                          ? [MoneyTextInputFormatter()]
+                                          : const [
+                                              InitialUppercaseTextFormatter(),
+                                            ],
                                       onChanged: (_) => setState(() {}),
                                       decoration: InputDecoration(
                                         isDense: true,
-                                        hintText: 'Título de la nota',
+                                        hintText:
+                                            _category == NoteCategory.money
+                                            ? r'$0'
+                                            : 'Título de la nota',
                                         counterText: '',
                                         contentPadding:
                                             const EdgeInsets.symmetric(
@@ -949,6 +1034,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         category: _category,
                         reminderAt: _reminderAt,
                         assignee: _selectedAssignee,
+                        attachment: _attachment,
                         foregroundColor: foregroundColor,
                         onStyles: _expandDescription,
                         onChecklist: _openChecklist,
@@ -956,6 +1042,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         onCategory: _pickCategory,
                         onReminder: _pickReminder,
                         onAssignee: _pickAssignee,
+                        onAttachment: _pickAttachment,
                       ),
                       const SizedBox(height: 10),
                       Row(
@@ -1021,6 +1108,16 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     for (final person in widget.assignees) {
       if (person.uid == _assigneeUid) return person;
     }
+    final customName = _customAssigneeName?.trim();
+    if (customName != null && customName.isNotEmpty) {
+      return ListCollaborator(
+        uid: 'custom:new-note',
+        email: '',
+        displayName: customName,
+        role: ListMemberRole.editor,
+        joinedAt: DateTime.now(),
+      );
+    }
     return null;
   }
 
@@ -1079,7 +1176,15 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
           _PreviewCategoryPickerSheet(selected: _category),
     );
     if (!mounted || category == null) return;
-    setState(() => _category = category);
+    setState(() {
+      _category = category;
+      if (category == NoteCategory.money) {
+        _titleController.value = MoneyTextInputFormatter().formatEditUpdate(
+          _titleController.value,
+          _titleController.value,
+        );
+      }
+    });
   }
 
   Future<void> _pickReminder() async {
@@ -1106,16 +1211,45 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   Future<void> _pickAssignee() async {
-    final assigneeUid = await showModalBottomSheet<String>(
+    final selection = await showModalBottomSheet<_AssigneeSelection>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => _PreviewAssigneePickerSheet(
         selectedUid: _assigneeUid,
+        customName: _customAssigneeName,
         assignees: widget.assignees,
       ),
     );
-    if (!mounted || assigneeUid == null) return;
-    setState(() => _assigneeUid = assigneeUid.isEmpty ? null : assigneeUid);
+    if (!mounted || selection == null) return;
+    setState(() {
+      _assigneeUid = selection.uid;
+      _customAssigneeName = selection.customName;
+    });
+  }
+
+  Future<void> _pickAttachment() async {
+    if (_attachment != null) {
+      final action = await showModalBottomSheet<_AttachmentAction>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => _AttachmentActionsSheet(attachment: _attachment!),
+      );
+      if (!mounted || action == null) return;
+      if (action == _AttachmentAction.remove) {
+        setState(() => _attachment = null);
+        return;
+      }
+    }
+    try {
+      final attachment = await pickNoteAttachment();
+      if (!mounted || attachment == null) return;
+      setState(() => _attachment = attachment);
+    } on NoteAttachmentPickFailure catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   void _submit() {
@@ -1147,6 +1281,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
             ? _authorController.text.trim()
             : note.authorName,
         assigneeUid: _assigneeUid,
+        customAssigneeName: _customAssigneeName,
+        attachment: _attachment,
         reminderAt: _reminderAt,
       ),
     );
@@ -1159,6 +1295,7 @@ class _QuickEditorTools extends StatelessWidget {
     required this.category,
     required this.reminderAt,
     required this.assignee,
+    required this.attachment,
     required this.foregroundColor,
     required this.onStyles,
     required this.onChecklist,
@@ -1166,12 +1303,14 @@ class _QuickEditorTools extends StatelessWidget {
     required this.onCategory,
     required this.onReminder,
     required this.onAssignee,
+    required this.onAttachment,
   });
 
   final NoteColor color;
   final NoteCategory category;
   final DateTime? reminderAt;
   final ListCollaborator? assignee;
+  final NoteAttachment? attachment;
   final Color foregroundColor;
   final VoidCallback onStyles;
   final VoidCallback onChecklist;
@@ -1179,6 +1318,7 @@ class _QuickEditorTools extends StatelessWidget {
   final VoidCallback onCategory;
   final VoidCallback onReminder;
   final VoidCallback onAssignee;
+  final VoidCallback onAttachment;
 
   @override
   Widget build(BuildContext context) {
@@ -1238,6 +1378,15 @@ class _QuickEditorTools extends StatelessWidget {
               assignee: assignee,
               onPressed: onAssignee,
             ),
+            _PreviewDockAction(
+              key: const ValueKey('quick-editor-attachment-action'),
+              tooltip: attachment == null
+                  ? 'Adjuntar imagen o PDF'
+                  : 'Cambiar o quitar adjunto',
+              icon: Icons.attach_file_rounded,
+              selected: attachment != null,
+              onPressed: onAttachment,
+            ),
           ],
         ),
       ),
@@ -1250,7 +1399,10 @@ NoteDraft _draftFromNote(
   NoteColor? color,
   NoteCategory? category,
   String? assigneeUid,
+  String? customAssigneeName,
   bool replaceAssignee = false,
+  NoteAttachment? attachment,
+  bool replaceAttachment = false,
   DateTime? reminderAt,
   bool replaceReminder = false,
 }) => NoteDraft(
@@ -1262,6 +1414,10 @@ NoteDraft _draftFromNote(
   checklist: List.of(note.checklist),
   authorName: note.authorName,
   assigneeUid: replaceAssignee ? assigneeUid : note.assigneeUid,
+  customAssigneeName: replaceAssignee
+      ? customAssigneeName
+      : note.customAssigneeName,
+  attachment: replaceAttachment ? attachment : note.attachment,
   reminderAt: replaceReminder ? reminderAt : note.reminderAt,
 );
 
@@ -1277,6 +1433,7 @@ class _PreviewEditingDock extends StatelessWidget {
     required this.onColor,
     required this.onCategory,
     required this.onReminder,
+    required this.onAttachment,
     required this.onDelete,
     required this.onOpenDetail,
   });
@@ -1291,6 +1448,7 @@ class _PreviewEditingDock extends StatelessWidget {
   final VoidCallback onColor;
   final VoidCallback onCategory;
   final VoidCallback onReminder;
+  final VoidCallback onAttachment;
   final VoidCallback onDelete;
   final VoidCallback onOpenDetail;
 
@@ -1298,6 +1456,8 @@ class _PreviewEditingDock extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final noteColor = NotePalette.color(note.color);
+    final useBackdropBlur =
+        Theme.of(context).platform != TargetPlatform.android;
     return Semantics(
       container: true,
       label: 'Herramientas de edición de la nota',
@@ -1320,10 +1480,14 @@ class _PreviewEditingDock extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(28),
           child: BackdropFilter(
+            key: const ValueKey('note-preview-dock-blur'),
+            enabled: useBackdropBlur,
             filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Material(
               key: const ValueKey('note-preview-editing-dock'),
-              color: colorScheme.surface.withValues(alpha: 0.82),
+              color: colorScheme.surface.withValues(
+                alpha: useBackdropBlur ? 0.82 : 0.94,
+              ),
               child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
@@ -1421,6 +1585,18 @@ class _PreviewEditingDock extends StatelessWidget {
                                           : Icons.notifications_active_rounded,
                                       selected: note.reminderAt != null,
                                       onPressed: isSaving ? null : onReminder,
+                                    ),
+                                    const SizedBox(width: 2),
+                                    _PreviewDockAction(
+                                      key: const ValueKey(
+                                        'preview-attachment-action',
+                                      ),
+                                      tooltip: note.attachment == null
+                                          ? 'Adjuntar imagen o PDF'
+                                          : 'Cambiar o quitar adjunto',
+                                      icon: Icons.attach_file_rounded,
+                                      selected: note.attachment != null,
+                                      onPressed: isSaving ? null : onAttachment,
                                     ),
                                   ],
                                 ),
@@ -1727,14 +1903,70 @@ class _PreviewCategoryPickerSheet extends StatelessWidget {
   }
 }
 
+class _AssigneeSelection {
+  const _AssigneeSelection({this.uid, this.customName});
+
+  final String? uid;
+  final String? customName;
+}
+
 class _PreviewAssigneePickerSheet extends StatelessWidget {
   const _PreviewAssigneePickerSheet({
     required this.selectedUid,
+    required this.customName,
     required this.assignees,
   });
 
   final String? selectedUid;
+  final String? customName;
   final List<ListCollaborator> assignees;
+
+  Future<void> _pickCustomName(BuildContext context) async {
+    var enteredName = customName ?? '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Responsable personalizado'),
+        content: TextFormField(
+          key: const ValueKey('custom-assignee-name-field'),
+          initialValue: enteredName,
+          autofocus: true,
+          maxLength: 50,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Nombre',
+            hintText: 'Ej. Camila',
+            helperText: 'No necesita tener una cuenta en NockNock.',
+          ),
+          onChanged: (value) => enteredName = value,
+          onFieldSubmitted: (value) {
+            final normalized = value.trim();
+            if (normalized.isNotEmpty) {
+              Navigator.pop(dialogContext, normalized);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('save-custom-assignee-button'),
+            onPressed: () {
+              final normalized = enteredName.trim();
+              if (normalized.isNotEmpty) {
+                Navigator.pop(dialogContext, normalized);
+              }
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || name == null) return;
+    Navigator.pop(context, _AssigneeSelection(customName: name));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1756,10 +1988,26 @@ class _PreviewAssigneePickerSheet extends StatelessWidget {
             key: const ValueKey('preview-assignee-unassigned'),
             leading: const CircleAvatar(child: Icon(Icons.person_off_outlined)),
             title: const Text('Sin responsable'),
-            trailing: selectedUid == null
+            trailing: selectedUid == null && customName == null
                 ? const Icon(Icons.check_rounded)
                 : null,
-            onTap: () => Navigator.pop(context, ''),
+            onTap: () => Navigator.pop(context, const _AssigneeSelection()),
+          ),
+          ListTile(
+            key: const ValueKey('preview-assignee-custom'),
+            leading: const CircleAvatar(
+              child: Icon(Icons.manage_accounts_outlined),
+            ),
+            title: Text(
+              customName?.trim().isNotEmpty == true
+                  ? customName!.trim()
+                  : 'Responsable personalizado',
+            ),
+            subtitle: const Text('Agrega a alguien aunque no use NockNock.'),
+            trailing: customName?.trim().isNotEmpty == true
+                ? const Icon(Icons.check_rounded)
+                : null,
+            onTap: () => _pickCustomName(context),
           ),
           if (assignees.isEmpty)
             const Padding(
@@ -1797,9 +2045,61 @@ class _PreviewAssigneePickerSheet extends StatelessWidget {
               trailing: selectedUid == person.uid
                   ? const Icon(Icons.check_rounded)
                   : null,
-              onTap: () => Navigator.pop(context, person.uid),
+              onTap: () =>
+                  Navigator.pop(context, _AssigneeSelection(uid: person.uid)),
             ),
         ],
+      ),
+    );
+  }
+}
+
+enum _AttachmentAction { replace, remove }
+
+class _AttachmentActionsSheet extends StatelessWidget {
+  const _AttachmentActionsSheet({required this.attachment});
+
+  final NoteAttachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.attach_file_rounded),
+              title: Text(
+                attachment.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                attachment.isPdf ? 'Documento PDF' : 'Imagen adjunta',
+              ),
+            ),
+            ListTile(
+              key: const ValueKey('replace-note-attachment'),
+              leading: const Icon(Icons.swap_horiz_rounded),
+              title: const Text('Reemplazar adjunto'),
+              onTap: () => Navigator.pop(context, _AttachmentAction.replace),
+            ),
+            ListTile(
+              key: const ValueKey('remove-note-attachment'),
+              leading: Icon(
+                Icons.delete_outline_rounded,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              title: Text(
+                'Quitar adjunto',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              onTap: () => Navigator.pop(context, _AttachmentAction.remove),
+            ),
+          ],
+        ),
       ),
     );
   }

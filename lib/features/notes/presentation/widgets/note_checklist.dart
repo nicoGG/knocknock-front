@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
 import 'package:uuid/uuid.dart';
 
 class NoteChecklistEditor extends StatefulWidget {
@@ -166,7 +167,7 @@ class _NoteChecklistEditorState extends State<NoteChecklistEditor> {
   }
 }
 
-class _ChecklistEditorRow extends StatelessWidget {
+class _ChecklistEditorRow extends StatefulWidget {
   const _ChecklistEditorRow({
     required this.item,
     required this.index,
@@ -193,10 +194,55 @@ class _ChecklistEditorRow extends StatelessWidget {
   final FocusNode? focusNode;
 
   @override
+  State<_ChecklistEditorRow> createState() => _ChecklistEditorRowState();
+}
+
+class _ChecklistEditorRowState extends State<_ChecklistEditorRow> {
+  late final TextEditingController _controller;
+  String? _linkUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: noteChecklistDisplayText(widget.item.text),
+    );
+    _linkUrl = noteChecklistLinkFromText(widget.item.text)?.url;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChecklistEditorRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.text == widget.item.text) return;
+    final link = noteChecklistLinkFromText(widget.item.text);
+    if (link != null) {
+      _linkUrl = link.url;
+    } else if (widget.item.text.isNotEmpty) {
+      _linkUrl = null;
+    }
+    final displayText = link?.label ?? widget.item.text;
+    if (_controller.text != displayText) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _controller.text == displayText) return;
+        _controller.value = TextEditingValue(
+          text: displayText,
+          selection: TextSelection.collapsed(offset: displayText.length),
+        );
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: EdgeInsets.only(left: item.indent * 24, bottom: 8),
+      padding: EdgeInsets.only(left: widget.item.indent * 24, bottom: 8),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerLow,
@@ -208,7 +254,7 @@ class _ChecklistEditorRow extends StatelessWidget {
         child: Row(
           children: [
             ReorderableDragStartListener(
-              index: index,
+              index: widget.index,
               child: Tooltip(
                 message: 'Arrastrar subtarea',
                 child: Padding(
@@ -224,31 +270,43 @@ class _ChecklistEditorRow extends StatelessWidget {
               ),
             ),
             Checkbox(
-              value: item.isCompleted,
-              onChanged: (value) =>
-                  onChanged(item.copyWith(isCompleted: value ?? false)),
+              value: widget.item.isCompleted,
+              onChanged: (value) => widget.onChanged(
+                widget.item.copyWith(isCompleted: value ?? false),
+              ),
             ),
             Expanded(
               child: TextFormField(
-                key: ValueKey('checklist-text-${item.id}'),
-                initialValue: item.text,
-                focusNode: focusNode,
+                key: ValueKey('checklist-text-${widget.item.id}'),
+                controller: _controller,
+                focusNode: widget.focusNode,
                 maxLength: 120,
                 textCapitalization: TextCapitalization.sentences,
                 inputFormatters: const [InitialUppercaseTextFormatter()],
                 textInputAction: TextInputAction.next,
-                autofocus: item.text.isEmpty,
+                autofocus: widget.item.text.isEmpty,
                 decoration: const InputDecoration(
                   hintText: 'Escribe una subtarea',
                   counterText: '',
                   border: InputBorder.none,
                   filled: false,
                 ),
-                onChanged: (text) => onChanged(
-                  item.copyWith(text: capitalizeInitialLetter(text)),
-                ),
+                onChanged: _updateLabel,
                 onFieldSubmitted: (text) =>
-                    onSubmitted(capitalizeInitialLetter(text)),
+                    widget.onSubmitted(capitalizeInitialLetter(text)),
+              ),
+            ),
+            IconButton(
+              key: ValueKey('edit-checklist-link-${widget.item.id}'),
+              tooltip: _linkUrl == null
+                  ? 'Convertir en vínculo'
+                  : 'Editar vínculo',
+              onPressed: _editLink,
+              icon: Icon(
+                _linkUrl == null ? Icons.link_rounded : Icons.link_off_rounded,
+                color: _linkUrl == null
+                    ? colorScheme.onSurface.withValues(alpha: 0.64)
+                    : colorScheme.primary,
               ),
             ),
             PopupMenuButton<String>(
@@ -257,17 +315,17 @@ class _ChecklistEditorRow extends StatelessWidget {
               onSelected: (value) {
                 switch (value) {
                   case 'indent':
-                    onIndent();
+                    widget.onIndent();
                   case 'outdent':
-                    onOutdent();
+                    widget.onOutdent();
                   case 'delete':
-                    onDelete();
+                    widget.onDelete();
                 }
               },
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: 'indent',
-                  enabled: canIndent,
+                  enabled: widget.canIndent,
                   child: const _ChecklistMenuItem(
                     icon: Icons.subdirectory_arrow_right_rounded,
                     label: 'Convertir en subtarea',
@@ -275,7 +333,7 @@ class _ChecklistEditorRow extends StatelessWidget {
                 ),
                 PopupMenuItem(
                   value: 'outdent',
-                  enabled: canOutdent,
+                  enabled: widget.canOutdent,
                   child: const _ChecklistMenuItem(
                     icon: Icons.subdirectory_arrow_left_rounded,
                     label: 'Subir un nivel',
@@ -294,6 +352,41 @@ class _ChecklistEditorRow extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _updateLabel(String text) {
+    final label = capitalizeInitialLetter(text);
+    final storedText = _linkUrl == null || label.trim().isEmpty
+        ? label
+        : noteChecklistStoredLink(NoteLinkValue(label: label, url: _linkUrl!));
+    widget.onChanged(widget.item.copyWith(text: storedText));
+  }
+
+  Future<void> _editLink() async {
+    final currentText = _linkUrl == null
+        ? _controller.text
+        : noteChecklistStoredLink(
+            NoteLinkValue(label: _controller.text, url: _linkUrl!),
+          );
+    final result = await showNoteChecklistLinkDialog(
+      context,
+      currentText: currentText,
+    );
+    if (!mounted || result == null) return;
+    if (result.removeLink) {
+      setState(() => _linkUrl = null);
+      widget.onChanged(widget.item.copyWith(text: _controller.text));
+      return;
+    }
+    final link = result.value!;
+    setState(() {
+      _linkUrl = link.url;
+      _controller.value = TextEditingValue(
+        text: link.label,
+        selection: TextSelection.collapsed(offset: link.label.length),
+      );
+    });
+    widget.onChanged(widget.item.copyWith(text: noteChecklistStoredLink(link)));
   }
 }
 
@@ -381,6 +474,9 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
     final animationDuration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 220);
+    final itemsLayoutFingerprint = widget.items
+        .map((item) => '${item.id}:${item.isCompleted ? 1 : 0}')
+        .join('|');
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -433,6 +529,20 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
         final completedLabel = completedItems.length == 1
             ? '1 elemento completado'
             : '${completedItems.length} elementos completados';
+        final completedItemsSection = completedExpanded
+            ? Column(
+                key: const ValueKey('preview-completed-section-items'),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final item in visibleCompleted)
+                    _ChecklistPreviewRow(
+                      item: item,
+                      foregroundColor: widget.foregroundColor,
+                      onToggle: widget.onToggle,
+                    ),
+                ],
+              )
+            : const SizedBox.shrink();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -516,27 +626,21 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
                 ),
               ),
               ClipRect(
-                child: AnimatedSize(
-                  duration: animationDuration,
-                  curve: Curves.easeInOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: completedExpanded
-                      ? Column(
-                          key: const ValueKey(
-                            'preview-completed-section-items',
-                          ),
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (final item in visibleCompleted)
-                              _ChecklistPreviewRow(
-                                item: item,
-                                foregroundColor: widget.foregroundColor,
-                                onToggle: widget.onToggle,
-                              ),
-                          ],
-                        )
-                      : const SizedBox.shrink(),
-                ),
+                // Masonry cards animate their own measured height. When the
+                // expansion is externally controlled, rendering an additional
+                // AnimatedSize here keeps stale rows inside tighter constraints
+                // and can overflow during the transition.
+                child: widget.completedExpanded == null
+                    ? AnimatedSize(
+                        key: ValueKey(
+                          'preview-completed-size-$itemsLayoutFingerprint',
+                        ),
+                        duration: animationDuration,
+                        curve: Curves.easeInOutCubic,
+                        alignment: Alignment.topCenter,
+                        child: completedItemsSection,
+                      )
+                    : completedItemsSection,
               ),
             ],
           ],
@@ -579,8 +683,8 @@ class _ChecklistPreviewRow extends StatelessWidget {
           ),
           const SizedBox(width: 7),
           Expanded(
-            child: Text(
-              item.text.isEmpty ? 'Subtarea sin nombre' : item.text,
+            child: NoteChecklistLinkText(
+              text: item.text.isEmpty ? 'Subtarea sin nombre' : item.text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -729,8 +833,8 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
                               ),
                       ),
                       Expanded(
-                        child: Text(
-                          item.text,
+                        child: NoteChecklistLinkText(
+                          text: item.text,
                           style: Theme.of(context).textTheme.bodyLarge
                               ?.copyWith(
                                 color: effectiveForeground,
@@ -900,7 +1004,7 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
         ),
         title: const Text('¿Eliminar subtarea?'),
         content: Text(
-          'Se eliminará “${item.text}”. Esta acción no se puede deshacer.',
+          'Se eliminará “${noteChecklistDisplayText(item.text)}”. Esta acción no se puede deshacer.',
         ),
         actions: [
           TextButton(

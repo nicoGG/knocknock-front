@@ -18,6 +18,7 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
+import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 List<MethodCall> _captureSystemSoundCalls(WidgetTester tester) {
@@ -43,6 +44,11 @@ Future<void> _openNoteDetailFromPreview(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey('open-note-from-preview-button')));
   await tester.pumpAndSettle();
   expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
+  final route = ModalRoute.of(
+    tester.element(find.byKey(const ValueKey('note-detail-page'))),
+  );
+  expect(route?.transitionDuration, const Duration(milliseconds: 230));
+  expect(route?.reverseTransitionDuration, const Duration(milliseconds: 180));
 }
 
 void main() {
@@ -72,19 +78,42 @@ void main() {
     await tester.pump();
 
     expect(find.text('Mis notas'), findsOneWidget);
-    expect(find.byKey(const ValueKey('share-list-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('invite-list-menu-item')), findsOneWidget);
+    expect(find.text('Invitar personas'), findsOneWidget);
   });
 
   testWidgets('opens the private global note search from the app bar', (
     tester,
   ) async {
+    final authRepository = _FakeAuthRepository();
+    final notificationsController = NotificationsController(
+      authRepository: authRepository,
+      apiBaseUrl: 'http://localhost:4000/api',
+    );
+    addTearDown(notificationsController.dispose);
     await tester.pumpWidget(
       NockNockApp(
         repository: _FakeNotesRepository(),
-        authRepository: _FakeAuthRepository(),
+        authRepository: authRepository,
+        notificationsController: notificationsController,
       ),
     );
     await tester.pumpAndSettle();
+
+    final connectionCenter = tester.getCenter(
+      find.byKey(const ValueKey('connection-status-button')),
+    );
+    final searchCenter = tester.getCenter(
+      find.byKey(const ValueKey('global-note-search-button')),
+    );
+    final bellCenter = tester.getCenter(
+      find.byKey(const ValueKey('notifications-button')),
+    );
+    expect(connectionCenter.dx, lessThan(searchCenter.dx));
+    expect(searchCenter.dx, lessThan(bellCenter.dx));
 
     await tester.tap(find.byKey(const ValueKey('global-note-search-button')));
     await tester.pumpAndSettle();
@@ -102,7 +131,118 @@ void main() {
     );
   });
 
-  testWidgets('collaborator avatars float softly with staggered movement', (
+  testWidgets('search results reuse the compact home task design', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          noteCount: 0,
+          category: NoteCategory.shopping,
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('global-note-search-button')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.enterText(
+      find.byKey(const ValueKey('global-note-search-field')),
+      'Comprar',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    final result = find.byKey(
+      const ValueKey('global-note-search-result-note-1'),
+    );
+    expect(result, findsOneWidget);
+    expect(
+      find.descendant(of: result, matching: find.text('Comprar café')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: result,
+        matching: find.text('Mis notas · Para la reunión de mañana'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('compact-note-status-note-1')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('compact-note-category-note-1')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: result, matching: find.text('Compras')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: result, matching: find.byType(Checkbox)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('compact-open-indicator-note-1')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('pin-note-note-1')),
+      ),
+      findsNothing,
+    );
+    final surface = tester.widget<Material>(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('note-surface-note-1')),
+      ),
+    );
+    expect(surface.color, NoteCategoryStyle.baseColor(NoteCategory.shopping));
+    final surfaceRect = tester.getRect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('note-surface-note-1')),
+      ),
+    );
+    final statusRect = tester.getRect(
+      find.descendant(
+        of: result,
+        matching: find.byKey(const ValueKey('compact-note-status-note-1')),
+      ),
+    );
+    expect(statusRect.left - surfaceRect.left, greaterThanOrEqualTo(14));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(result);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
+  });
+
+  testWidgets('collaborator avatars float beside the three-dot menu', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 720);
@@ -118,6 +258,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('share-list-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('collaborator-avatar-stack')),
+      findsOneWidget,
+    );
+
     final firstAvatar = find.byKey(
       const ValueKey('collaborator-avatar-float-0'),
     );
@@ -126,7 +272,6 @@ void main() {
     );
     expect(firstAvatar, findsOneWidget);
     expect(secondAvatar, findsOneWidget);
-
     final collaboratorsButtonRect = tester.getRect(
       find.byKey(const ValueKey('share-list-button')),
     );
@@ -253,6 +398,25 @@ void main() {
     final anaFilter = find.byKey(const ValueKey('assignee-filter-person-ana'));
     expect(anaFilter, findsOneWidget);
     expect(
+      find.descendant(of: anaFilter, matching: find.text('Ana')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: anaFilter, matching: find.text('Ana Torres')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: anaFilter,
+        matching: find.byIcon(Icons.drag_indicator_rounded),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('assignee-filter-avatar-person-ana')),
+      findsOneWidget,
+    );
+    expect(
       find.descendant(
         of: find.byKey(const ValueKey('assignee-filter-count-person-ana')),
         matching: find.text('1'),
@@ -328,6 +492,45 @@ void main() {
     expect(anaFilter, findsNothing);
     expect(find.text('Comprar café'), findsNothing);
     expect(find.text('Nota 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('participant filter shows first name, photo, and count', (
+    tester,
+  ) async {
+    const photoUrl = 'https://example.com/ana.png';
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          withInvitedPeople: true,
+          collaboratorPhotoUrl: photoUrl,
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final filter = find.byKey(const ValueKey('assignee-filter-person-ana'));
+    expect(
+      find.descendant(of: filter, matching: find.text('Ana')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('assignee-filter-photo-person-ana')),
+      findsOneWidget,
+    );
+    final image = tester.widget<Image>(
+      find.byKey(const ValueKey('assignee-filter-photo-person-ana')),
+    );
+    expect(image.image, isA<NetworkImage>());
+    expect((image.image as NetworkImage).url, photoUrl);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('assignee-filter-count-person-ana')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -493,6 +696,8 @@ void main() {
           withInvitedPeople: true,
           category: NoteCategory.shopping,
           initialContent: 'Texto importante para mañana',
+          initialCreatedAt: DateTime(2026, 1, 2, 9, 5),
+          initialUpdatedAt: DateTime(2026, 2, 3, 18, 45),
           initialContentDelta:
               '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
         ),
@@ -511,6 +716,30 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    final previewRoute = ModalRoute.of(
+      tester.element(find.byKey(const ValueKey('note-preview-dialog'))),
+    );
+    expect(previewRoute?.transitionDuration, const Duration(milliseconds: 230));
+    expect(
+      find.byKey(const ValueKey('note-preview-transition-boundary')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<BackdropFilter>(
+            find.byKey(const ValueKey('note-preview-background-blur')),
+          )
+          .enabled,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<BackdropFilter>(
+            find.byKey(const ValueKey('note-preview-dock-blur')),
+          )
+          .enabled,
+      isFalse,
+    );
     expect(
       tester
           .widget<Material>(
@@ -571,6 +800,14 @@ void main() {
       of: previewCard,
       matching: find.byKey(const ValueKey('preview-assigned-to-note-1')),
     );
+    final createdAt = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('preview-created-at-note-1')),
+    );
+    final updatedAt = find.descendant(
+      of: previewCard,
+      matching: find.byKey(const ValueKey('preview-updated-at-note-1')),
+    );
     final authorAvatar = find.descendant(
       of: previewCard,
       matching: find.byKey(const ValueKey('author-avatar-note-1')),
@@ -581,6 +818,24 @@ void main() {
     );
     expect(createdBy, findsOneWidget);
     expect(assignedTo, findsOneWidget);
+    expect(createdAt, findsOneWidget);
+    expect(updatedAt, findsOneWidget);
+    expect(
+      tester.widget<Text>(createdAt).data,
+      'Creación · 02 ene 2026 · 09:05',
+    );
+    expect(
+      tester.widget<Text>(updatedAt).data,
+      'Última edición · 03 feb 2026 · 18:45',
+    );
+    expect(tester.widget<Text>(createdAt).style?.fontSize, 8);
+    expect(tester.widget<Text>(createdAt).style?.fontStyle, FontStyle.italic);
+    expect(tester.widget<Text>(updatedAt).style?.fontSize, 8);
+    expect(tester.widget<Text>(updatedAt).style?.fontStyle, FontStyle.italic);
+    expect(
+      tester.getRect(createdAt).left,
+      lessThan(tester.getRect(updatedAt).left),
+    );
     expect(authorAvatar, findsOneWidget);
     expect(assigneeAvatar, findsOneWidget);
     expect(
@@ -714,6 +969,97 @@ void main() {
     expect(find.byKey(const ValueKey('note-detail-page')), findsOneWidget);
   });
 
+  testWidgets(
+    'saves a custom assignee without disposing the field during dialog exit',
+    (tester) async {
+      final repository = _FakeNotesRepository(withInvitedPeople: true);
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('note-note-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('note-preview-card')),
+          matching: find.byKey(const ValueKey('assignee-avatar-note-1')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('preview-assignee-custom')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('custom-assignee-name-field')),
+        '  Camila  ',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('save-custom-assignee-button')),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await tester.pumpAndSettle();
+
+      expect(
+        repository.lastChanges,
+        containsPair('customAssigneeName', 'Camila'),
+      );
+      expect(repository.lastChanges, containsPair('assigneeUid', null));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('card editors stay above the keyboard', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('new-note-fab')));
+    await tester.pumpAndSettle();
+    final createDialog = find.byKey(const ValueKey('note-create-dialog'));
+    final createTopBeforeKeyboard = tester.getTopLeft(createDialog).dy;
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.pump();
+
+    expect(tester.getBottomLeft(createDialog).dy, lessThanOrEqualTo(544));
+    expect(
+      tester.getTopLeft(createDialog).dy,
+      lessThan(createTopBeforeKeyboard),
+    );
+
+    tester.view.viewInsets = FakeViewPadding.zero;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('close-note-editor-button')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    final previewDialog = find.byKey(const ValueKey('note-preview-dialog'));
+    final previewTopBeforeKeyboard = tester.getTopLeft(previewDialog).dy;
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.pump();
+
+    expect(tester.getBottomLeft(previewDialog).dy, lessThanOrEqualTo(544));
+    expect(
+      tester.getTopLeft(previewDialog).dy,
+      lessThan(previewTopBeforeKeyboard),
+    );
+  });
+
   testWidgets('long press drag reorders notes in mosaic mode', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -841,8 +1187,12 @@ void main() {
     final pinRect = tester.getRect(
       find.byKey(const ValueKey('pin-note-note-1')),
     );
+    final animatedCard = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('grid-note-size-note-1')),
+    );
 
     expect(pinRect.center.dy, closeTo(reactionsRect.center.dy, 0.5));
+    expect(animatedCard.child, isA<OverflowBox>());
     expect(tester.takeException(), isNull);
   });
 
@@ -1359,16 +1709,14 @@ void main() {
     );
     expect(find.textContaining('Tiempo real'), findsNothing);
     expect(find.text('1 nota'), findsNothing);
-    final shareListButton = find.byKey(const ValueKey('share-list-button'));
     final listOptionsButtonRect = tester.getRect(listOptionsButton);
-    expect(
-      listOptionsButtonRect.left - tester.getRect(shareListButton).right,
-      closeTo(8, 0.1),
-    );
+    expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
     expect(listOptionsButtonRect.right, greaterThan(398));
 
     await tester.tap(listOptionsButton);
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('invite-list-menu-item')), findsOneWidget);
+    expect(find.text('Invitar personas'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('customize-background-menu-item')),
     );
@@ -2117,6 +2465,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('add-note-reaction-button')));
     await tester.pumpAndSettle();
     expect(find.text('Reaccionar a la nota'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-🍕')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-🍔')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-✈️')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-✅')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reaction-option-💪')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('reaction-option-🎉')));
     await tester.pumpAndSettle();
 
@@ -2644,7 +2997,7 @@ void main() {
     );
     expect(
       find.descendant(of: assignedCard, matching: find.text('Ana')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: assignedCard, matching: find.text('Ana Torres')),
@@ -2656,18 +3009,26 @@ void main() {
         matching: find.text('Para la reunión de mañana'),
       ),
     );
-    expect(gridContent.maxLines, 7);
-    expect(gridContent.overflow, TextOverflow.ellipsis);
+    expect(gridContent.maxLines, isNull);
+    expect(gridContent.overflow, TextOverflow.visible);
     final contentRect = tester.getRect(
       find.descendant(
         of: assignedCard,
         matching: find.text('Para la reunión de mañana'),
       ),
     );
+    final reminderRect = tester.getRect(
+      find.byKey(const ValueKey('grid-reminder-note-1')),
+    );
+    expect(reminderRect.top - contentRect.bottom, greaterThanOrEqualTo(8));
     final assigneeRect = tester.getRect(
       find.byKey(const ValueKey('grid-assignee-note-1')),
     );
-    expect(assigneeRect.top - contentRect.bottom, greaterThanOrEqualTo(10));
+    final noteSurfaceRect = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-1')),
+    );
+    expect(assigneeRect.right, closeTo(noteSurfaceRect.right - 12, 0.1));
+    expect(assigneeRect.top - reminderRect.bottom, greaterThanOrEqualTo(10));
     expect(find.byKey(const ValueKey('masonry-grid-columns')), findsOneWidget);
     expect(find.byKey(const ValueKey('masonry-grid-column-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('masonry-grid-column-1')), findsOneWidget);
@@ -2813,6 +3174,8 @@ void main() {
     expect(openHint, findsOneWidget);
     expect(tester.takeException(), isNull);
 
+    await tester.ensureVisible(openHint);
+    await tester.pumpAndSettle();
     await tester.tap(openHint);
     await tester.pumpAndSettle();
     await _openNoteDetailFromPreview(tester);
@@ -2821,6 +3184,73 @@ void main() {
       find.byKey(const ValueKey('detail-checklist-long-task-11')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('masonry height includes the full description and subtasks', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const description =
+        'Comprar tercera dosis Wegovy y confirmar la disponibilidad antes de '
+        'ir. Revisar las indicaciones, el horario de atención y llevar toda la '
+        'documentación necesaria. https://www.cruzverde.cl/wegovy-05-mg';
+    const checklist = [
+      NoteChecklistItem(id: 'task-call', text: 'Llamar a la farmacia'),
+      NoteChecklistItem(id: 'task-order', text: 'Confirmar el pedido'),
+    ];
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          initialContent: description,
+          category: NoteCategory.health,
+          checklist: checklist,
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('reorder-grid-note-1'));
+    final descriptionFinder = find.byKey(
+      const ValueKey('grid-description-note-1'),
+    );
+    final firstSubtask = find.byKey(const ValueKey('preview-check-task-call'));
+    final lastSubtask = find.byKey(const ValueKey('preview-check-task-order'));
+    expect(descriptionFinder, findsOneWidget);
+    expect(firstSubtask, findsOneWidget);
+    expect(lastSubtask, findsOneWidget);
+
+    final descriptionViewer = tester.widget<NoteLinkifiedText>(
+      descriptionFinder,
+    );
+    expect(descriptionViewer.plainText, description);
+    expect(descriptionViewer.maxLines, isNull);
+    expect(descriptionViewer.overflow, TextOverflow.visible);
+    expect(
+      find.textContaining(
+        'https://www.cruzverde.cl/wegovy-05-mg',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.getBottomLeft(descriptionFinder).dy,
+      lessThan(tester.getTopLeft(firstSubtask).dy),
+    );
+    expect(
+      tester.getBottomLeft(lastSubtask).dy,
+      lessThan(
+        tester
+            .getBottomLeft(find.byKey(const ValueKey('note-surface-note-1')))
+            .dy,
+      ),
+    );
+    expect(tester.getSize(card).height, greaterThan(320));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -2901,6 +3331,68 @@ void main() {
     },
   );
 
+  testWidgets('toggling dense masonry subtasks does not overflow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const checklist = [
+      NoteChecklistItem(id: 'task-pending', text: 'Bandejas'),
+      NoteChecklistItem(
+        id: 'task-completed-1',
+        text: 'Bujías',
+        isCompleted: true,
+      ),
+      NoteChecklistItem(
+        id: 'task-completed-2',
+        text: 'Filtro de aire',
+        isCompleted: true,
+      ),
+      NoteChecklistItem(
+        id: 'task-completed-3',
+        text: 'Pastillas de freno',
+        isCompleted: true,
+      ),
+      NoteChecklistItem(
+        id: 'task-completed-4',
+        text: 'Aceite',
+        isCompleted: true,
+      ),
+    ];
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          withInvitedPeople: true,
+          category: NoteCategory.shopping,
+          checklist: checklist,
+          initialReminderAt: DateTime(2026, 8, 12, 9),
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('preview-check-task-completed-1')),
+    );
+    for (final elapsed in const [
+      Duration.zero,
+      Duration(milliseconds: 16),
+      Duration(milliseconds: 80),
+      Duration(milliseconds: 140),
+    ]) {
+      await tester.pump(elapsed);
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpAndSettle();
+
+    expect(find.text('3 elementos completados'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('empty masonry notes show only title and optional assignee', (
     tester,
   ) async {
@@ -2944,11 +3436,21 @@ void main() {
     );
     expect(
       find.descendant(of: assignedCard, matching: find.text('Ana')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: assignedCard, matching: find.text('Ana Torres')),
       findsNothing,
+    );
+    final emptyCardAssigneeRect = tester.getRect(
+      find.byKey(const ValueKey('grid-assignee-note-1')),
+    );
+    final emptyCardSurfaceRect = tester.getRect(
+      find.byKey(const ValueKey('note-surface-note-1')),
+    );
+    expect(
+      emptyCardAssigneeRect.right,
+      closeTo(emptyCardSurfaceRect.right - 12, 0.1),
     );
     expect(
       find.descendant(of: assignedCard, matching: find.text('Compras')),
@@ -3272,7 +3774,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('restores the selected board view after reopening the app', (
+  testWidgets('restores view and status filter independently for each list', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(360, 800);
@@ -3282,28 +3784,127 @@ void main() {
 
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(),
+        repository: _FakeNotesRepository(withPinnedAcrossLists: true),
         authRepository: _FakeAuthRepository(),
       ),
     );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('view-mode-list-motion')),
+          )
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('filter-mode-pending-motion')),
+          )
+          .scale,
+      1,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('list-work')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Trabajo'), findsOneWidget);
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('view-mode-grid-motion')),
+          )
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('filter-mode-all-motion')),
+          )
+          .scale,
+      1,
+    );
+    await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('list-home')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('view-mode-list-motion')),
+          )
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('filter-mode-pending-motion')),
+          )
+          .scale,
+      1,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
     await tester.pumpWidget(
       NockNockApp(
-        repository: _FakeNotesRepository(),
+        repository: _FakeNotesRepository(withPinnedAcrossLists: true),
         authRepository: _FakeAuthRepository(),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('notes-list')), findsOneWidget);
-    expect(find.byKey(const ValueKey('view-mode-list')), findsOneWidget);
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('view-mode-list-motion')),
+          )
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('filter-mode-pending-motion')),
+          )
+          .scale,
+      1,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('list-work')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('view-mode-grid-motion')),
+          )
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(
+            find.byKey(const ValueKey('filter-mode-completed-motion')),
+          )
+          .scale,
+      1,
+    );
   });
 
   testWidgets('shows profile and creates a list from the menu', (tester) async {
@@ -4534,7 +5135,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('share-list-button')));
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('invite-list-menu-item')));
     await tester.pumpAndSettle();
 
     expect(find.text('Inicia sesión para compartir'), findsOneWidget);
@@ -4558,7 +5161,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('share-list-button')));
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('invite-list-menu-item')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('collaborators-dialog')), findsOneWidget);
     expect(
@@ -4623,7 +5228,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('share-list-button')));
+    await tester.tap(find.byKey(const ValueKey('list-options-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('invite-list-menu-item')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('remove-collaborator-person-ana')),
@@ -4795,6 +5402,7 @@ class _FakeAuthRepository implements AuthRepository {
 class _FakeNotesRepository
     implements
         NotesRepository,
+        NotesSearchRepository,
         LocalNotesDataCleaner,
         AggregateBoardAppearancesRepository {
   _FakeNotesRepository({
@@ -4813,6 +5421,8 @@ class _FakeNotesRepository
     List<NoteChecklistItem> checklist = const [],
     List<NoteReaction> reactions = const [],
     DateTime? initialReminderAt,
+    DateTime? initialCreatedAt,
+    DateTime? initialUpdatedAt,
   }) : _note = Note(
          id: 'note-1',
          boardId: 'home',
@@ -4831,8 +5441,8 @@ class _FakeNotesRepository
          positionX: 0,
          positionY: 0,
          reminderAt: initialReminderAt,
-         createdAt: DateTime(2026),
-         updatedAt: DateTime(2026),
+         createdAt: initialCreatedAt ?? DateTime(2026),
+         updatedAt: initialUpdatedAt ?? DateTime(2026),
        ),
        _lists = [
          NoteList(
@@ -5052,6 +5662,19 @@ class _FakeNotesRepository
         updatedAt: _note.updatedAt,
       );
     });
+  }
+
+  @override
+  Future<List<NoteSearchResult>> searchNotes(String query) async {
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isEmpty) return const [];
+    final searchableText = [
+      _note.title,
+      _note.content,
+      ..._note.checklist.map((item) => item.text),
+    ].join(' ').toLowerCase();
+    if (!searchableText.contains(normalizedQuery)) return const [];
+    return [NoteSearchResult(note: _note, list: _lists.first)];
   }
 
   @override

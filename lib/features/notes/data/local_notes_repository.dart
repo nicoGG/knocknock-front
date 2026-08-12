@@ -17,6 +17,7 @@ class LocalNotesRepository
         LocalNotesDataCleaner,
         LocalNotesDataReader,
         AggregateBoardAppearancesRepository,
+        NoteAttachmentsRepository,
         NotesSearchRepository {
   LocalNotesRepository({
     PreferencesLoader? preferencesLoader,
@@ -230,6 +231,8 @@ class LocalNotesRepository
       checklist: draft.checklist,
       authorName: draft.authorName,
       assigneeUid: draft.assigneeUid,
+      customAssigneeName: draft.customAssigneeName,
+      attachment: draft.attachment,
       isCompleted: false,
       sortOrder: -now.microsecondsSinceEpoch,
       positionX: 0,
@@ -241,6 +244,17 @@ class LocalNotesRepository
     _notes!.add(note);
     await _persist();
     return note;
+  }
+
+  @override
+  Future<NoteAttachment> fetchAttachment(String noteId) async {
+    await _ensureLoaded();
+    final attachment = _notes!
+        .where((note) => note.id == noteId)
+        .firstOrNull
+        ?.attachment;
+    if (attachment?.dataBase64 == null) throw const NotesPersistenceFailure();
+    return attachment!;
   }
 
   @override
@@ -284,6 +298,16 @@ class LocalNotesRepository
       assigneeUid: changes.containsKey('assigneeUid')
           ? changes['assigneeUid'] as String?
           : existing.assigneeUid,
+      customAssigneeName: changes.containsKey('customAssigneeName')
+          ? changes['customAssigneeName'] as String?
+          : existing.customAssigneeName,
+      attachment: changes.containsKey('attachment')
+          ? changes['attachment'] is Map
+                ? NoteAttachment.fromJson(
+                    Map<String, dynamic>.from(changes['attachment'] as Map),
+                  )
+                : null
+          : existing.attachment,
       isCompleted: changes['isCompleted'] as bool? ?? existing.isCompleted,
       isPinned: changes['isPinned'] as bool? ?? existing.isPinned,
       sortOrder: (changes['sortOrder'] as num?)?.toInt() ?? existing.sortOrder,

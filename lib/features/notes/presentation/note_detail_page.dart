@@ -5,6 +5,7 @@ import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_state.dart';
+import 'package:nocknock/features/notes/presentation/note_assignee.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
@@ -13,6 +14,45 @@ import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.d
 import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
+
+Route<void> buildNoteDetailRoute({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) {
+  final disableAnimations = MediaQuery.disableAnimationsOf(context);
+  return PageRouteBuilder<void>(
+    transitionDuration: disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 230),
+    reverseTransitionDuration: disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 180),
+    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      if (disableAnimations) return child;
+      final entrance = CurvedAnimation(
+        parent: animation,
+        curve: const Cubic(0.16, 1, 0.3, 1),
+        reverseCurve: Curves.easeInCubic,
+      );
+      return FadeTransition(
+        key: const ValueKey('note-detail-route-transition'),
+        opacity: Tween<double>(begin: 0.48, end: 1).animate(entrance),
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.014),
+            end: Offset.zero,
+          ).animate(entrance),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.992, end: 1).animate(entrance),
+            alignment: Alignment.topCenter,
+            child: child,
+          ),
+        ),
+      );
+    },
+  );
+}
 
 class NoteDetailPage extends StatelessWidget {
   const NoteDetailPage({
@@ -52,9 +92,7 @@ class NoteDetailPage extends StatelessWidget {
           ?signedInUserId: 'Tú',
           localNoteReactionUserId: 'Tú',
         };
-        final assignee = assignees
-            .where((person) => person.uid == note.assigneeUid)
-            .firstOrNull;
+        final assignee = resolveNoteAssignee(note, assignees);
         final assigneePhotoUrl = _firstPhotoUrl(
           assignee?.uid == currentUserId ? currentUserPhotoUrl : null,
           assignee?.photoUrl,
@@ -182,7 +220,7 @@ class NoteDetailPage extends StatelessWidget {
     final assignees =
         _listFrom(cubit.state, note)?.collaborators ??
         const <ListCollaborator>[];
-    final selectedUid = await showModalBottomSheet<String>(
+    final selection = await showModalBottomSheet<_DetailAssigneeSelection>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
@@ -203,10 +241,12 @@ class NoteDetailPage extends StatelessWidget {
                 child: Icon(Icons.person_off_outlined),
               ),
               title: const Text('Sin responsable'),
-              trailing: note.assigneeUid == null
+              trailing:
+                  note.assigneeUid == null && note.customAssigneeName == null
                   ? const Icon(Icons.check_rounded)
                   : null,
-              onTap: () => Navigator.pop(sheetContext, ''),
+              onTap: () =>
+                  Navigator.pop(sheetContext, const _DetailAssigneeSelection()),
             ),
             ...assignees.map((person) {
               final label = person.displayName.trim().isNotEmpty
@@ -230,18 +270,87 @@ class NoteDetailPage extends StatelessWidget {
                 trailing: note.assigneeUid == person.uid
                     ? const Icon(Icons.check_rounded)
                     : null,
-                onTap: () => Navigator.pop(sheetContext, person.uid),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  _DetailAssigneeSelection(assigneeUid: person.uid),
+                ),
               );
             }),
+            ListTile(
+              key: const ValueKey('assignee-option-custom'),
+              leading: const CircleAvatar(
+                child: Icon(Icons.person_add_alt_1_outlined),
+              ),
+              title: const Text('Responsable personalizado'),
+              subtitle: const Text('Por ejemplo, alguien que te debe dinero'),
+              trailing: note.customAssigneeName?.trim().isNotEmpty ?? false
+                  ? const Icon(Icons.check_rounded)
+                  : null,
+              onTap: () async {
+                final name = await _askCustomAssigneeName(
+                  sheetContext,
+                  initialName: note.customAssigneeName,
+                );
+                if (name == null || !sheetContext.mounted) return;
+                Navigator.pop(
+                  sheetContext,
+                  _DetailAssigneeSelection(customName: name),
+                );
+              },
+            ),
           ],
         ),
       ),
     );
-    if (selectedUid == null || !context.mounted) return;
+    if (selection == null || !context.mounted) return;
     await cubit.updateNoteAssignee(
       note,
-      selectedUid.isEmpty ? null : selectedUid,
+      assigneeUid: selection.assigneeUid,
+      customAssigneeName: selection.customName,
     );
+  }
+
+  Future<String?> _askCustomAssigneeName(
+    BuildContext context, {
+    String? initialName,
+  }) async {
+    final controller = TextEditingController(text: initialName?.trim());
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Responsable personalizado'),
+        content: TextField(
+          key: const ValueKey('detail-custom-assignee-name-field'),
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            hintText: 'Nombre de la persona',
+            prefixIcon: Icon(Icons.person_outline_rounded),
+          ),
+          onSubmitted: (value) {
+            final name = value.trim();
+            if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
   }
 
   Future<void> _editReminder(BuildContext context, Note note) async {
@@ -1046,6 +1155,7 @@ class _ExpandableContentRowState extends State<_ExpandableContentRow> {
                             plainText: widget.note.content,
                             deltaJson: widget.note.contentDelta,
                             foregroundColor: widget.foregroundColor,
+                            onTapOutsideLink: _toggle,
                           ),
                   ),
                   const SizedBox(width: 8),
@@ -1335,6 +1445,13 @@ String? _firstPhotoUrl(String? primary, String? fallback) {
   return normalizedFallback == null || normalizedFallback.isEmpty
       ? null
       : normalizedFallback;
+}
+
+class _DetailAssigneeSelection {
+  const _DetailAssigneeSelection({this.assigneeUid, this.customName});
+
+  final String? assigneeUid;
+  final String? customName;
 }
 
 class _DetailFooter extends StatelessWidget {

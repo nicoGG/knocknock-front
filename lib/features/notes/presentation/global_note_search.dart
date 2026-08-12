@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
+import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 
 Future<NoteSearchResult?> showGlobalNoteSearch({
   required BuildContext context,
@@ -193,47 +195,37 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
     }
     return ListView.separated(
       key: const ValueKey('global-note-search-results'),
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
       itemCount: _results.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final result = _results[index];
         final note = result.note;
         final detail = note.content.trim().isNotEmpty
             ? note.content.trim()
-            : note.checklist.map((item) => item.text).join(' · ');
-        return Card(
-          margin: EdgeInsets.zero,
-          elevation: 0,
-          color: Theme.of(context).colorScheme.surfaceContainerLow,
-          child: ListTile(
-            key: ValueKey('global-note-search-result-${note.id}'),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 6,
-            ),
-            leading: CircleAvatar(
-              child: Icon(
-                note.isCompleted
-                    ? Icons.check_rounded
-                    : Icons.sticky_note_2_outlined,
-              ),
-            ),
-            title: Text(
-              note.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            subtitle: Text(
-              detail.isEmpty
-                  ? result.list.name
-                  : '${result.list.name} · $detail',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => Navigator.pop(context, result),
+            : note.checklist
+                  .map((item) => noteChecklistDisplayText(item.text))
+                  .join(' · ');
+        final subtitle = detail.isEmpty
+            ? result.list.name
+            : '${result.list.name} · $detail';
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final cardHeight = 88 + (48 * (textScale - 1).clamp(0.0, 1.0));
+        return SizedBox(
+          key: ValueKey('global-note-search-result-${note.id}'),
+          height: cardHeight,
+          child: PostItCard(
+            note: note,
+            layout: PostItCardLayout.compact,
+            compactSubtitle: subtitle,
+            compactReadOnly: true,
+            compactOpenIndicator: true,
+            showPin: false,
+            enableHero: false,
+            onToggle: () {},
+            onPin: () {},
+            onOpen: () => Navigator.pop(context, result),
+            onChecklistToggle: (_) {},
           ),
         );
       },

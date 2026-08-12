@@ -29,6 +29,14 @@ class ListAppearanceChanged extends NotesRealtimeEvent {
   final ListAppearance appearance;
 }
 
+class ListNameChanged extends NotesRealtimeEvent {
+  const ListNameChanged(this.listId, this.name, this.updatedAt);
+
+  final String listId;
+  final String name;
+  final DateTime updatedAt;
+}
+
 class AggregateBoardAppearanceChanged extends NotesRealtimeEvent {
   const AggregateBoardAppearanceChanged(this.scope, this.appearance);
 
@@ -207,6 +215,12 @@ abstract interface class PaginatedNotesRepository {
     String? cursor,
     int limit = 40,
   });
+}
+
+/// Optional capability for repositories that can lazily load encrypted file
+/// bytes without adding them to every board response.
+abstract interface class NoteAttachmentsRepository {
+  Future<NoteAttachment> fetchAttachment(String noteId);
 }
 
 class CollaborationRequiresSignInFailure implements Exception {

@@ -21,6 +21,7 @@ import 'package:nocknock/features/notes/presentation/board_view_mode_controller.
 import 'package:nocknock/features/notes/presentation/global_note_search.dart';
 import 'package:nocknock/features/notes/presentation/list_biometric_copy.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
+import 'package:nocknock/features/notes/presentation/note_assignee.dart';
 import 'package:nocknock/features/notes/presentation/note_detail_page.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/list_protection_guard.dart';
@@ -30,6 +31,7 @@ import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_preview_dialog.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
@@ -38,9 +40,7 @@ import 'package:nocknock/features/notifications/presentation/widgets/notificatio
 import 'package:nocknock/features/settings/presentation/settings_page.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-enum NoteFilter { all, pending, completed }
-
-enum _ListMenuAction { background, rename, protection, delete }
+enum _ListMenuAction { share, background, rename, protection, delete }
 
 enum _BoardScope { list, assignedToMe, pinned, withReminder }
 
@@ -85,7 +85,8 @@ class _BoardPageState extends State<BoardPage>
   NoteCategory? _categoryFilter;
   String? _assigneeFilterUid;
   _BoardScope _scope = _BoardScope.list;
-  late BoardViewMode _viewMode = widget.viewModeController.viewMode;
+  BoardViewMode _viewMode = BoardViewMode.grid;
+  late String _activePreferenceListId;
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
@@ -101,6 +102,10 @@ class _BoardPageState extends State<BoardPage>
   @override
   void initState() {
     super.initState();
+    final selectedListId = context.read<NotesCubit>().state.selectedListId;
+    _activePreferenceListId = selectedListId;
+    _filter = widget.viewModeController.filterFor(selectedListId);
+    _viewMode = widget.viewModeController.viewModeFor(selectedListId);
     unawaited(_filterOrderController.load());
     _entranceController = AnimationController(
       vsync: this,
@@ -122,7 +127,7 @@ class _BoardPageState extends State<BoardPage>
       curve: const Interval(0.42, 1, curve: Curves.easeOutBack),
     );
     _entranceController.forward();
-    widget.viewModeController.addListener(_restoreViewMode);
+    widget.viewModeController.addListener(_restoreBoardPreferences);
     widget.listProtectionController.addListener(_restoreListProtectionState);
     final notificationsController = widget.notificationsController;
     if (notificationsController != null) {
@@ -148,7 +153,7 @@ class _BoardPageState extends State<BoardPage>
 
   @override
   void dispose() {
-    widget.viewModeController.removeListener(_restoreViewMode);
+    widget.viewModeController.removeListener(_restoreBoardPreferences);
     widget.listProtectionController.removeListener(_restoreListProtectionState);
     unawaited(_notificationTapSubscription?.cancel());
     _entranceController.dispose();
@@ -165,6 +170,9 @@ class _BoardPageState extends State<BoardPage>
           previous.selectedListId != current.selectedListId ||
           previous.lists != current.lists,
       listener: (context, state) {
+        if (state.selectedListId != _activePreferenceListId) {
+          _restoreBoardPreferences(state.selectedListId);
+        }
         _scheduleActiveListProtectionSync(state);
         if (state.message != null) {
           ScaffoldMessenger.of(
@@ -215,7 +223,10 @@ class _BoardPageState extends State<BoardPage>
         final notes = selectedAssigneeUid == null
             ? categoryFilteredNotes
             : categoryFilteredNotes
-                  .where((note) => note.assigneeUid == selectedAssigneeUid)
+                  .where(
+                    (note) =>
+                        noteAssigneeFilterKey(note) == selectedAssigneeUid,
+                  )
                   .toList();
         final isPinnedScope = _scope == _BoardScope.pinned;
         final isWithReminderScope = _scope == _BoardScope.withReminder;
@@ -651,9 +662,7 @@ class _BoardPageState extends State<BoardPage>
         .where((list) => list.id == note.boardId)
         .firstOrNull;
     final collaborators = noteList?.collaborators ?? const [];
-    final assignee = collaborators
-        .where((person) => person.uid == note.assigneeUid)
-        .firstOrNull;
+    final assignee = resolveNoteAssignee(note, collaborators);
     final normalizedAuthorName = note.authorName.trim().toLowerCase();
     final author = collaborators
         .where(
@@ -743,15 +752,21 @@ class _BoardPageState extends State<BoardPage>
     }
 
     final counts = <String, int>{};
+    final customNamesByKey = <String, String>{};
     for (final note in notes) {
-      final assigneeUid = note.assigneeUid?.trim();
-      if (assigneeUid == null || assigneeUid.isEmpty) continue;
-      counts.update(assigneeUid, (count) => count + 1, ifAbsent: () => 1);
+      final assigneeKey = noteAssigneeFilterKey(note);
+      if (assigneeKey == null) continue;
+      counts.update(assigneeKey, (count) => count + 1, ifAbsent: () => 1);
+      final customName = note.customAssigneeName?.trim();
+      if (customName != null && customName.isNotEmpty) {
+        customNamesByKey.putIfAbsent(assigneeKey, () => customName);
+      }
     }
 
     return counts.entries
         .map((entry) {
           final collaborator = collaboratorsByUid[entry.key];
+          final customName = customNamesByKey[entry.key];
           final displayName = collaborator?.displayName.trim();
           final email = collaborator?.email.trim();
           return _AssigneeFilterOption(
@@ -760,6 +775,8 @@ class _BoardPageState extends State<BoardPage>
                 ? displayName!
                 : email?.isNotEmpty == true
                 ? email!.split('@').first
+                : customName?.isNotEmpty == true
+                ? customName!
                 : 'Usuario asignado',
             photoUrl: collaborator?.photoUrl,
             count: entry.value,
@@ -784,7 +801,7 @@ class _BoardPageState extends State<BoardPage>
       canShowList: widget.listProtectionController.canAccess,
     );
     if (!mounted || result == null) return;
-    _openNote(result.note);
+    unawaited(_openNotePreview(result.note));
   }
 
   Future<bool> _selectList(String listId) async {
@@ -815,6 +832,7 @@ class _BoardPageState extends State<BoardPage>
     }
     await cubit.selectList(listId);
     if (!mounted) return false;
+    _restoreBoardPreferences(listId);
     _scheduleActiveListProtectionSync(cubit.state);
     return true;
   }
@@ -881,7 +899,8 @@ class _BoardPageState extends State<BoardPage>
         .where((list) => list.id == note.boardId)
         .firstOrNull;
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildNoteDetailRoute(
+        context: context,
         builder: (_) => BlocProvider<NotesCubit>.value(
           value: cubit,
           child: NoteDetailPage(
@@ -953,9 +972,7 @@ class _BoardPageState extends State<BoardPage>
                 ?signedInUserId: 'Tú',
                 localNoteReactionUserId: 'Tú',
               };
-              final assignee = collaborators
-                  .where((person) => person.uid == note.assigneeUid)
-                  .firstOrNull;
+              final assignee = resolveNoteAssignee(note, collaborators);
               final normalizedAuthorName = note.authorName.trim().toLowerCase();
               final author = collaborators
                   .where(
@@ -996,6 +1013,9 @@ class _BoardPageState extends State<BoardPage>
                 },
                 onOpen: () {},
                 onAssigneeTap: editAssignee,
+                attachmentLoader: note.attachment == null
+                    ? null
+                    : () => cubit.loadAttachment(note),
                 inlineEditTarget: editTarget,
                 onInlineSave: saveInline,
                 onChecklistToggle: (item) {
@@ -1202,6 +1222,7 @@ class _BoardPageState extends State<BoardPage>
     if (confirmed == true && mounted) {
       final deleted = await cubit.deleteSelectedList();
       if (deleted) {
+        unawaited(widget.viewModeController.forgetList(list.id));
         await widget.listProtectionController.forgetList(list.id);
         if (mounted &&
             (_categoryFilter != null || _assigneeFilterUid != null)) {
@@ -1232,11 +1253,20 @@ class _BoardPageState extends State<BoardPage>
     );
   }
 
-  void _restoreViewMode() {
-    final restoredViewMode = widget.viewModeController.viewMode;
-    if (mounted && _viewMode != restoredViewMode) {
-      setState(() => _viewMode = restoredViewMode);
-    }
+  void _restoreBoardPreferences([String? listId]) {
+    if (!mounted) return;
+    final activeListId =
+        listId ?? context.read<NotesCubit>().state.selectedListId;
+    final restoredFilter = widget.viewModeController.filterFor(activeListId);
+    final restoredViewMode = widget.viewModeController.viewModeFor(
+      activeListId,
+    );
+    _activePreferenceListId = activeListId;
+    if (_filter == restoredFilter && _viewMode == restoredViewMode) return;
+    setState(() {
+      _filter = restoredFilter;
+      _viewMode = restoredViewMode;
+    });
   }
 
   void _restoreListProtectionState() {
@@ -1333,6 +1363,10 @@ class _BoardPageState extends State<BoardPage>
         _assigneeFilterUid = null;
       }),
     );
+    if (_scope == _BoardScope.list) {
+      final listId = context.read<NotesCubit>().state.selectedListId;
+      unawaited(widget.viewModeController.setFilter(listId, value));
+    }
   }
 
   void _changeCategoryFilter(NoteCategory? value) {
@@ -1366,7 +1400,11 @@ class _BoardPageState extends State<BoardPage>
   void _changeViewMode(BoardViewMode value) {
     if (_viewMode == value) return;
     _playBoardTapSound();
-    _withoutNoteEntrances(() => widget.viewModeController.setViewMode(value));
+    _withoutNoteEntrances(() => setState(() => _viewMode = value));
+    if (_scope == _BoardScope.list) {
+      final listId = context.read<NotesCubit>().state.selectedListId;
+      unawaited(widget.viewModeController.setViewMode(listId, value));
+    }
   }
 
   void _withoutNoteEntrances(VoidCallback update) {
@@ -1769,43 +1807,50 @@ class _NotesGridState extends State<_NotesGrid> {
                         : const Duration(milliseconds: 220),
                     curve: Curves.easeInOutCubic,
                     height: item.height,
-                    child: _NoteEntrance(
-                      key: ValueKey('note-entrance-${item.note.id}'),
-                      index: item.index,
-                      motionId: item.note.id,
-                      enabled: animateEntrances,
-                      child: _DraggableGridNote(
-                        key: ValueKey('reorder-grid-${item.note.id}'),
-                        note: item.note,
-                        onDrop: (draggedId) {
-                          final reordered = [...notes];
-                          final oldIndex = reordered.indexWhere(
-                            (note) => note.id == draggedId,
-                          );
-                          final targetIndex = reordered.indexWhere(
-                            (note) => note.id == item.note.id,
-                          );
-                          if (oldIndex == -1 ||
-                              targetIndex == -1 ||
-                              oldIndex == targetIndex) {
-                            return;
-                          }
-                          final moved = reordered.removeAt(oldIndex);
-                          reordered.insert(targetIndex, moved);
-                          onReorder(reordered.map((note) => note.id).toList());
-                        },
-                        child: buildCard(
-                          item.note,
-                          PostItCardLayout.grid,
-                          completedChecklistExpanded:
-                              !_collapsedCompletedChecklistNoteIds.contains(
-                                item.note.id,
-                              ),
-                          onCompletedChecklistExpansionChanged: (expanded) =>
-                              _setCompletedChecklistExpanded(
-                                item.note.id,
-                                expanded,
-                              ),
+                    child: OverflowBox(
+                      alignment: Alignment.topCenter,
+                      minHeight: item.height,
+                      maxHeight: item.height,
+                      child: _NoteEntrance(
+                        key: ValueKey('note-entrance-${item.note.id}'),
+                        index: item.index,
+                        motionId: item.note.id,
+                        enabled: animateEntrances,
+                        child: _DraggableGridNote(
+                          key: ValueKey('reorder-grid-${item.note.id}'),
+                          note: item.note,
+                          onDrop: (draggedId) {
+                            final reordered = [...notes];
+                            final oldIndex = reordered.indexWhere(
+                              (note) => note.id == draggedId,
+                            );
+                            final targetIndex = reordered.indexWhere(
+                              (note) => note.id == item.note.id,
+                            );
+                            if (oldIndex == -1 ||
+                                targetIndex == -1 ||
+                                oldIndex == targetIndex) {
+                              return;
+                            }
+                            final moved = reordered.removeAt(oldIndex);
+                            reordered.insert(targetIndex, moved);
+                            onReorder(
+                              reordered.map((note) => note.id).toList(),
+                            );
+                          },
+                          child: buildCard(
+                            item.note,
+                            PostItCardLayout.grid,
+                            completedChecklistExpanded:
+                                !_collapsedCompletedChecklistNoteIds.contains(
+                                  item.note.id,
+                                ),
+                            onCompletedChecklistExpansionChanged: (expanded) =>
+                                _setCompletedChecklistExpanded(
+                                  item.note.id,
+                                  expanded,
+                                ),
+                          ),
                         ),
                       ),
                     ),
@@ -1842,13 +1887,13 @@ class _NotesGridState extends State<_NotesGrid> {
     )..layout(maxWidth: (columnWidth - 80).clamp(1, columnWidth));
     final headerHeight = titlePainter.height < 48 ? 48.0 : titlePainter.height;
     final contentPainter = TextPainter(
-      text: TextSpan(
-        text: note.content,
-        style: Theme.of(context).textTheme.bodyLarge,
+      text: noteLinkifiedTextSpan(
+        plainText: note.content,
+        deltaJson: note.contentDelta,
+        style: gridNoteDescriptionTextStyle(context),
       ),
       textDirection: textDirection,
       textScaler: textScaler,
-      maxLines: 7,
     )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
     final pendingChecklistCount = note.checklist
         .where((item) => !item.isCompleted)
@@ -1872,14 +1917,22 @@ class _NotesGridState extends State<_NotesGrid> {
     }
     final hiddenPendingChecklistCount =
         pendingChecklistCount - visiblePendingChecklistCount;
-    final contentHeight = note.checklist.isNotEmpty
-        ? ((visiblePendingChecklistCount + visibleCompletedChecklistCount) *
+    // TextPainter can report a fractional height that RenderParagraph rounds
+    // up during the card layout. Keep one logical pixel of breathing room so
+    // multi-line descriptions do not overflow at narrow widths or high DPRs.
+    final descriptionHeight = note.content.isEmpty
+        ? 0.0
+        : contentPainter.height.ceilToDouble() + 1;
+    final checklistHeight = note.checklist.isEmpty
+        ? 0.0
+        : ((visiblePendingChecklistCount + visibleCompletedChecklistCount) *
                   30) +
               (hiddenPendingChecklistCount > 0 ? 22 : 0) +
-              (completedChecklistCount > 0 ? 44 : 0)
-        : note.content.isEmpty
-        ? 0.0
-        : contentPainter.height;
+              (completedChecklistCount > 0 ? 44 : 0);
+    final contentHeight =
+        descriptionHeight +
+        checklistHeight +
+        (note.content.isNotEmpty && note.checklist.isNotEmpty ? 10 : 0);
     final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
     final originListHeight = showOriginList && hasBody ? 35.0 : 0.0;
     final categoryHeight = hasBody
@@ -1887,7 +1940,7 @@ class _NotesGridState extends State<_NotesGrid> {
               ? 6.0
               : 40.0
         : 0.0;
-    final reminderHeight = hasBody && note.reminderAt != null ? 24.0 : 0.0;
+    final reminderHeight = hasBody && note.reminderAt != null ? 32.0 : 0.0;
     final footerHeight = note.assigneeUid != null
         ? 28.0
         : isCompact
@@ -1927,11 +1980,8 @@ class _NotesGridState extends State<_NotesGrid> {
         footerHeight +
         (note.checklist.isNotEmpty ? 10 : 0);
     final minimumHeight = isCompact ? 184.0 : 205.0;
-    if (note.checklist.isNotEmpty) {
-      return desiredHeight < minimumHeight ? minimumHeight : desiredHeight;
-    }
-    final maximumHeight = (isCompact ? 320.0 : 330.0) + originListHeight;
-    return desiredHeight.clamp(minimumHeight, maximumHeight).toDouble();
+    return (desiredHeight < minimumHeight ? minimumHeight : desiredHeight)
+        .ceilToDouble();
   }
 }
 
@@ -2258,12 +2308,6 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
               key: const ValueKey('appbar-actions'),
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  key: const ValueKey('global-note-search-button'),
-                  tooltip: 'Buscar en todas las listas',
-                  onPressed: onSearch,
-                  icon: const Icon(Icons.search_rounded),
-                ),
                 _AnimatedConnectionIndicator(
                   isConnected: isConnected,
                   isConnecting: isConnecting,
@@ -2274,6 +2318,12 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
                   isSyncingOfflineChanges: isSyncingOfflineChanges,
                 ),
                 const SizedBox(width: 4),
+                IconButton(
+                  key: const ValueKey('global-note-search-button'),
+                  tooltip: 'Buscar en todas las listas',
+                  onPressed: onSearch,
+                  icon: const Icon(Icons.search_rounded),
+                ),
                 if (notificationsController case final controller?)
                   ListenableBuilder(
                     listenable: controller,
@@ -5004,63 +5054,50 @@ class _BoardHeader extends StatelessWidget {
                 ),
               ),
             ),
-            if ((isCompact && list != null) ||
-                showAddButton ||
-                onCustomizeBackground != null)
+            if (showAddButton ||
+                onShare != null ||
+                onCustomizeBackground != null ||
+                onRenameList != null ||
+                onToggleListProtection != null ||
+                onDeleteList != null)
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (isCompact && list != null)
-                    if (hasInvitedCollaborators)
-                      Tooltip(
-                        message: 'Personas de la lista',
-                        child: InkWell(
-                          key: const ValueKey('share-list-button'),
-                          onTap: onShare,
-                          customBorder: const StadiumBorder(),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 8,
-                            ),
-                            child: _CollaboratorAvatarStack(
-                              collaborators: list!.collaborators,
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      IconButton.filledTonal(
+                  if (isCompact && hasInvitedCollaborators)
+                    Tooltip(
+                      message: 'Personas de la lista',
+                      child: InkWell(
                         key: const ValueKey('share-list-button'),
-                        tooltip: 'Compartir lista',
-                        onPressed: onShare,
-                        icon: const Icon(Icons.person_add_alt_1_rounded),
-                      ),
-                  if (showAddButton)
-                    Wrap(
-                      spacing: 10,
-                      children: [
-                        if (list != null)
-                          OutlinedButton.icon(
-                            key: const ValueKey('share-list-button'),
-                            onPressed: onShare,
-                            icon: const Icon(Icons.person_add_alt_1_rounded),
-                            label: Text(
-                              list!.isShared ? 'Personas' : 'Compartir',
-                            ),
+                        onTap: onShare,
+                        customBorder: const StadiumBorder(),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 8,
                           ),
-                        GlassNewNoteButton(
-                          key: const ValueKey('new-note-button'),
-                          onPressed: onAdd,
-                          backgroundColor: colorScheme.primary,
-                          foregroundColor: colorScheme.onPrimary,
+                          child: _CollaboratorAvatarStack(
+                            collaborators: list!.collaborators,
+                          ),
                         ),
-                      ],
+                      ),
                     ),
-                  if (onCustomizeBackground != null) ...[
-                    if ((isCompact && list != null) || showAddButton)
+                  if (showAddButton)
+                    GlassNewNoteButton(
+                      key: const ValueKey('new-note-button'),
+                      onPressed: onAdd,
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: colorScheme.onPrimary,
+                    ),
+                  if (onShare != null ||
+                      onCustomizeBackground != null ||
+                      onRenameList != null ||
+                      onToggleListProtection != null ||
+                      onDeleteList != null) ...[
+                    if ((isCompact && hasInvitedCollaborators) || showAddButton)
                       const SizedBox(width: 8),
                     _ListMenuButton(
+                      onShare: onShare,
+                      hasInvitedCollaborators: hasInvitedCollaborators,
                       onCustomizeBackground: onCustomizeBackground,
                       onRenameList: onRenameList,
                       onToggleListProtection: onToggleListProtection,
@@ -5445,8 +5482,18 @@ class _AssigneeFilterChip extends StatelessWidget {
         ? Duration.zero
         : _boardControlMotionDuration;
     final displayName = assignee.displayName.trim();
-    final shortName = displayName.split(RegExp(r'\s+')).first;
-    final initial = displayName.isEmpty ? '?' : displayName[0].toUpperCase();
+    final nameParts = displayName
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    final firstName = nameParts.isEmpty ? 'Usuario' : nameParts.first;
+    final initials = nameParts.isEmpty
+        ? '?'
+        : [
+            String.fromCharCode(nameParts.first.runes.first),
+            if (nameParts.length > 1)
+              String.fromCharCode(nameParts.last.runes.first),
+          ].join().toUpperCase();
     final photoUrl = assignee.photoUrl?.trim();
 
     return Semantics(
@@ -5483,11 +5530,12 @@ class _AssigneeFilterChip extends StatelessWidget {
             enableFeedback: false,
             onTap: onTap,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(6, 0, 7, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 5),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
+                    key: ValueKey('assignee-filter-avatar-${assignee.uid}'),
                     width: 24,
                     height: 24,
                     decoration: BoxDecoration(
@@ -5500,13 +5548,16 @@ class _AssigneeFilterChip extends StatelessWidget {
                     child: photoUrl?.isNotEmpty == true
                         ? Image.network(
                             photoUrl!,
+                            key: ValueKey(
+                              'assignee-filter-photo-${assignee.uid}',
+                            ),
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => Center(
                               child: Text(
-                                initial,
+                                initials,
                                 style: TextStyle(
                                   color: foreground,
-                                  fontSize: 11,
+                                  fontSize: initials.length > 1 ? 9 : 11,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
@@ -5514,25 +5565,31 @@ class _AssigneeFilterChip extends StatelessWidget {
                           )
                         : Center(
                             child: Text(
-                              initial,
+                              initials,
                               style: TextStyle(
                                 color: foreground,
-                                fontSize: 11,
+                                fontSize: initials.length > 1 ? 9 : 11,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
                           ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    shortName,
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 12,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                  const SizedBox(width: 5),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Text(
+                      firstName,
+                      key: ValueKey('assignee-filter-name-${assignee.uid}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 7),
+                  const SizedBox(width: 5),
                   Container(
                     key: ValueKey('assignee-filter-count-${assignee.uid}'),
                     constraints: const BoxConstraints(minWidth: 22),
@@ -5556,12 +5613,6 @@ class _AssigneeFilterChip extends StatelessWidget {
                         height: 1,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 3),
-                  Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 14,
-                    color: foreground.withValues(alpha: 0.72),
                   ),
                 ],
               ),
@@ -5979,6 +6030,8 @@ class _BoardMetaChip extends StatelessWidget {
 
 class _ListMenuButton extends StatelessWidget {
   const _ListMenuButton({
+    required this.onShare,
+    required this.hasInvitedCollaborators,
     required this.onCustomizeBackground,
     required this.onRenameList,
     required this.onToggleListProtection,
@@ -5987,6 +6040,8 @@ class _ListMenuButton extends StatelessWidget {
     required this.isSaving,
   });
 
+  final VoidCallback? onShare;
+  final bool hasInvitedCollaborators;
   final VoidCallback? onCustomizeBackground;
   final VoidCallback? onRenameList;
   final VoidCallback? onToggleListProtection;
@@ -6022,6 +6077,8 @@ class _ListMenuButton extends StatelessWidget {
             ),
       onSelected: (action) {
         switch (action) {
+          case _ListMenuAction.share:
+            onShare?.call();
           case _ListMenuAction.background:
             onCustomizeBackground?.call();
           case _ListMenuAction.rename:
@@ -6034,6 +6091,8 @@ class _ListMenuButton extends StatelessWidget {
       },
       itemBuilder: (context) => [
         _GlassListMenuEntry(
+          showShare: onShare != null,
+          hasInvitedCollaborators: hasInvitedCollaborators,
           backgroundEnabled: onCustomizeBackground != null,
           showRename: onRenameList != null,
           showProtection: onToggleListProtection != null,
@@ -6059,6 +6118,8 @@ class _ListMenuButton extends StatelessWidget {
 
 class _GlassListMenuEntry extends PopupMenuEntry<_ListMenuAction> {
   const _GlassListMenuEntry({
+    required this.showShare,
+    required this.hasInvitedCollaborators,
     required this.backgroundEnabled,
     required this.showRename,
     required this.showProtection,
@@ -6066,6 +6127,8 @@ class _GlassListMenuEntry extends PopupMenuEntry<_ListMenuAction> {
     required this.showDelete,
   });
 
+  final bool showShare;
+  final bool hasInvitedCollaborators;
   final bool backgroundEnabled;
   final bool showRename;
   final bool showProtection;
@@ -6074,6 +6137,7 @@ class _GlassListMenuEntry extends PopupMenuEntry<_ListMenuAction> {
 
   int get itemCount =>
       1 +
+      (showShare ? 1 : 0) +
       (showRename ? 1 : 0) +
       (showProtection ? 1 : 0) +
       (showDelete ? 1 : 0);
@@ -6144,6 +6208,17 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (widget.showShare)
+                          _GlassListMenuTile(
+                            key: const ValueKey('invite-list-menu-item'),
+                            icon: Icons.person_add_alt_1_rounded,
+                            label: widget.hasInvitedCollaborators
+                                ? 'Personas de la lista'
+                                : 'Invitar personas',
+                            onTap: () => Navigator.of(
+                              context,
+                            ).pop(_ListMenuAction.share),
+                          ),
                         _GlassListMenuTile(
                           key: const ValueKey('customize-background-menu-item'),
                           icon: Icons.wallpaper_rounded,

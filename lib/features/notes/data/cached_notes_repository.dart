@@ -24,6 +24,7 @@ class CachedNotesRepository
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
         OfflineSyncRepository,
+        NoteAttachmentsRepository,
         PaginatedNotesRepository {
   factory CachedNotesRepository({
     required NotesRepository repository,
@@ -410,6 +411,8 @@ class CachedNotesRepository
         color: synchronizedDraft.color,
         authorName: synchronizedDraft.authorName,
         assigneeUid: synchronizedDraft.assigneeUid,
+        customAssigneeName: synchronizedDraft.customAssigneeName,
+        attachment: synchronizedDraft.attachment,
         category: synchronizedDraft.category,
         checklist: synchronizedDraft.checklist,
         isCompleted: synchronizedDraft.isCompleted,
@@ -438,6 +441,15 @@ class CachedNotesRepository
       await _emitSyncState();
       return provisional;
     }
+  }
+
+  @override
+  Future<NoteAttachment> fetchAttachment(String noteId) {
+    final repository = _repository;
+    if (repository is! NoteAttachmentsRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteAttachmentsRepository).fetchAttachment(noteId);
   }
 
   @override
@@ -1175,6 +1187,18 @@ class CachedNotesRepository
             if (index != -1) {
               cache.lists[index] = cache.lists[index].copyWith(
                 appearance: appearance,
+              );
+            }
+          }),
+        );
+      case ListNameChanged(:final listId, :final name, :final updatedAt):
+        unawaited(
+          _updateCache(userId, (cache) {
+            final index = cache.lists.indexWhere((list) => list.id == listId);
+            if (index != -1) {
+              cache.lists[index] = cache.lists[index].copyWith(
+                name: name,
+                updatedAt: updatedAt,
               );
             }
           }),

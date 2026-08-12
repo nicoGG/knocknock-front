@@ -15,6 +15,7 @@ class AuthAwareNotesRepository
         AggregateBoardAppearancesRepository,
         OfflineSyncRepository,
         NotesSearchRepository,
+        NoteAttachmentsRepository,
         PaginatedNotesRepository {
   AuthAwareNotesRepository({
     required AuthRepository authRepository,
@@ -213,6 +214,16 @@ class AuthAwareNotesRepository
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) =>
       _whenReady((repository) => repository.createNote(boardId, draft));
+
+  @override
+  Future<NoteAttachment> fetchAttachment(String noteId) => _whenReady((
+    repository,
+  ) {
+    if (repository is! NoteAttachmentsRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteAttachmentsRepository).fetchAttachment(noteId);
+  });
 
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) =>

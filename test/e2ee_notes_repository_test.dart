@@ -50,6 +50,50 @@ void main() {
     repository.dispose();
   });
 
+  test(
+    'encrypts a custom assignee and lazy attachment during migration',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final remote = _FakeE2eeRemote()
+        ..initialCustomAssigneeName = 'Camila'
+        ..attachmentPayload = const NoteAttachment(
+          id: 'attachment-1',
+          name: 'comprobante.png',
+          mimeType: 'image/png',
+          sizeBytes: 5,
+          dataBase64: 'aG9sYQ==',
+        );
+      final repository = E2eeNotesRepository(
+        repository: CachedNotesRepository(
+          repository: remote,
+          preferences: preferences,
+          userIdProvider: () => 'user-1',
+        ),
+        userIdProvider: () => 'user-1',
+        keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+      );
+
+      await repository.fetchLists();
+      final note = (await repository.fetchNotes('home-user-1')).single;
+      final attachment = await repository.fetchAttachment(note.id);
+
+      expect(
+        remote.rawNote.customAssigneeName,
+        startsWith(e2eeCiphertextPrefix),
+      );
+      expect(remote.attachmentPayload!.name, startsWith(e2eeCiphertextPrefix));
+      expect(
+        remote.attachmentPayload!.dataBase64,
+        startsWith(e2eeCiphertextPrefix),
+      );
+      expect(note.customAssigneeName, 'Camila');
+      expect(attachment.name, 'comprobante.png');
+      expect(attachment.dataBase64, 'aG9sYQ==');
+      repository.dispose();
+    },
+  );
+
   test('shares the list key when a new recipient device registers', () async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
@@ -92,6 +136,34 @@ void main() {
       ),
       completion('Mis notas'),
     );
+
+    repository.dispose();
+  });
+
+  test('decrypts list name changes received in real time', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    final nameChanged = repository.realtimeEvents.firstWhere(
+      (event) => event is ListNameChanged,
+    );
+
+    await repository.updateList('home-user-1', 'Me deben');
+    final event = (await nameChanged) as ListNameChanged;
+
+    expect(event.name, 'Me deben');
+    expect(remote.rawList.name, startsWith(e2eeCiphertextPrefix));
+    expect(remote.rawList.name, isNot(contains('Me deben')));
 
     repository.dispose();
   });
@@ -234,7 +306,8 @@ class _FakeE2eeRemote extends Fake
     implements
         NotesRepository,
         E2eeNotesTransport,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        NoteAttachmentsRepository {
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';
@@ -244,6 +317,8 @@ class _FakeE2eeRemote extends Fake
       const AggregateBoardAppearances();
   bool isOffline = false;
   int fetchNotesCalls = 0;
+  String? initialCustomAssigneeName;
+  NoteAttachment? attachmentPayload;
 
   late NoteList rawList = NoteList(
     id: 'home-user-1',
@@ -258,6 +333,15 @@ class _FakeE2eeRemote extends Fake
     content: '',
     color: NoteColor.yellow,
     authorName: 'Nico',
+    customAssigneeName: initialCustomAssigneeName,
+    attachment: attachmentPayload == null
+        ? null
+        : NoteAttachment(
+            id: attachmentPayload!.id,
+            name: attachmentPayload!.name,
+            mimeType: attachmentPayload!.mimeType,
+            sizeBytes: attachmentPayload!.sizeBytes,
+          ),
     isCompleted: false,
     positionX: 0,
     positionY: 0,
@@ -281,9 +365,24 @@ class _FakeE2eeRemote extends Fake
   Future<List<NoteList>> fetchLists() async => [rawList];
 
   @override
+  Future<NoteList> updateList(String listId, String name) async {
+    final updatedAt = date.add(const Duration(minutes: 1));
+    rawList = rawList.copyWith(name: name, updatedAt: updatedAt);
+    _events.add(ListNameChanged(listId, name, updatedAt));
+    return rawList;
+  }
+
+  @override
   Future<List<Note>> fetchNotes(String boardId) async {
     fetchNotesCalls++;
     return [rawNote];
+  }
+
+  @override
+  Future<NoteAttachment> fetchAttachment(String noteId) async {
+    final attachment = attachmentPayload;
+    if (attachment == null) throw const NotesPersistenceFailure();
+    return attachment;
   }
 
   @override
@@ -308,6 +407,11 @@ class _FakeE2eeRemote extends Fake
       throw DioException(
         requestOptions: RequestOptions(path: '/notes/$id'),
         type: DioExceptionType.connectionError,
+      );
+    }
+    if (changes['attachment'] case final Map attachment) {
+      attachmentPayload = NoteAttachment.fromJson(
+        Map<String, dynamic>.from(attachment),
       );
     }
     rawNote = Note.fromJson({...rawNote.toJson(), ...changes});

@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
+import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
@@ -8,6 +11,7 @@ import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
 import 'package:uuid/uuid.dart';
@@ -17,6 +21,19 @@ enum PostItCardLayout { grid, compact, large }
 enum PostItInlineEditTarget { none, title, description, checklist }
 
 typedef PostItInlineSave = Future<bool> Function(NoteDraft draft);
+
+const noteMosaicLinkBlue = Color(0xFF64B5F6);
+const noteMosaicLinkBlueOnLight = Color(0xFF1565C0);
+
+TextStyle gridNoteDescriptionTextStyle(BuildContext context, {Color? color}) {
+  final base = Theme.of(context).textTheme.bodyMedium ?? const TextStyle();
+  return base.copyWith(color: color ?? base.color, fontSize: 14, height: 1.35);
+}
+
+Color gridNoteLinkColor(Color foregroundColor) =>
+    foregroundColor.computeLuminance() > 0.5
+    ? noteMosaicLinkBlue
+    : noteMosaicLinkBlueOnLight;
 
 class PostItCard extends StatelessWidget {
   const PostItCard({
@@ -28,6 +45,11 @@ class PostItCard extends StatelessWidget {
     this.assignee,
     this.authorPhotoUrl,
     this.originListName,
+    this.compactSubtitle,
+    this.compactReadOnly = false,
+    this.compactOpenIndicator = false,
+    this.showPin = true,
+    this.enableHero = true,
     this.layout = PostItCardLayout.grid,
     this.currentUserId,
     this.reactionAuthorNames = const {},
@@ -38,6 +60,7 @@ class PostItCard extends StatelessWidget {
     this.onAssigneeTap,
     this.inlineEditTarget,
     this.onInlineSave,
+    this.attachmentLoader,
     super.key,
   });
 
@@ -49,6 +72,11 @@ class PostItCard extends StatelessWidget {
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
   final String? originListName;
+  final String? compactSubtitle;
+  final bool compactReadOnly;
+  final bool compactOpenIndicator;
+  final bool showPin;
+  final bool enableHero;
   final PostItCardLayout layout;
   final String? currentUserId;
   final Map<String, String> reactionAuthorNames;
@@ -59,6 +87,7 @@ class PostItCard extends StatelessWidget {
   final VoidCallback? onAssigneeTap;
   final ValueNotifier<PostItInlineEditTarget>? inlineEditTarget;
   final PostItInlineSave? onInlineSave;
+  final Future<NoteAttachment> Function()? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -84,11 +113,13 @@ class PostItCard extends StatelessWidget {
       PostItCardLayout.compact => 10.0,
       PostItCardLayout.large => 18.0,
     };
-    final pinClearance = switch (layout) {
-      PostItCardLayout.compact => 4.0,
-      PostItCardLayout.grid => 10.0,
-      PostItCardLayout.large => 16.0,
-    };
+    final pinClearance = showPin
+        ? switch (layout) {
+            PostItCardLayout.compact => 4.0,
+            PostItCardLayout.grid => 10.0,
+            PostItCardLayout.large => 16.0,
+          }
+        : 0.0;
     return _InteractivePostIt(
       child: Stack(
         fit: StackFit.expand,
@@ -98,7 +129,7 @@ class PostItCard extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.only(top: pinClearance),
               child: HeroMode(
-                enabled: !MediaQuery.disableAnimationsOf(context),
+                enabled: enableHero && !MediaQuery.disableAnimationsOf(context),
                 child: Hero(
                   tag: noteHeroTag(note.id, variant: layout.name),
                   transitionOnUserGestures: true,
@@ -147,10 +178,10 @@ class PostItCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(borderRadius),
                 child: Ink(
                   padding: switch (layout) {
-                    PostItCardLayout.compact => const EdgeInsets.fromLTRB(
-                      6,
+                    PostItCardLayout.compact => EdgeInsets.fromLTRB(
+                      compactReadOnly ? 14 : 6,
                       4,
-                      38,
+                      showPin ? 38 : 12,
                       4,
                     ),
                     PostItCardLayout.grid => const EdgeInsets.fromLTRB(
@@ -200,6 +231,9 @@ class PostItCard extends StatelessWidget {
                         assignee: assignee,
                         authorPhotoUrl: authorPhotoUrl,
                         originListName: originListName,
+                        subtitle: compactSubtitle,
+                        readOnly: compactReadOnly,
+                        showOpenIndicator: compactOpenIndicator,
                         foregroundColor: foregroundColor,
                       ),
                       PostItCardLayout.grid || PostItCardLayout.large =>
@@ -217,17 +251,21 @@ class PostItCard extends StatelessWidget {
                                 isSavingReaction: isSavingReaction,
                                 onToggleReaction: onToggleReaction,
                                 onAssigneeTap: onAssigneeTap,
+                                attachmentLoader: attachmentLoader,
                                 editTarget: inlineEditTarget,
                                 onSave: onInlineSave!,
                               )
                             : _NoteBody(
                                 note: note,
                                 isGrid: layout == PostItCardLayout.grid,
+                                onOpen: onOpen,
                                 onToggle: onToggle,
                                 assignee: assignee,
                                 authorPhotoUrl: authorPhotoUrl,
                                 originListName: originListName,
-                                contentMaxLines: 7,
+                                contentMaxLines: layout == PostItCardLayout.grid
+                                    ? null
+                                    : 7,
                                 foregroundColor: foregroundColor,
                                 onChecklistToggle: onChecklistToggle,
                                 currentUserId: currentUserId,
@@ -239,6 +277,7 @@ class PostItCard extends StatelessWidget {
                                 onCompletedChecklistExpansionChanged:
                                     onCompletedChecklistExpansionChanged,
                                 onAssigneeTap: onAssigneeTap,
+                                attachmentLoader: attachmentLoader,
                               ),
                     },
                   ),
@@ -287,16 +326,17 @@ class PostItCard extends StatelessWidget {
                 ),
               ),
             ),
-          Positioned(
-            top: layout == PostItCardLayout.grid ? -5 : 0,
-            right: 0,
-            child: _FloatingPinButton(
-              note: note,
-              color: cardColor,
-              foregroundColor: foregroundColor,
-              onPressed: onPin,
+          if (showPin)
+            Positioned(
+              top: layout == PostItCardLayout.grid ? -5 : 0,
+              right: 0,
+              child: _FloatingPinButton(
+                note: note,
+                color: cardColor,
+                foregroundColor: foregroundColor,
+                onPressed: onPin,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -464,6 +504,7 @@ class _NoteBody extends StatelessWidget {
   const _NoteBody({
     required this.note,
     required this.isGrid,
+    required this.onOpen,
     required this.onToggle,
     required this.assignee,
     required this.authorPhotoUrl,
@@ -478,15 +519,17 @@ class _NoteBody extends StatelessWidget {
     required this.completedChecklistExpanded,
     required this.onCompletedChecklistExpansionChanged,
     required this.onAssigneeTap,
+    required this.attachmentLoader,
   });
 
   final Note note;
   final bool isGrid;
+  final VoidCallback onOpen;
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
   final String? originListName;
-  final int contentMaxLines;
+  final int? contentMaxLines;
   final Color foregroundColor;
   final ValueChanged<NoteChecklistItem> onChecklistToggle;
   final String? currentUserId;
@@ -496,6 +539,7 @@ class _NoteBody extends StatelessWidget {
   final bool? completedChecklistExpanded;
   final ValueChanged<bool>? onCompletedChecklistExpansionChanged;
   final VoidCallback? onAssigneeTap;
+  final Future<NoteAttachment> Function()? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -518,6 +562,19 @@ class _NoteBody extends StatelessWidget {
             ),
           ),
         ),
+        if (isGrid && note.attachment != null)
+          Tooltip(
+            message: 'Tiene adjunto: ${note.attachment!.name}',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Icon(
+                Icons.attach_file_rounded,
+                key: ValueKey('grid-attachment-${note.id}'),
+                size: 19,
+                color: foregroundColor.withValues(alpha: 0.86),
+              ),
+            ),
+          ),
         Checkbox(
           value: note.isCompleted,
           onChanged: (_) => onToggle(),
@@ -577,39 +634,76 @@ class _NoteBody extends StatelessWidget {
         ] else if (showMetadata)
           SizedBox(height: isGrid ? 6 : 8),
         Expanded(
-          child: note.checklist.isNotEmpty
+          child: isGrid
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (note.content.isNotEmpty)
+                      NoteLinkifiedText(
+                        key: ValueKey('grid-description-${note.id}'),
+                        plainText: note.content,
+                        deltaJson: note.contentDelta,
+                        style: gridNoteDescriptionTextStyle(
+                          context,
+                          color: foregroundColor.withValues(alpha: 0.9),
+                        ),
+                        linkColor: gridNoteLinkColor(foregroundColor),
+                        maxLines: contentMaxLines,
+                        overflow: contentMaxLines == null
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                      ),
+                    if (note.content.isNotEmpty && note.checklist.isNotEmpty)
+                      const SizedBox(height: 10),
+                    if (note.checklist.isNotEmpty)
+                      Expanded(
+                        child: NoteChecklistPreview(
+                          items: note.checklist,
+                          foregroundColor: foregroundColor,
+                          onToggle: onChecklistToggle,
+                          maxItems: 10,
+                          showOpenHint: true,
+                          completedExpanded: completedChecklistExpanded,
+                          onCompletedExpansionChanged:
+                              onCompletedChecklistExpansionChanged,
+                        ),
+                      ),
+                  ],
+                )
+              : note.checklist.isNotEmpty
               ? NoteChecklistPreview(
                   items: note.checklist,
                   foregroundColor: foregroundColor,
                   onToggle: onChecklistToggle,
-                  maxItems: isGrid ? 10 : 6,
-                  showOpenHint: isGrid,
+                  maxItems: 6,
                   completedExpanded: completedChecklistExpanded,
                   onCompletedExpansionChanged:
                       onCompletedChecklistExpansionChanged,
                 )
               : note.content.isEmpty
               ? const SizedBox.shrink()
-              : isGrid
-              ? Text(
-                  note.content,
-                  maxLines: contentMaxLines,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: foregroundColor.withValues(alpha: 0.9),
-                  ),
-                )
               : SingleChildScrollView(
                   child: NoteRichTextViewer(
                     key: ValueKey('preview-rich-content-${note.id}'),
                     plainText: note.content,
                     deltaJson: note.contentDelta,
                     foregroundColor: foregroundColor.withValues(alpha: 0.9),
+                    onTapOutsideLink: onOpen,
                   ),
                 ),
         ),
+        if (!isGrid && note.attachment != null) ...[
+          const SizedBox(height: 8),
+          _NoteAttachmentPreview(
+            attachment: note.attachment!,
+            foregroundColor: foregroundColor,
+            loader: attachmentLoader,
+          ),
+        ],
         if (visibleReminder case final reminder?) ...[
+          if (isGrid) const SizedBox(height: 8),
           Row(
+            key: isGrid ? ValueKey('grid-reminder-${note.id}') : null,
             children: [
               Icon(
                 Icons.notifications_none_rounded,
@@ -652,11 +746,7 @@ class _NoteBody extends StatelessWidget {
             final showAuthor = constraints.maxWidth >= 220;
             if (isGrid) {
               if (assignee case final person?) {
-                return _GridAssignee(
-                  noteId: note.id,
-                  person: person,
-                  foregroundColor: foregroundColor,
-                );
+                return _GridAssignee(noteId: note.id, person: person);
               }
               if (!hasBody) return const SizedBox.shrink();
             } else {
@@ -703,6 +793,199 @@ class _NoteBody extends StatelessWidget {
   }
 }
 
+class _NoteAttachmentPreview extends StatefulWidget {
+  const _NoteAttachmentPreview({
+    required this.attachment,
+    required this.foregroundColor,
+    required this.loader,
+  });
+
+  final NoteAttachment attachment;
+  final Color foregroundColor;
+  final Future<NoteAttachment> Function()? loader;
+
+  @override
+  State<_NoteAttachmentPreview> createState() => _NoteAttachmentPreviewState();
+}
+
+class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
+  Future<NoteAttachment>? _loadedAttachment;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoading();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NoteAttachmentPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.attachment.id != widget.attachment.id) {
+      _startLoading();
+    }
+  }
+
+  void _startLoading() {
+    final attachment = widget.attachment;
+    _loadedAttachment = !attachment.isImage
+        ? null
+        : attachment.dataBase64 != null
+        ? Future.value(attachment)
+        : widget.loader?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foregroundColor = widget.foregroundColor;
+    final future = _loadedAttachment;
+    return Semantics(
+      label: 'Adjunto ${widget.attachment.name}',
+      image: widget.attachment.isImage,
+      child: Container(
+        key: ValueKey('attachment-preview-${widget.attachment.id}'),
+        height: 82,
+        decoration: BoxDecoration(
+          color: foregroundColor.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: foregroundColor.withValues(alpha: 0.18)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: future == null
+            ? _AttachmentFileTile(
+                attachment: widget.attachment,
+                foregroundColor: foregroundColor,
+              )
+            : FutureBuilder<NoteAttachment>(
+                future: future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return Center(
+                      child: SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: foregroundColor,
+                        ),
+                      ),
+                    );
+                  }
+                  final loaded = snapshot.data;
+                  if (loaded == null || loaded.dataBase64 == null) {
+                    return _AttachmentFileTile(
+                      attachment: widget.attachment,
+                      foregroundColor: foregroundColor,
+                      unavailable: true,
+                    );
+                  }
+                  if (!loaded.isImage) {
+                    return _AttachmentFileTile(
+                      attachment: loaded,
+                      foregroundColor: foregroundColor,
+                    );
+                  }
+                  try {
+                    return Row(
+                      children: [
+                        SizedBox(
+                          width: 104,
+                          height: double.infinity,
+                          child: Image.memory(
+                            base64Decode(loaded.dataBase64!),
+                            key: ValueKey('attachment-image-${loaded.id}'),
+                            fit: BoxFit.cover,
+                            gaplessPlayback: true,
+                            errorBuilder: (_, _, _) => Icon(
+                              Icons.broken_image_outlined,
+                              color: foregroundColor,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: _AttachmentFileTile(
+                            attachment: loaded,
+                            foregroundColor: foregroundColor,
+                            compact: true,
+                          ),
+                        ),
+                      ],
+                    );
+                  } on FormatException {
+                    return _AttachmentFileTile(
+                      attachment: loaded,
+                      foregroundColor: foregroundColor,
+                      unavailable: true,
+                    );
+                  }
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class _AttachmentFileTile extends StatelessWidget {
+  const _AttachmentFileTile({
+    required this.attachment,
+    required this.foregroundColor,
+    this.unavailable = false,
+    this.compact = false,
+  });
+
+  final NoteAttachment attachment;
+  final Color foregroundColor;
+  final bool unavailable;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final kilobytes = (attachment.sizeBytes / 1024).ceil();
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14),
+      child: Row(
+        children: [
+          Icon(
+            attachment.isPdf
+                ? Icons.picture_as_pdf_outlined
+                : Icons.image_outlined,
+            color: foregroundColor,
+            size: 26,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attachment.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foregroundColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  unavailable
+                      ? 'No disponible sin conexión'
+                      : '${attachment.isPdf ? 'PDF' : 'Imagen'} · $kilobytes KB',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foregroundColor.withValues(alpha: 0.72),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EditableLargeNoteBody extends StatefulWidget {
   const _EditableLargeNoteBody({
     required this.note,
@@ -717,6 +1000,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
     required this.isSavingReaction,
     required this.onToggleReaction,
     required this.onAssigneeTap,
+    required this.attachmentLoader,
     required this.editTarget,
     required this.onSave,
   });
@@ -733,6 +1017,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
   final bool isSavingReaction;
   final Future<void> Function(String emoji)? onToggleReaction;
   final VoidCallback? onAssigneeTap;
+  final Future<NoteAttachment> Function()? attachmentLoader;
   final ValueNotifier<PostItInlineEditTarget>? editTarget;
   final PostItInlineSave onSave;
 
@@ -900,6 +1185,40 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     });
   }
 
+  Future<void> _editDescriptionLink(String url) async {
+    if (_isSaving || _editingDescription) return;
+    final note = widget.note;
+    final match = noteRichLinkMatchForUrl(
+      plainText: note.content,
+      deltaJson: note.contentDelta,
+      url: url,
+    );
+    if (match == null) {
+      _beginDescriptionEditing();
+      return;
+    }
+    final result = await showNoteLinkDialog(
+      context,
+      initialLabel: match.label,
+      initialUrl: match.url,
+      canRemoveLink: true,
+    );
+    if (!mounted || result == null) return;
+    final content = applyNoteRichLinkEdit(
+      plainText: note.content,
+      deltaJson: note.contentDelta,
+      match: match,
+      result: result,
+    );
+    setState(() => _isSaving = true);
+    final saved = await widget.onSave(_draft(content: content));
+    if (!mounted) return;
+    setState(() {
+      _isSaving = false;
+      if (saved) _content = content;
+    });
+  }
+
   Future<void> _saveChecklist() async {
     if (_isSaving) return;
     final checklist = normalizeNoteChecklist(
@@ -934,6 +1253,8 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       checklist: checklist ?? note.checklist,
       authorName: note.authorName,
       assigneeUid: note.assigneeUid,
+      customAssigneeName: note.customAssigneeName,
+      attachment: note.attachment,
       reminderAt: note.reminderAt,
     );
   }
@@ -998,9 +1319,12 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                           maxLines: lineCount,
                           textInputAction: TextInputAction.done,
                           textCapitalization: TextCapitalization.sentences,
-                          inputFormatters: const [
-                            InitialUppercaseTextFormatter(),
-                          ],
+                          keyboardType: note.category == NoteCategory.money
+                              ? TextInputType.number
+                              : TextInputType.text,
+                          inputFormatters: note.category == NoteCategory.money
+                              ? [MoneyTextInputFormatter()]
+                              : const [InitialUppercaseTextFormatter()],
                           onChanged: (_) => setState(() {}),
                           onSubmitted: (_) => _saveTitle(),
                           style: titleStyle,
@@ -1009,7 +1333,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                             filled: true,
                             fillColor: fieldFill,
                             counterText: '',
-                            hintText: 'Título',
+                            hintText: note.category == NoteCategory.money
+                                ? r'$0'
+                                : 'Título',
                             contentPadding: const EdgeInsets.fromLTRB(
                               14,
                               8,
@@ -1188,17 +1514,17 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                                   ),
                                 ],
                               )
-                            : IgnorePointer(
-                                child: NoteRichTextViewer(
-                                  key: ValueKey(
-                                    'preview-rich-content-${note.id}',
-                                  ),
-                                  plainText: note.content,
-                                  deltaJson: note.contentDelta,
-                                  foregroundColor: foregroundColor.withValues(
-                                    alpha: 0.9,
-                                  ),
+                            : NoteRichTextViewer(
+                                key: ValueKey(
+                                  'preview-rich-content-${note.id}',
                                 ),
+                                plainText: note.content,
+                                deltaJson: note.contentDelta,
+                                foregroundColor: foregroundColor.withValues(
+                                  alpha: 0.9,
+                                ),
+                                onEditLink: _editDescriptionLink,
+                                onTapOutsideLink: _beginDescriptionEditing,
                               ),
                       ),
                     ),
@@ -1278,6 +1604,14 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
             ),
           ),
         ),
+        if (note.attachment case final attachment?) ...[
+          const SizedBox(height: 8),
+          _NoteAttachmentPreview(
+            attachment: attachment,
+            foregroundColor: foregroundColor,
+            loader: widget.attachmentLoader,
+          ),
+        ],
         if (note.reminderAt case final reminder?) ...[
           const SizedBox(height: 6),
           Row(
@@ -1348,11 +1682,52 @@ class SimpleNoteChecklistEditor extends StatefulWidget {
 
 class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   final Map<String, FocusNode> _focusNodes = {};
+  final Map<String, TextEditingController> _textControllers = {};
+  final Map<String, String> _linkUrls = {};
+
+  @override
+  void didUpdateWidget(covariant SimpleNoteChecklistEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final activeIds = widget.items.map((item) => item.id).toSet();
+    for (final item in widget.items) {
+      final controller = _textControllers[item.id];
+      final link = noteChecklistLinkFromText(item.text);
+      if (link != null) {
+        _linkUrls[item.id] = link.url;
+      } else if (item.text.isNotEmpty) {
+        _linkUrls.remove(item.id);
+      }
+      final displayText = noteChecklistDisplayText(item.text);
+      if (controller != null && controller.text != displayText) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              _textControllers[item.id] != controller ||
+              controller.text == displayText) {
+            return;
+          }
+          controller.value = TextEditingValue(
+            text: displayText,
+            selection: TextSelection.collapsed(offset: displayText.length),
+          );
+        });
+      }
+    }
+    for (final id in _textControllers.keys.toList()) {
+      if (!activeIds.contains(id)) _textControllers.remove(id)?.dispose();
+    }
+    for (final id in _focusNodes.keys.toList()) {
+      if (!activeIds.contains(id)) _focusNodes.remove(id)?.dispose();
+    }
+    _linkUrls.removeWhere((id, _) => !activeIds.contains(id));
+  }
 
   @override
   void dispose() {
     for (final focusNode in _focusNodes.values) {
       focusNode.dispose();
+    }
+    for (final controller in _textControllers.values) {
+      controller.dispose();
     }
     super.dispose();
   }
@@ -1379,6 +1754,15 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
             itemBuilder: (context, index) {
               final item = widget.items[index];
               final focusNode = _focusNodes.putIfAbsent(item.id, FocusNode.new);
+              final controller = _textControllers.putIfAbsent(
+                item.id,
+                () => TextEditingController(
+                  text: noteChecklistDisplayText(item.text),
+                ),
+              );
+              final parsedLink = noteChecklistLinkFromText(item.text);
+              if (parsedLink != null) _linkUrls[item.id] = parsedLink.url;
+              final itemLinkUrl = _linkUrls[item.id];
               return Padding(
                 key: ValueKey('checklist-editor-${item.id}'),
                 padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1416,7 +1800,7 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                     Expanded(
                       child: TextFormField(
                         key: ValueKey('checklist-text-${item.id}'),
-                        initialValue: item.text,
+                        controller: controller,
                         focusNode: focusNode,
                         autofocus:
                             widget.items.length == 1 && item.text.isEmpty,
@@ -1448,13 +1832,28 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                             vertical: 12,
                           ),
                         ),
-                        onChanged: (text) => _replace(
-                          index,
-                          item.copyWith(text: capitalizeInitialLetter(text)),
-                        ),
+                        onChanged: (text) =>
+                            _updateLabel(index, item, text, itemLinkUrl),
                         onFieldSubmitted: (text) {
                           if (text.trim().isNotEmpty) _addItem(index + 1);
                         },
+                      ),
+                    ),
+                    IconButton(
+                      key: ValueKey('edit-inline-checklist-link-${item.id}'),
+                      tooltip: itemLinkUrl == null
+                          ? 'Convertir en vínculo'
+                          : 'Editar vínculo',
+                      onPressed: () => _editLink(index, item, controller),
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        itemLinkUrl == null
+                            ? Icons.link_rounded
+                            : Icons.link_off_rounded,
+                        color: itemLinkUrl == null
+                            ? widget.foregroundColor.withValues(alpha: 0.72)
+                            : widget.foregroundColor,
+                        size: 21,
                       ),
                     ),
                     IconButton(
@@ -1495,6 +1894,49 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
     widget.onChanged(updated);
   }
 
+  void _updateLabel(
+    int index,
+    NoteChecklistItem item,
+    String text,
+    String? linkUrl,
+  ) {
+    final label = capitalizeInitialLetter(text);
+    final storedText = linkUrl == null || label.trim().isEmpty
+        ? label
+        : noteChecklistStoredLink(NoteLinkValue(label: label, url: linkUrl));
+    _replace(index, item.copyWith(text: storedText));
+  }
+
+  Future<void> _editLink(
+    int index,
+    NoteChecklistItem item,
+    TextEditingController controller,
+  ) async {
+    final currentUrl = _linkUrls[item.id];
+    final currentText = currentUrl == null
+        ? controller.text
+        : noteChecklistStoredLink(
+            NoteLinkValue(label: controller.text, url: currentUrl),
+          );
+    final result = await showNoteChecklistLinkDialog(
+      context,
+      currentText: currentText,
+    );
+    if (!mounted || result == null) return;
+    if (result.removeLink) {
+      _linkUrls.remove(item.id);
+      _replace(index, item.copyWith(text: controller.text));
+      return;
+    }
+    final link = result.value!;
+    _linkUrls[item.id] = link.url;
+    controller.value = TextEditingValue(
+      text: link.label,
+      selection: TextSelection.collapsed(offset: link.label.length),
+    );
+    _replace(index, item.copyWith(text: noteChecklistStoredLink(link)));
+  }
+
   void _remove(int index) {
     final updated = [...widget.items]..removeAt(index);
     widget.onChanged(updated);
@@ -1503,6 +1945,7 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   void _addItem(int index) {
     final item = NoteChecklistItem(id: const Uuid().v4(), text: '');
     final focusNode = _focusNodes.putIfAbsent(item.id, FocusNode.new);
+    _textControllers.putIfAbsent(item.id, TextEditingController.new);
     final updated = [...widget.items]..insert(index, item);
     widget.onChanged(updated);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1594,6 +2037,28 @@ NoteRichContent _emptyRichContent() => normalizeNoteRichContent(
   ),
 );
 
+String _formatSpanishTimestamp(DateTime value) {
+  const months = <String>[
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sept',
+    'oct',
+    'nov',
+    'dic',
+  ];
+  final local = value.toLocal();
+  final day = local.day.toString().padLeft(2, '0');
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$day ${months[local.month - 1]} ${local.year} · $hour:$minute';
+}
+
 class _LargeNotePeopleFooter extends StatelessWidget {
   const _LargeNotePeopleFooter({
     required this.note,
@@ -1617,125 +2082,146 @@ class _LargeNotePeopleFooter extends StatelessWidget {
       fontWeight: FontWeight.w700,
       letterSpacing: 0.2,
     );
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final timestampStyle = TextStyle(
+      color: foregroundColor.withValues(alpha: 0.42),
+      fontSize: 8,
+      fontStyle: FontStyle.italic,
+      letterSpacing: 0.1,
+    );
+    final createdAt = _formatSpanishTimestamp(note.createdAt);
+    final updatedAt = _formatSpanishTimestamp(note.updatedAt);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Creado por',
-                key: ValueKey('preview-created-by-${note.id}'),
-                style: labelStyle,
-              ),
-              const SizedBox(height: 4),
-              Row(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _AuthorAvatar(
-                    note: note,
-                    photoUrl: authorPhotoUrl,
-                    foregroundColor: foregroundColor,
+                  Text(
+                    'Creado por',
+                    key: ValueKey('preview-created-by-${note.id}'),
+                    style: labelStyle,
                   ),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      note.authorName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: foregroundColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      _AuthorAvatar(
+                        note: note,
+                        photoUrl: authorPhotoUrl,
+                        foregroundColor: foregroundColor,
                       ),
-                    ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          note.authorName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: foregroundColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (assignee case final person?) ...[
+              const SizedBox(width: 12),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Asignado a',
+                    key: ValueKey('preview-assigned-to-${note.id}'),
+                    style: labelStyle,
+                  ),
+                  const SizedBox(height: 4),
+                  _AssigneeIndicator(
+                    noteId: note.id,
+                    person: person,
+                    onTap: onAssigneeTap,
+                  ),
+                ],
+              ),
+            ] else if (onAssigneeTap != null) ...[
+              const SizedBox(width: 12),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Responsable',
+                    key: ValueKey('preview-add-assignee-label-${note.id}'),
+                    style: labelStyle,
+                  ),
+                  const SizedBox(height: 4),
+                  _AddAssigneeIndicator(
+                    noteId: note.id,
+                    foregroundColor: foregroundColor,
+                    onTap: onAssigneeTap!,
                   ),
                 ],
               ),
             ],
-          ),
+          ],
         ),
-        if (assignee case final person?) ...[
-          const SizedBox(width: 12),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Asignado a',
-                key: ValueKey('preview-assigned-to-${note.id}'),
-                style: labelStyle,
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Creación · $createdAt',
+                key: ValueKey('preview-created-at-${note.id}'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: timestampStyle,
               ),
-              const SizedBox(height: 4),
-              _AssigneeIndicator(
-                noteId: note.id,
-                person: person,
-                onTap: onAssigneeTap,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Última edición · $updatedAt',
+                key: ValueKey('preview-updated-at-${note.id}'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: timestampStyle,
               ),
-            ],
-          ),
-        ] else if (onAssigneeTap != null) ...[
-          const SizedBox(width: 12),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Responsable',
-                key: ValueKey('preview-add-assignee-label-${note.id}'),
-                style: labelStyle,
-              ),
-              const SizedBox(height: 4),
-              _AddAssigneeIndicator(
-                noteId: note.id,
-                foregroundColor: foregroundColor,
-                onTap: onAssigneeTap!,
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ],
     );
   }
 }
 
 class _GridAssignee extends StatelessWidget {
-  const _GridAssignee({
-    required this.noteId,
-    required this.person,
-    required this.foregroundColor,
-  });
+  const _GridAssignee({required this.noteId, required this.person});
 
   final String noteId;
   final ListCollaborator person;
-  final Color foregroundColor;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      key: ValueKey('grid-assignee-$noteId'),
-      children: [
-        _AssigneeIndicator(noteId: noteId, person: person, dimension: 28),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Text(
-            _firstName(person),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox.square(
+        key: ValueKey('grid-assignee-$noteId'),
+        dimension: 28,
+        child: _AssigneeIndicator(
+          noteId: noteId,
+          person: person,
+          dimension: 28,
         ),
-      ],
+      ),
     );
   }
-}
-
-String _firstName(ListCollaborator person) {
-  final label = _personLabel(person).trim();
-  if (label.isEmpty) return 'Persona';
-  return label.split(RegExp(r'\s+')).first;
 }
 
 class _CompactNoteBody extends StatelessWidget {
@@ -1745,6 +2231,9 @@ class _CompactNoteBody extends StatelessWidget {
     required this.assignee,
     required this.authorPhotoUrl,
     required this.originListName,
+    required this.subtitle,
+    required this.readOnly,
+    required this.showOpenIndicator,
     required this.foregroundColor,
   });
 
@@ -1753,38 +2242,148 @@ class _CompactNoteBody extends StatelessWidget {
   final ListCollaborator? assignee;
   final String? authorPhotoUrl;
   final String? originListName;
+  final String? subtitle;
+  final bool readOnly;
+  final bool showOpenIndicator;
   final Color foregroundColor;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Checkbox(
-          value: note.isCompleted,
-          onChanged: (_) => onToggle(),
-          activeColor: foregroundColor,
-          checkColor: note.category == NoteCategory.general
-              ? Colors.white
-              : Colors.black87,
-          side: BorderSide(color: foregroundColor, width: 1.5),
-          visualDensity: VisualDensity.compact,
-        ),
-        const SizedBox(width: 2),
-        Expanded(
-          child: Text(
-            note.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w700,
-              decoration: note.isCompleted ? TextDecoration.lineThrough : null,
+        if (readOnly)
+          Semantics(
+            label: note.isCompleted ? 'Nota completada' : 'Nota pendiente',
+            image: true,
+            child: Container(
+              key: ValueKey('compact-note-status-${note.id}'),
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: foregroundColor.withValues(alpha: 0.14),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: foregroundColor.withValues(alpha: 0.18),
+                ),
+              ),
+              child: Icon(
+                note.isCompleted
+                    ? Icons.check_rounded
+                    : Icons.sticky_note_2_outlined,
+                color: foregroundColor,
+                size: 20,
+              ),
             ),
+          )
+        else
+          Checkbox(
+            value: note.isCompleted,
+            onChanged: (_) => onToggle(),
+            activeColor: foregroundColor,
+            checkColor: note.category == NoteCategory.general
+                ? Colors.white
+                : Colors.black87,
+            side: BorderSide(color: foregroundColor, width: 1.5),
+            visualDensity: VisualDensity.compact,
           ),
+        SizedBox(width: readOnly ? 10 : 2),
+        Expanded(
+          child: subtitle == null
+              ? Text(
+                  note.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: foregroundColor,
+                    fontWeight: FontWeight.w700,
+                    decoration: note.isCompleted
+                        ? TextDecoration.lineThrough
+                        : null,
+                  ),
+                )
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            note.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: foregroundColor,
+                                  fontWeight: FontWeight.w800,
+                                  decoration: note.isCompleted
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                          ),
+                        ),
+                        if (readOnly) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            key: ValueKey('compact-note-category-${note.id}'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: foregroundColor.withValues(alpha: 0.13),
+                              borderRadius: BorderRadius.circular(99),
+                              border: Border.all(
+                                color: foregroundColor.withValues(alpha: 0.16),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  NoteCategoryStyle.icon(note.category),
+                                  color: foregroundColor,
+                                  size: 12,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  NoteCategoryStyle.label(note.category),
+                                  style: TextStyle(
+                                    color: foregroundColor,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: foregroundColor.withValues(alpha: 0.78),
+                        height: 1.18,
+                      ),
+                    ),
+                  ],
+                ),
         ),
         if (assignee case final person?) ...[
           const SizedBox(width: 8),
           _CompactAssigneeAvatar(noteId: note.id, person: person),
+        ],
+        if (showOpenIndicator) ...[
+          const SizedBox(width: 8),
+          Icon(
+            Icons.chevron_right_rounded,
+            key: ValueKey('compact-open-indicator-${note.id}'),
+            color: foregroundColor.withValues(alpha: 0.72),
+          ),
         ],
       ],
     );

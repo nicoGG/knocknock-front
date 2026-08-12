@@ -20,6 +20,7 @@ class E2eeNotesRepository
         AggregateBoardAppearancesRepository,
         OfflineSyncRepository,
         NotesSearchRepository,
+        NoteAttachmentsRepository,
         PaginatedNotesRepository {
   E2eeNotesRepository({
     required NotesRepository repository,
@@ -46,6 +47,9 @@ class E2eeNotesRepository
   static const _noteDeltaField = 'note:content-delta:v1';
   static const _noteAuthorField = 'note:author-name:v1';
   static const _noteChecklistField = 'note:checklist-text:v1';
+  static const _noteCustomAssigneeField = 'note:custom-assignee:v1';
+  static const _noteAttachmentNameField = 'note:attachment-name:v1';
+  static const _noteAttachmentDataField = 'note:attachment-data:v1';
 
   final NotesRepository _repository;
   final E2eeUserIdProvider _userIdProvider;
@@ -459,6 +463,21 @@ class E2eeNotesRepository
   }
 
   @override
+  Future<NoteAttachment> fetchAttachment(String noteId) async {
+    final boardId = _noteBoards[noteId];
+    if (boardId == null) throw const EncryptionKeyUnavailableFailure();
+    final key = await _requireListKey(boardId);
+    final repository = _repository;
+    if (repository is! NoteAttachmentsRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return _decryptAttachment(
+      await (repository as NoteAttachmentsRepository).fetchAttachment(noteId),
+      key,
+    );
+  }
+
+  @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     final boardId = _noteBoards[id];
     if (boardId == null) throw const EncryptionKeyUnavailableFailure();
@@ -675,9 +694,29 @@ class E2eeNotesRepository
     final notes = await _repository.fetchNotes(raw.id);
     for (final note in notes) {
       _noteBoards[note.id] = note.boardId;
+      var noteToEncrypt = note;
+      if (note.attachment case final attachment?
+          when attachment.dataBase64 == null) {
+        final repository = _repository;
+        if (repository is! NoteAttachmentsRepository) {
+          throw const NotesPersistenceFailure();
+        }
+        final fullAttachment = await (repository as NoteAttachmentsRepository)
+            .fetchAttachment(note.id);
+        noteToEncrypt = _copyNote(
+          note,
+          title: note.title,
+          content: note.content,
+          contentDelta: note.contentDelta,
+          authorName: note.authorName,
+          customAssigneeName: note.customAssigneeName,
+          attachment: fullAttachment,
+          checklist: note.checklist,
+        );
+      }
       await _repository.updateNote(
         note.id,
-        await _encryptedNoteChanges(note, key),
+        await _encryptedNoteChanges(noteToEncrypt, key),
       );
     }
     final customBackground = raw.appearance.customBackgroundImage;
@@ -813,6 +852,16 @@ class E2eeNotesRepository
           field: _noteAuthorField,
         ),
         assigneeUid: draft.assigneeUid,
+        customAssigneeName: draft.customAssigneeName == null
+            ? null
+            : await _cipher.encryptString(
+                draft.customAssigneeName!,
+                key,
+                field: _noteCustomAssigneeField,
+              ),
+        attachment: draft.attachment == null
+            ? null
+            : await _encryptAttachment(draft.attachment!, key),
         category: draft.category,
         checklist: await Future.wait(
           draft.checklist.map(
@@ -848,6 +897,7 @@ class E2eeNotesRepository
       'content': _noteContentField,
       'contentDelta': _noteDeltaField,
       'authorName': _noteAuthorField,
+      'customAssigneeName': _noteCustomAssigneeField,
     }.entries) {
       final value = encrypted[entry.key];
       if (value is String) {
@@ -871,6 +921,13 @@ class E2eeNotesRepository
           return item;
         }),
       );
+    }
+    final attachment = encrypted['attachment'];
+    if (attachment is Map) {
+      encrypted['attachment'] = (await _encryptAttachment(
+        NoteAttachment.fromJson(Map<String, dynamic>.from(attachment)),
+        key,
+      )).toJson();
     }
     return encrypted;
   }
@@ -897,6 +954,14 @@ class E2eeNotesRepository
       key,
       field: _noteAuthorField,
     ),
+    if (note.customAssigneeName != null)
+      'customAssigneeName': await _encryptIfNeeded(
+        note.customAssigneeName!,
+        key,
+        field: _noteCustomAssigneeField,
+      ),
+    if (note.attachment?.dataBase64 != null)
+      'attachment': (await _encryptAttachment(note.attachment!, key)).toJson(),
     'checklist': await Future.wait(
       note.checklist.map(
         (item) async => {
@@ -919,6 +984,12 @@ class E2eeNotesRepository
       content: changes['content'] as String,
       contentDelta: changes['contentDelta'] as String?,
       authorName: changes['authorName'] as String,
+      customAssigneeName: changes['customAssigneeName'] as String?,
+      attachment: changes['attachment'] is Map
+          ? NoteAttachment.fromJson(
+              Map<String, dynamic>.from(changes['attachment'] as Map),
+            )
+          : null,
       checklist: (changes['checklist'] as List<dynamic>)
           .map(
             (item) => NoteChecklistItem.fromJson(
@@ -933,7 +1004,11 @@ class E2eeNotesRepository
     if (!E2eeCipher.isCiphertext(raw.title) ||
         !E2eeCipher.isCiphertext(raw.content) ||
         !E2eeCipher.isCiphertext(raw.authorName) ||
-        raw.checklist.any((item) => !E2eeCipher.isCiphertext(item.text))) {
+        raw.checklist.any((item) => !E2eeCipher.isCiphertext(item.text)) ||
+        (raw.customAssigneeName != null &&
+            !E2eeCipher.isCiphertext(raw.customAssigneeName!)) ||
+        (raw.attachment != null &&
+            !E2eeCipher.isCiphertext(raw.attachment!.name))) {
       throw const EncryptionKeyUnavailableFailure();
     }
     return _copyNote(
@@ -960,6 +1035,16 @@ class E2eeNotesRepository
         key,
         field: _noteAuthorField,
       ),
+      customAssigneeName: raw.customAssigneeName == null
+          ? null
+          : await _cipher.decryptString(
+              raw.customAssigneeName!,
+              key,
+              field: _noteCustomAssigneeField,
+            ),
+      attachment: raw.attachment == null
+          ? null
+          : await _decryptAttachment(raw.attachment!, key),
       checklist: await Future.wait(
         raw.checklist.map(
           (item) async => item.copyWith(
@@ -980,6 +1065,8 @@ class E2eeNotesRepository
     required String content,
     required String? contentDelta,
     required String authorName,
+    required String? customAssigneeName,
+    required NoteAttachment? attachment,
     required List<NoteChecklistItem> checklist,
   }) => Note(
     id: note.id,
@@ -990,6 +1077,8 @@ class E2eeNotesRepository
     color: note.color,
     authorName: authorName,
     assigneeUid: note.assigneeUid,
+    customAssigneeName: customAssigneeName,
+    attachment: attachment,
     isCompleted: note.isCompleted,
     isPinned: note.isPinned,
     sortOrder: note.sortOrder,
@@ -1003,6 +1092,55 @@ class E2eeNotesRepository
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   );
+
+  Future<NoteAttachment> _encryptAttachment(
+    NoteAttachment attachment,
+    SecretKey key,
+  ) async => NoteAttachment(
+    id: attachment.id,
+    name: await _encryptIfNeeded(
+      attachment.name,
+      key,
+      field: _noteAttachmentNameField,
+    ),
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    dataBase64: attachment.dataBase64 == null
+        ? null
+        : await _encryptIfNeeded(
+            attachment.dataBase64!,
+            key,
+            field: _noteAttachmentDataField,
+          ),
+  );
+
+  Future<NoteAttachment> _decryptAttachment(
+    NoteAttachment attachment,
+    SecretKey key,
+  ) async {
+    if (!E2eeCipher.isCiphertext(attachment.name) ||
+        (attachment.dataBase64 != null &&
+            !E2eeCipher.isCiphertext(attachment.dataBase64!))) {
+      throw const EncryptionKeyUnavailableFailure();
+    }
+    return NoteAttachment(
+      id: attachment.id,
+      name: await _cipher.decryptString(
+        attachment.name,
+        key,
+        field: _noteAttachmentNameField,
+      ),
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataBase64: attachment.dataBase64 == null
+          ? null
+          : await _cipher.decryptString(
+              attachment.dataBase64!,
+              key,
+              field: _noteAttachmentDataField,
+            ),
+    );
+  }
 
   Future<String> _encryptIfNeeded(
     String value,
@@ -1096,6 +1234,29 @@ class E2eeNotesRepository
               ),
             ),
           );
+        case ListNameChanged(:final listId, :final name, :final updatedAt):
+          final key = await _listKeyOrNull(listId);
+          if (key == null) return;
+          final clearName = await _cipher.decryptString(
+            name,
+            key,
+            field: _listNameField,
+          );
+          final rawList = _rawLists[listId];
+          if (rawList != null) {
+            _rawLists[listId] = rawList.copyWith(
+              name: name,
+              updatedAt: updatedAt,
+            );
+          }
+          final clearList = _clearLists[listId];
+          if (clearList != null) {
+            _clearLists[listId] = clearList.copyWith(
+              name: clearName,
+              updatedAt: updatedAt,
+            );
+          }
+          _events.add(ListNameChanged(listId, clearName, updatedAt));
         case AggregateBoardAppearanceChanged(:final scope, :final appearance):
           final key = await _aggregateBoardAppearanceKey();
           _events.add(

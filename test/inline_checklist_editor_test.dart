@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 
 void main() {
@@ -167,6 +168,95 @@ void main() {
       find.byKey(const ValueKey('quick-edit-checklist-editor')),
       findsNothing,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a subtask can use a renamed link', (tester) async {
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final editTarget = ValueNotifier(PostItInlineEditTarget.none);
+    addTearDown(editTarget.dispose);
+    NoteDraft? savedDraft;
+    final note = Note(
+      id: 'linked-note',
+      boardId: 'home',
+      title: 'Compras',
+      content: '',
+      color: NoteColor.orange,
+      authorName: 'Nico',
+      isCompleted: false,
+      positionX: 0,
+      positionY: 0,
+      checklist: const [NoteChecklistItem(id: 'eggs', text: 'Huevos')],
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 390,
+              height: 720,
+              child: PostItCard(
+                note: note,
+                layout: PostItCardLayout.large,
+                inlineEditTarget: editTarget,
+                onInlineSave: (draft) async {
+                  savedDraft = draft;
+                  return true;
+                },
+                onToggle: () {},
+                onPin: () {},
+                onOpen: () {},
+                onChecklistToggle: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('edit-inline-checklist-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('edit-inline-checklist-link-eggs')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Agregar vínculo'), findsOneWidget);
+    final labelField = find.byKey(const ValueKey('note-link-label-field'));
+    final urlField = find.byKey(const ValueKey('note-link-url-field'));
+    expect(tester.widget<TextFormField>(labelField).controller?.text, 'Huevos');
+    await tester.enterText(labelField, 'Huevos orgánicos');
+    await tester.enterText(urlField, 'super.cl/huevos');
+    await tester.tap(find.byKey(const ValueKey('save-note-link-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Huevos orgánicos'), findsOneWidget);
+    final taskField = find.byKey(const ValueKey('checklist-text-eggs'));
+    await tester.enterText(taskField, '');
+    await tester.pump();
+    await tester.enterText(taskField, 'Huevos de campo');
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('save-inline-checklist-button')),
+    );
+    await tester.pumpAndSettle();
+
+    final savedLink = noteChecklistLinkFromText(
+      savedDraft!.checklist.single.text,
+    );
+    expect(savedLink?.label, 'Huevos de campo');
+    expect(savedLink?.url, 'https://super.cl/huevos');
+    expect(find.text('https://super.cl/huevos'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

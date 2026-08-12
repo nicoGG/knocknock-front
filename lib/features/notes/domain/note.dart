@@ -24,6 +24,7 @@ enum NoteCategory {
   travel,
   study,
   finance,
+  money,
   home,
   ideas,
 }
@@ -49,6 +50,11 @@ const supportedNoteReactionEmojis = [
   '🐱',
   '🐵',
   '🐼',
+  '🍕',
+  '🍔',
+  '✈️',
+  '✅',
+  '💪',
 ];
 const localNoteReactionUserId = 'local-device';
 
@@ -117,6 +123,52 @@ class NoteChecklistItem extends Equatable {
   List<Object?> get props => [id, text, isCompleted, indent];
 }
 
+class NoteAttachment extends Equatable {
+  const NoteAttachment({
+    required this.id,
+    required this.name,
+    required this.mimeType,
+    required this.sizeBytes,
+    this.dataBase64,
+  });
+
+  factory NoteAttachment.fromJson(Map<String, dynamic> json) => NoteAttachment(
+    id: json['id'] as String,
+    name: json['name'] as String? ?? 'Adjunto',
+    mimeType: json['mimeType'] as String? ?? 'application/pdf',
+    sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
+    dataBase64: json['dataBase64'] as String?,
+  );
+
+  final String id;
+  final String name;
+  final String mimeType;
+  final int sizeBytes;
+  final String? dataBase64;
+
+  bool get isImage => mimeType.startsWith('image/');
+  bool get isPdf => mimeType == 'application/pdf';
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'mimeType': mimeType,
+    'sizeBytes': sizeBytes,
+    if (dataBase64 != null) 'dataBase64': dataBase64,
+  };
+
+  NoteAttachment copyWith({String? name, String? dataBase64}) => NoteAttachment(
+    id: id,
+    name: name ?? this.name,
+    mimeType: mimeType,
+    sizeBytes: sizeBytes,
+    dataBase64: dataBase64 ?? this.dataBase64,
+  );
+
+  @override
+  List<Object?> get props => [id, name, mimeType, sizeBytes, dataBase64];
+}
+
 List<NoteChecklistItem> normalizeNoteChecklist(
   Iterable<NoteChecklistItem> items, {
   bool trimText = false,
@@ -166,6 +218,8 @@ class Note extends Equatable {
     this.checklist = const [],
     this.reactions = const [],
     this.assigneeUid,
+    this.customAssigneeName,
+    this.attachment,
     this.reminderAt,
     this.contentDelta,
     this.revision = 0,
@@ -184,6 +238,12 @@ class Note extends Equatable {
       ),
       authorName: json['authorName'] as String? ?? 'Invitado',
       assigneeUid: json['assigneeUid'] as String?,
+      customAssigneeName: json['customAssigneeName'] as String?,
+      attachment: json['attachment'] is Map
+          ? NoteAttachment.fromJson(
+              Map<String, dynamic>.from(json['attachment'] as Map),
+            )
+          : null,
       isCompleted: json['isCompleted'] as bool? ?? false,
       isPinned: json['isPinned'] as bool? ?? false,
       sortOrder: (json['sortOrder'] as num?)?.toInt() ?? 0,
@@ -222,6 +282,8 @@ class Note extends Equatable {
   final NoteColor color;
   final String authorName;
   final String? assigneeUid;
+  final String? customAssigneeName;
+  final NoteAttachment? attachment;
   final bool isCompleted;
   final bool isPinned;
   final int sortOrder;
@@ -244,6 +306,8 @@ class Note extends Equatable {
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
+    if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
+    if (attachment != null) 'attachment': attachment!.toJson(),
     'isCompleted': isCompleted,
     'isPinned': isPinned,
     'sortOrder': sortOrder,
@@ -276,6 +340,8 @@ class Note extends Equatable {
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
+    customAssigneeName: customAssigneeName,
+    attachment: attachment,
     isCompleted: isCompleted ?? this.isCompleted,
     isPinned: isPinned ?? this.isPinned,
     sortOrder: sortOrder ?? this.sortOrder,
@@ -300,6 +366,8 @@ class Note extends Equatable {
     color,
     authorName,
     assigneeUid,
+    customAssigneeName,
+    attachment,
     isCompleted,
     isPinned,
     sortOrder,
@@ -324,6 +392,8 @@ class NoteDraft extends Equatable {
     this.category = NoteCategory.general,
     this.checklist = const [],
     this.assigneeUid,
+    this.customAssigneeName,
+    this.attachment,
     this.reminderAt,
     this.contentDelta,
     this.clientNoteId,
@@ -345,6 +415,12 @@ class NoteDraft extends Equatable {
     ),
     authorName: json['authorName'] as String? ?? 'Invitado',
     assigneeUid: json['assigneeUid'] as String?,
+    customAssigneeName: json['customAssigneeName'] as String?,
+    attachment: json['attachment'] is Map
+        ? NoteAttachment.fromJson(
+            Map<String, dynamic>.from(json['attachment'] as Map),
+          )
+        : null,
     category: NoteCategory.values.firstWhere(
       (category) => category.name == json['category'],
       orElse: () => NoteCategory.general,
@@ -372,6 +448,8 @@ class NoteDraft extends Equatable {
   final NoteColor color;
   final String authorName;
   final String? assigneeUid;
+  final String? customAssigneeName;
+  final NoteAttachment? attachment;
   final NoteCategory category;
   final List<NoteChecklistItem> checklist;
   final DateTime? reminderAt;
@@ -393,6 +471,8 @@ class NoteDraft extends Equatable {
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
+    customAssigneeName: customAssigneeName,
+    attachment: attachment,
     category: category,
     checklist: checklist,
     reminderAt: reminderAt,
@@ -412,6 +492,8 @@ class NoteDraft extends Equatable {
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
+    if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
+    if (attachment != null) 'attachment': attachment!.toJson(),
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
@@ -432,6 +514,8 @@ class NoteDraft extends Equatable {
     color,
     authorName,
     assigneeUid,
+    customAssigneeName,
+    attachment,
     category,
     checklist,
     reminderAt,

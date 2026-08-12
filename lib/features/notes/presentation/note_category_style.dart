@@ -11,6 +11,7 @@ abstract final class NoteCategoryStyle {
     NoteCategory.travel => 'Viajes',
     NoteCategory.study => 'Estudio',
     NoteCategory.finance => 'Finanzas',
+    NoteCategory.money => 'Dinero',
     NoteCategory.home => 'Hogar',
     NoteCategory.ideas => 'Ideas',
   };
@@ -24,6 +25,7 @@ abstract final class NoteCategoryStyle {
     NoteCategory.travel => Icons.landscape_outlined,
     NoteCategory.study => Icons.school_outlined,
     NoteCategory.finance => Icons.account_balance_wallet_outlined,
+    NoteCategory.money => Icons.payments_outlined,
     NoteCategory.home => Icons.home_outlined,
     NoteCategory.ideas => Icons.lightbulb_outline_rounded,
   };
@@ -37,6 +39,7 @@ abstract final class NoteCategoryStyle {
     NoteCategory.travel => 'assets/note_backgrounds/travel.jpg',
     NoteCategory.study => 'assets/note_backgrounds/study.jpg',
     NoteCategory.finance => 'assets/note_backgrounds/finance.jpg',
+    NoteCategory.money => 'assets/note_backgrounds/money.jpg',
     NoteCategory.home => 'assets/note_backgrounds/home.jpg',
     NoteCategory.ideas => 'assets/note_backgrounds/ideas.jpg',
   };
@@ -50,6 +53,7 @@ abstract final class NoteCategoryStyle {
     NoteCategory.travel => const Color(0xFF654D7B),
     NoteCategory.study => const Color(0xFF385D78),
     NoteCategory.finance => const Color(0xFF426B55),
+    NoteCategory.money => const Color(0xFF244C3B),
     NoteCategory.home => const Color(0xFF8A6049),
     NoteCategory.ideas => const Color(0xFF84662E),
   };

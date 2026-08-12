@@ -3,10 +3,12 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
+import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
+import 'package:nocknock/features/notes/presentation/note_attachment_picker.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
@@ -55,11 +57,14 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
   late final TextEditingController _authorController;
+  late final TextEditingController _customAssigneeController;
   late NoteRichContent _content;
   late NoteColor _color;
   late NoteCategory _category;
   late List<NoteChecklistItem> _checklist;
   String? _assigneeUid;
+  late bool _usesCustomAssignee;
+  NoteAttachment? _attachment;
   DateTime? _reminderAt;
 
   @override
@@ -84,6 +89,9 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _authorController = TextEditingController(
       text: note?.authorName ?? widget.defaultAuthorName,
     );
+    _customAssigneeController = TextEditingController(
+      text: note?.customAssigneeName ?? '',
+    );
     _color = note?.color ?? NoteColor.yellow;
     _category = note?.category ?? NoteCategory.general;
     _checklist = [...?note?.checklist];
@@ -91,6 +99,8 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
         widget.assignees.any((person) => person.uid == note?.assigneeUid)
         ? note?.assigneeUid
         : null;
+    _usesCustomAssignee = note?.customAssigneeName?.trim().isNotEmpty == true;
+    _attachment = note?.attachment;
     _reminderAt = note?.reminderAt;
   }
 
@@ -98,6 +108,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   void dispose() {
     _titleController.dispose();
     _authorController.dispose();
+    _customAssigneeController.dispose();
     super.dispose();
   }
 
@@ -164,11 +175,20 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   autofocus: widget.note == null,
                   maxLength: 80,
                   textCapitalization: TextCapitalization.sentences,
-                  inputFormatters: const [InitialUppercaseTextFormatter()],
+                  keyboardType: _category == NoteCategory.money
+                      ? TextInputType.number
+                      : TextInputType.text,
+                  inputFormatters: _category == NoteCategory.money
+                      ? [MoneyTextInputFormatter()]
+                      : const [InitialUppercaseTextFormatter()],
                   decoration: _glassInputDecoration(
                     context,
-                    labelText: 'Título',
-                    hintText: 'Ej. Comprar entradas',
+                    labelText: _category == NoteCategory.money
+                        ? 'Monto (CLP)'
+                        : 'Título',
+                    hintText: _category == NoteCategory.money
+                        ? r'$5.000'
+                        : 'Ej. Comprar entradas',
                   ),
                   validator: (value) => value == null || value.trim().isEmpty
                       ? 'Escribe un título para la nota'
@@ -208,8 +228,12 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   const SizedBox(height: 10),
                 ],
                 DropdownButtonFormField<String>(
-                  key: const ValueKey('note-assignee-field'),
-                  initialValue: _assigneeUid ?? '',
+                  key: ValueKey(
+                    'note-assignee-field-${_usesCustomAssignee ? 'custom' : _assigneeUid ?? 'none'}',
+                  ),
+                  initialValue: _usesCustomAssignee
+                      ? '__custom__'
+                      : _assigneeUid ?? '',
                   isExpanded: true,
                   decoration: _glassInputDecoration(
                     context,
@@ -221,6 +245,16 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                     const DropdownMenuItem(
                       value: '',
                       child: Text('Sin responsable'),
+                    ),
+                    const DropdownMenuItem(
+                      value: '__custom__',
+                      child: Row(
+                        children: [
+                          Icon(Icons.manage_accounts_outlined),
+                          SizedBox(width: 10),
+                          Text('Responsable personalizado'),
+                        ],
+                      ),
                     ),
                     ...widget.assignees.map((person) {
                       final label = person.displayName.trim().isNotEmpty
@@ -257,12 +291,35 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                       );
                     }),
                   ],
-                  onChanged: (value) => setState(
-                    () => _assigneeUid = value == null || value.isEmpty
+                  onChanged: (value) => setState(() {
+                    _usesCustomAssignee = value == '__custom__';
+                    _assigneeUid =
+                        value == null || value.isEmpty || value == '__custom__'
                         ? null
-                        : value,
-                  ),
+                        : value;
+                  }),
                 ),
+                if (_usesCustomAssignee) ...[
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    key: const ValueKey('note-custom-assignee-field'),
+                    controller: _customAssigneeController,
+                    maxLength: 50,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: _glassInputDecoration(
+                      context,
+                      labelText: 'Nombre del responsable',
+                      hintText: 'Ej. Camila',
+                      helperText: 'No necesita tener una cuenta en NockNock.',
+                      prefixIcon: const Icon(Icons.manage_accounts_outlined),
+                    ),
+                    validator: (value) =>
+                        _usesCustomAssignee &&
+                            (value == null || value.trim().isEmpty)
+                        ? 'Escribe el nombre del responsable'
+                        : null,
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Text(
                   'Categoría',
@@ -278,7 +335,16 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                       selected: category == _category,
                       avatar: Icon(NoteCategoryStyle.icon(category), size: 18),
                       label: Text(NoteCategoryStyle.label(category)),
-                      onSelected: (_) => setState(() => _category = category),
+                      onSelected: (_) => setState(() {
+                        _category = category;
+                        if (category == NoteCategory.money) {
+                          _titleController.value = MoneyTextInputFormatter()
+                              .formatEditUpdate(
+                                _titleController.value,
+                                _titleController.value,
+                              );
+                        }
+                      }),
                     );
                   }).toList(),
                 ),
@@ -332,6 +398,33 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                 _GlassReminderButton(
                   reminderAt: _reminderAt,
                   onPressed: _selectReminder,
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  key: const ValueKey('note-attachment-field'),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: const Icon(Icons.attach_file_rounded),
+                  title: Text(
+                    _attachment?.name ?? 'Adjuntar imagen o PDF',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    _attachment == null
+                        ? 'Hasta 3 MB'
+                        : _attachment!.isPdf
+                        ? 'Documento PDF'
+                        : 'Imagen adjunta',
+                  ),
+                  trailing: _attachment == null
+                      ? const Icon(Icons.add_rounded)
+                      : IconButton(
+                          key: const ValueKey('remove-note-attachment-button'),
+                          tooltip: 'Quitar adjunto',
+                          onPressed: () => setState(() => _attachment = null),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                  onTap: _pickAttachment,
                 ),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -426,9 +519,26 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
             ? widget.defaultAuthorName.trim()
             : _authorController.text.trim(),
         assigneeUid: _assigneeUid,
+        customAssigneeName: _usesCustomAssignee
+            ? _customAssigneeController.text.trim()
+            : null,
+        attachment: _attachment,
         reminderAt: _reminderAt,
       ),
     );
+  }
+
+  Future<void> _pickAttachment() async {
+    try {
+      final attachment = await pickNoteAttachment();
+      if (!mounted || attachment == null) return;
+      setState(() => _attachment = attachment);
+    } on NoteAttachmentPickFailure catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 }
 
