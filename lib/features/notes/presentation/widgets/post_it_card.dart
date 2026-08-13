@@ -37,6 +37,9 @@ Color gridNoteLinkColor(Color foregroundColor) =>
     ? noteMosaicLinkBlue
     : noteMosaicLinkBlueOnLight;
 
+double gridNotePhotoHeight(double cardWidth) =>
+    (cardWidth * 0.72).clamp(112.0, 180.0).toDouble();
+
 class PostItCard extends StatelessWidget {
   const PostItCard({
     required this.note,
@@ -122,6 +125,64 @@ class PostItCard extends StatelessWidget {
             PostItCardLayout.large => 16.0,
           }
         : 0.0;
+    final gridPhotos = layout == PostItCardLayout.grid
+        ? note.photoAttachments
+              .where((attachment) => attachment.isImage)
+              .toList()
+        : const <NoteAttachment>[];
+    final body = switch (layout) {
+      PostItCardLayout.compact => _CompactNoteBody(
+        note: note,
+        onToggle: onToggle,
+        assignee: assignee,
+        authorPhotoUrl: authorPhotoUrl,
+        originListName: originListName,
+        subtitle: compactSubtitle,
+        readOnly: compactReadOnly,
+        showOpenIndicator: compactOpenIndicator,
+        foregroundColor: foregroundColor,
+      ),
+      PostItCardLayout.grid || PostItCardLayout.large =>
+        layout == PostItCardLayout.large && onInlineSave != null
+            ? _EditableLargeNoteBody(
+                note: note,
+                onToggle: onToggle,
+                assignee: assignee,
+                authorPhotoUrl: authorPhotoUrl,
+                originListName: originListName,
+                foregroundColor: foregroundColor,
+                onChecklistToggle: onChecklistToggle,
+                currentUserId: currentUserId,
+                reactionAuthorNames: reactionAuthorNames,
+                isSavingReaction: isSavingReaction,
+                onToggleReaction: onToggleReaction,
+                onAssigneeTap: onAssigneeTap,
+                attachmentLoader: attachmentLoader,
+                editTarget: inlineEditTarget,
+                onSave: onInlineSave!,
+              )
+            : _NoteBody(
+                note: note,
+                isGrid: layout == PostItCardLayout.grid,
+                onOpen: onOpen,
+                onToggle: onToggle,
+                assignee: assignee,
+                authorPhotoUrl: authorPhotoUrl,
+                originListName: originListName,
+                contentMaxLines: layout == PostItCardLayout.grid ? null : 7,
+                foregroundColor: foregroundColor,
+                onChecklistToggle: onChecklistToggle,
+                currentUserId: currentUserId,
+                reactionAuthorNames: reactionAuthorNames,
+                isSavingReaction: isSavingReaction,
+                onToggleReaction: onToggleReaction,
+                completedChecklistExpanded: completedChecklistExpanded,
+                onCompletedChecklistExpansionChanged:
+                    onCompletedChecklistExpansionChanged,
+                onAssigneeTap: onAssigneeTap,
+                attachmentLoader: attachmentLoader,
+              ),
+    };
     return _InteractivePostIt(
       child: Stack(
         fit: StackFit.expand,
@@ -186,12 +247,10 @@ class PostItCard extends StatelessWidget {
                       showPin ? 38 : 12,
                       4,
                     ),
-                    PostItCardLayout.grid => const EdgeInsets.fromLTRB(
-                      20,
-                      14,
-                      12,
-                      12,
-                    ),
+                    PostItCardLayout.grid =>
+                      gridPhotos.isEmpty
+                          ? const EdgeInsets.fromLTRB(20, 14, 12, 12)
+                          : EdgeInsets.zero,
                     PostItCardLayout.large => const EdgeInsets.fromLTRB(
                       20,
                       16,
@@ -226,62 +285,31 @@ class PostItCard extends StatelessWidget {
                     opacity: note.isCompleted ? 0.82 : 1,
                     duration: completionDuration,
                     curve: Curves.easeOutCubic,
-                    child: switch (layout) {
-                      PostItCardLayout.compact => _CompactNoteBody(
-                        note: note,
-                        onToggle: onToggle,
-                        assignee: assignee,
-                        authorPhotoUrl: authorPhotoUrl,
-                        originListName: originListName,
-                        subtitle: compactSubtitle,
-                        readOnly: compactReadOnly,
-                        showOpenIndicator: compactOpenIndicator,
-                        foregroundColor: foregroundColor,
-                      ),
-                      PostItCardLayout.grid || PostItCardLayout.large =>
-                        layout == PostItCardLayout.large && onInlineSave != null
-                            ? _EditableLargeNoteBody(
-                                note: note,
-                                onToggle: onToggle,
-                                assignee: assignee,
-                                authorPhotoUrl: authorPhotoUrl,
-                                originListName: originListName,
+                    child: gridPhotos.isEmpty
+                        ? body
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _MosaicPhotoHeader(
+                                noteId: note.id,
+                                attachments: gridPhotos,
+                                loader: attachmentLoader,
+                                borderRadius: borderRadius,
                                 foregroundColor: foregroundColor,
-                                onChecklistToggle: onChecklistToggle,
-                                currentUserId: currentUserId,
-                                reactionAuthorNames: reactionAuthorNames,
-                                isSavingReaction: isSavingReaction,
-                                onToggleReaction: onToggleReaction,
-                                onAssigneeTap: onAssigneeTap,
-                                attachmentLoader: attachmentLoader,
-                                editTarget: inlineEditTarget,
-                                onSave: onInlineSave!,
-                              )
-                            : _NoteBody(
-                                note: note,
-                                isGrid: layout == PostItCardLayout.grid,
-                                onOpen: onOpen,
-                                onToggle: onToggle,
-                                assignee: assignee,
-                                authorPhotoUrl: authorPhotoUrl,
-                                originListName: originListName,
-                                contentMaxLines: layout == PostItCardLayout.grid
-                                    ? null
-                                    : 7,
-                                foregroundColor: foregroundColor,
-                                onChecklistToggle: onChecklistToggle,
-                                currentUserId: currentUserId,
-                                reactionAuthorNames: reactionAuthorNames,
-                                isSavingReaction: isSavingReaction,
-                                onToggleReaction: onToggleReaction,
-                                completedChecklistExpanded:
-                                    completedChecklistExpanded,
-                                onCompletedChecklistExpansionChanged:
-                                    onCompletedChecklistExpansionChanged,
-                                onAssigneeTap: onAssigneeTap,
-                                attachmentLoader: attachmentLoader,
                               ),
-                    },
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    12,
+                                    12,
+                                    12,
+                                  ),
+                                  child: body,
+                                ),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ),
@@ -546,6 +574,10 @@ class _NoteBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
+    final hasGridPhoto =
+        isGrid && note.photoAttachments.any((attachment) => attachment.isImage);
+    final showGridColorIndicator =
+        isGrid && NoteCategoryStyle.assetPath(note.category) != null;
     final showMetadata = !isGrid || hasBody;
     final showReactionControls = !isGrid && onToggleReaction != null;
     final visibleOriginListName = showMetadata ? originListName : null;
@@ -564,7 +596,7 @@ class _NoteBody extends StatelessWidget {
             ),
           ),
         ),
-        if (isGrid && note.photoAttachments.isNotEmpty)
+        if (isGrid && !hasGridPhoto && note.photoAttachments.isNotEmpty)
           Tooltip(
             message: note.photoAttachments.length == 1
                 ? 'Tiene una foto'
@@ -590,7 +622,7 @@ class _NoteBody extends StatelessWidget {
         ),
       ],
     );
-    if (isGrid && !hasBody && assignee == null) {
+    if (isGrid && !hasBody && assignee == null && !showGridColorIndicator) {
       return titleRow;
     }
     return Column(
@@ -749,8 +781,22 @@ class _NoteBody extends StatelessWidget {
           builder: (context, constraints) {
             final showAuthor = constraints.maxWidth >= 220;
             if (isGrid) {
-              if (assignee case final person?) {
-                return _GridAssignee(noteId: note.id, person: person);
+              if (assignee != null || showGridColorIndicator) {
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (showGridColorIndicator)
+                      _GridColorIndicator(
+                        noteId: note.id,
+                        color: NotePalette.color(note.color),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                    if (assignee case final person?)
+                      _GridAssignee(noteId: note.id, person: person),
+                  ],
+                );
               }
               if (!hasBody) return const SizedBox.shrink();
             } else {
@@ -797,6 +843,371 @@ class _NoteBody extends StatelessWidget {
   }
 }
 
+class _MosaicPhotoHeader extends StatefulWidget {
+  const _MosaicPhotoHeader({
+    required this.noteId,
+    required this.attachments,
+    required this.loader,
+    required this.borderRadius,
+    required this.foregroundColor,
+  });
+
+  final String noteId;
+  final List<NoteAttachment> attachments;
+  final NoteAttachmentLoader? loader;
+  final double borderRadius;
+  final Color foregroundColor;
+
+  @override
+  State<_MosaicPhotoHeader> createState() => _MosaicPhotoHeaderState();
+}
+
+class _MosaicPhotoHeaderState extends State<_MosaicPhotoHeader> {
+  Future<NoteAttachment>? _loadedAttachment;
+
+  NoteAttachment get _attachment => widget.attachments.first;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoading();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MosaicPhotoHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.attachments.first.id != widget.attachments.first.id ||
+        oldWidget.attachments.first.dataBase64 !=
+            widget.attachments.first.dataBase64) {
+      _startLoading();
+    }
+  }
+
+  void _startLoading() {
+    _loadedAttachment = _attachment.dataBase64 != null
+        ? Future.value(_attachment)
+        : widget.loader?.call(_attachment.id);
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => SizedBox(
+      height: gridNotePhotoHeight(constraints.maxWidth),
+      child: ClipRRect(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(widget.borderRadius),
+        ),
+        child: Semantics(
+          button: true,
+          image: true,
+          label: widget.attachments.length == 1
+              ? 'Ver foto de la nota en grande'
+              : 'Ver ${widget.attachments.length} fotos de la nota en grande',
+          child: GestureDetector(
+            key: ValueKey('mosaic-photo-${widget.noteId}'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _showPhotoViewer(
+              context,
+              attachments: widget.attachments,
+              initialIndex: 0,
+              loader: widget.loader,
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ColoredBox(
+                  color: widget.foregroundColor.withValues(alpha: 0.1),
+                  child: _MosaicPhotoContent(
+                    attachment: _attachment,
+                    future: _loadedAttachment,
+                    foregroundColor: widget.foregroundColor,
+                  ),
+                ),
+                if (widget.attachments.length > 1)
+                  Positioned(
+                    right: 10,
+                    bottom: 10,
+                    child: Container(
+                      key: ValueKey('mosaic-photo-count-${widget.noteId}'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.68),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: const Text(
+                        '+1',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _MosaicPhotoContent extends StatelessWidget {
+  const _MosaicPhotoContent({
+    required this.attachment,
+    required this.future,
+    required this.foregroundColor,
+  });
+
+  final NoteAttachment attachment;
+  final Future<NoteAttachment>? future;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final loading = future;
+    if (loading == null) {
+      return _PhotoUnavailable(foregroundColor: foregroundColor);
+    }
+    return FutureBuilder<NoteAttachment>(
+      future: loading,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Center(
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: foregroundColor,
+            ),
+          );
+        }
+        final loaded = snapshot.data;
+        if (loaded == null || loaded.dataBase64 == null) {
+          return _PhotoUnavailable(foregroundColor: foregroundColor);
+        }
+        try {
+          return Image.memory(
+            base64Decode(loaded.dataBase64!),
+            key: ValueKey('mosaic-photo-image-${attachment.id}'),
+            width: double.infinity,
+            height: double.infinity,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, _, _) =>
+                _PhotoUnavailable(foregroundColor: foregroundColor),
+          );
+        } on FormatException {
+          return _PhotoUnavailable(foregroundColor: foregroundColor);
+        }
+      },
+    );
+  }
+}
+
+class _PhotoUnavailable extends StatelessWidget {
+  const _PhotoUnavailable({required this.foregroundColor});
+
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Icon(
+      Icons.broken_image_outlined,
+      color: foregroundColor.withValues(alpha: 0.76),
+      size: 32,
+    ),
+  );
+}
+
+Future<void> _showPhotoViewer(
+  BuildContext context, {
+  required List<NoteAttachment> attachments,
+  required int initialIndex,
+  required NoteAttachmentLoader? loader,
+}) => Navigator.of(context, rootNavigator: true).push<void>(
+  PageRouteBuilder<void>(
+    opaque: true,
+    barrierColor: Colors.black,
+    pageBuilder: (_, _, _) => _FullscreenPhotoViewer(
+      attachments: attachments,
+      initialIndex: initialIndex,
+      loader: loader,
+    ),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      if (MediaQuery.disableAnimationsOf(context)) return child;
+      return FadeTransition(opacity: animation, child: child);
+    },
+  ),
+);
+
+class _FullscreenPhotoViewer extends StatefulWidget {
+  const _FullscreenPhotoViewer({
+    required this.attachments,
+    required this.initialIndex,
+    required this.loader,
+  });
+
+  final List<NoteAttachment> attachments;
+  final int initialIndex;
+  final NoteAttachmentLoader? loader;
+
+  @override
+  State<_FullscreenPhotoViewer> createState() => _FullscreenPhotoViewerState();
+}
+
+class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
+  late final PageController _controller;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _controller = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = widget.attachments[_currentIndex];
+    return Scaffold(
+      key: const ValueKey('fullscreen-photo-viewer'),
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          key: const ValueKey('close-fullscreen-photo'),
+          tooltip: 'Cerrar',
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        title: Text(
+          current.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        actions: [
+          if (widget.attachments.length > 1)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 18),
+                child: Text(
+                  '${_currentIndex + 1}/${widget.attachments.length}',
+                  key: const ValueKey('fullscreen-photo-count'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.attachments.length,
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) => _FullscreenPhoto(
+          attachment: widget.attachments[index],
+          loader: widget.loader,
+        ),
+      ),
+    );
+  }
+}
+
+class _FullscreenPhoto extends StatefulWidget {
+  const _FullscreenPhoto({required this.attachment, required this.loader});
+
+  final NoteAttachment attachment;
+  final NoteAttachmentLoader? loader;
+
+  @override
+  State<_FullscreenPhoto> createState() => _FullscreenPhotoState();
+}
+
+class _FullscreenPhotoState extends State<_FullscreenPhoto> {
+  Future<NoteAttachment>? _loadedAttachment;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoading();
+  }
+
+  void _startLoading() {
+    _loadedAttachment = widget.attachment.dataBase64 != null
+        ? Future.value(widget.attachment)
+        : widget.loader?.call(widget.attachment.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final future = _loadedAttachment;
+    if (future == null) {
+      return const _FullscreenPhotoError();
+    }
+    return FutureBuilder<NoteAttachment>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          );
+        }
+        final loaded = snapshot.data;
+        if (loaded == null || loaded.dataBase64 == null) {
+          return const _FullscreenPhotoError();
+        }
+        try {
+          return InteractiveViewer(
+            key: ValueKey('fullscreen-photo-${loaded.id}'),
+            minScale: 0.8,
+            maxScale: 5,
+            child: Center(
+              child: Image.memory(
+                base64Decode(loaded.dataBase64!),
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const _FullscreenPhotoError(),
+              ),
+            ),
+          );
+        } on FormatException {
+          return const _FullscreenPhotoError();
+        }
+      },
+    );
+  }
+}
+
+class _FullscreenPhotoError extends StatelessWidget {
+  const _FullscreenPhotoError();
+
+  @override
+  Widget build(BuildContext context) => const Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.broken_image_outlined, color: Colors.white70, size: 42),
+        SizedBox(height: 10),
+        Text(
+          'No se pudo cargar la foto',
+          style: TextStyle(color: Colors.white),
+        ),
+      ],
+    ),
+  );
+}
+
 class _NoteAttachmentsPreview extends StatelessWidget {
   const _NoteAttachmentsPreview({
     required this.attachments,
@@ -818,6 +1229,7 @@ class _NoteAttachmentsPreview extends StatelessWidget {
           Expanded(
             child: _NoteAttachmentPreview(
               attachment: attachment,
+              attachments: attachments,
               foregroundColor: foregroundColor,
               loader: loader,
             ),
@@ -831,11 +1243,13 @@ class _NoteAttachmentsPreview extends StatelessWidget {
 class _NoteAttachmentPreview extends StatefulWidget {
   const _NoteAttachmentPreview({
     required this.attachment,
+    required this.attachments,
     required this.foregroundColor,
     required this.loader,
   });
 
   final NoteAttachment attachment;
+  final List<NoteAttachment> attachments;
   final Color foregroundColor;
   final NoteAttachmentLoader? loader;
 
@@ -876,70 +1290,89 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
     return Semantics(
       label: 'Adjunto ${widget.attachment.name}',
       image: widget.attachment.isImage,
-      child: Container(
-        key: ValueKey('attachment-preview-${widget.attachment.id}'),
-        height: 82,
-        decoration: BoxDecoration(
-          color: foregroundColor.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: foregroundColor.withValues(alpha: 0.18)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: future == null
-            ? _AttachmentFileTile(
-                attachment: widget.attachment,
-                foregroundColor: foregroundColor,
-              )
-            : FutureBuilder<NoteAttachment>(
-                future: future,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState != ConnectionState.done) {
-                    return Center(
-                      child: SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+      button: widget.attachment.isImage,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.attachment.isImage
+            ? () {
+                final photos = widget.attachments
+                    .where((attachment) => attachment.isImage)
+                    .toList(growable: false);
+                _showPhotoViewer(
+                  context,
+                  attachments: photos,
+                  initialIndex: photos.indexWhere(
+                    (attachment) => attachment.id == widget.attachment.id,
+                  ),
+                  loader: widget.loader,
+                );
+              }
+            : null,
+        child: Container(
+          key: ValueKey('attachment-preview-${widget.attachment.id}'),
+          height: 82,
+          decoration: BoxDecoration(
+            color: foregroundColor.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: foregroundColor.withValues(alpha: 0.18)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: future == null
+              ? _AttachmentFileTile(
+                  attachment: widget.attachment,
+                  foregroundColor: foregroundColor,
+                )
+              : FutureBuilder<NoteAttachment>(
+                  future: future,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return Center(
+                        child: SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: foregroundColor,
+                          ),
+                        ),
+                      );
+                    }
+                    final loaded = snapshot.data;
+                    if (loaded == null || loaded.dataBase64 == null) {
+                      return _AttachmentFileTile(
+                        attachment: widget.attachment,
+                        foregroundColor: foregroundColor,
+                        unavailable: true,
+                      );
+                    }
+                    if (!loaded.isImage) {
+                      return _AttachmentFileTile(
+                        attachment: loaded,
+                        foregroundColor: foregroundColor,
+                      );
+                    }
+                    try {
+                      return Image.memory(
+                        base64Decode(loaded.dataBase64!),
+                        key: ValueKey('attachment-image-${loaded.id}'),
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, _, _) => Icon(
+                          Icons.broken_image_outlined,
                           color: foregroundColor,
                         ),
-                      ),
-                    );
-                  }
-                  final loaded = snapshot.data;
-                  if (loaded == null || loaded.dataBase64 == null) {
-                    return _AttachmentFileTile(
-                      attachment: widget.attachment,
-                      foregroundColor: foregroundColor,
-                      unavailable: true,
-                    );
-                  }
-                  if (!loaded.isImage) {
-                    return _AttachmentFileTile(
-                      attachment: loaded,
-                      foregroundColor: foregroundColor,
-                    );
-                  }
-                  try {
-                    return Image.memory(
-                      base64Decode(loaded.dataBase64!),
-                      key: ValueKey('attachment-image-${loaded.id}'),
-                      width: double.infinity,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, _, _) => Icon(
-                        Icons.broken_image_outlined,
-                        color: foregroundColor,
-                      ),
-                    );
-                  } on FormatException {
-                    return _AttachmentFileTile(
-                      attachment: loaded,
-                      foregroundColor: foregroundColor,
-                      unavailable: true,
-                    );
-                  }
-                },
-              ),
+                      );
+                    } on FormatException {
+                      return _AttachmentFileTile(
+                        attachment: loaded,
+                        foregroundColor: foregroundColor,
+                        unavailable: true,
+                      );
+                    }
+                  },
+                ),
+        ),
       ),
     );
   }
@@ -2235,6 +2668,36 @@ class _LargeNotePeopleFooter extends StatelessWidget {
       ],
     );
   }
+}
+
+class _GridColorIndicator extends StatelessWidget {
+  const _GridColorIndicator({required this.noteId, required this.color});
+
+  final String noteId;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Color de la nota',
+    image: true,
+    child: Container(
+      key: ValueKey('grid-color-indicator-$noteId'),
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.58)),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.ink.withValues(alpha: 0.18),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _GridAssignee extends StatelessWidget {

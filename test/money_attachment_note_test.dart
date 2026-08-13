@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
+import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_editor_sheet.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 
@@ -261,4 +262,113 @@ void main() {
     expect(find.text('Fotos · 2/2'), findsOneWidget);
     expect(find.byKey(const ValueKey('add-note-photo-button')), findsNothing);
   });
+
+  testWidgets(
+    'mosaic loads its photo, opens it fullscreen, and aligns color with assignee',
+    (tester) async {
+      const onePixelPng =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+'
+          'A8AAQUBAScY42YAAAAASUVORK5CYII=';
+      final now = DateTime.utc(2026, 8, 12);
+      const attachments = [
+        NoteAttachment(
+          id: 'photo-1',
+          name: 'foto-1.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+        ),
+        NoteAttachment(
+          id: 'photo-2',
+          name: 'foto-2.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+        ),
+      ];
+      final note = Note(
+        id: 'note-photo-mosaic',
+        boardId: 'board-1',
+        title: 'Paseo con los perros',
+        content: 'Recordar llevar agua',
+        color: NoteColor.red,
+        category: NoteCategory.home,
+        authorName: 'Nico',
+        assigneeUid: 'ana',
+        attachments: attachments,
+        isCompleted: false,
+        positionX: 0,
+        positionY: 0,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final assignee = ListCollaborator(
+        uid: 'ana',
+        email: 'ana@example.com',
+        displayName: 'Ana',
+        role: ListMemberRole.editor,
+        joinedAt: now,
+      );
+      var openedNote = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 240,
+                height: 390,
+                child: PostItCard(
+                  note: note,
+                  assignee: assignee,
+                  layout: PostItCardLayout.grid,
+                  showPin: false,
+                  enableHero: false,
+                  attachmentLoader: (attachmentId) async => attachments
+                      .firstWhere((attachment) => attachment.id == attachmentId)
+                      .copyWith(dataBase64: onePixelPng),
+                  onToggle: () {},
+                  onPin: () {},
+                  onOpen: () => openedNote = true,
+                  onChecklistToggle: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('mosaic-photo-image-photo-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mosaic-photo-count-note-photo-mosaic')),
+        findsOneWidget,
+      );
+      final colorRect = tester.getRect(
+        find.byKey(const ValueKey('grid-color-indicator-note-photo-mosaic')),
+      );
+      final assigneeRect = tester.getRect(
+        find.byKey(const ValueKey('grid-assignee-note-photo-mosaic')),
+      );
+      expect(colorRect.center.dy, closeTo(assigneeRect.center.dy, 0.1));
+
+      await tester.tap(
+        find.byKey(const ValueKey('mosaic-photo-note-photo-mosaic')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(openedNote, isFalse);
+      expect(
+        find.byKey(const ValueKey('fullscreen-photo-viewer')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('fullscreen-photo-photo-1')),
+        findsOneWidget,
+      );
+      expect(find.text('1/2'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

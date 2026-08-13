@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image_tools;
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
 
@@ -42,12 +43,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(pickerCalls, 1);
+    expect(
+      find.byKey(const ValueKey('background-frame-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Encuadrar foto'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('apply-background-frame-button')),
+    );
+    await _pumpUntilAbsent(
+      tester,
+      find.byKey(const ValueKey('background-frame-sheet')),
+    );
+
     await tester.tap(find.byKey(const ValueKey('save-background-button')));
     await tester.pumpAndSettle();
 
     expect(result?.backgroundPreset, ListBackgroundPreset.custom);
     expect(result?.backgroundBlur, 5);
-    expect(result?.customBackgroundImage, replacementGif);
+    _expectFramedImage(result?.customBackgroundImage);
   });
 
   testWidgets('removes a custom photo and returns to the paper background', (
@@ -287,6 +301,31 @@ void main() {
 
     expect(pickerCalls, 1);
     expect(
+      find.byKey(const ValueKey('background-frame-sheet')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('background-frame-gesture-area')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('background-frame-zoom-slider')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('reset-background-frame-button')),
+    );
+    await tester.pump(const Duration(milliseconds: 240));
+    await tester.tap(
+      find.byKey(const ValueKey('apply-background-frame-button')),
+    );
+    await _pumpUntilAbsent(
+      tester,
+      find.byKey(const ValueKey('background-frame-sheet')),
+    );
+
+    expect(
       tester
           .widget<Text>(
             find.byKey(const ValueKey('background-preview-preset-label')),
@@ -307,7 +346,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(result?.backgroundPreset, ListBackgroundPreset.custom);
-    expect(result?.customBackgroundImage, replacementGif);
+    _expectFramedImage(result?.customBackgroundImage);
     expect(tester.takeException(), isNull);
   });
 
@@ -342,6 +381,22 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+void _expectFramedImage(String? base64Image) {
+  expect(base64Image, isNotNull);
+  final decoded = image_tools.decodeImage(base64Decode(base64Image!));
+  expect(decoded, isNotNull);
+  expect(decoded!.width, greaterThan(0));
+  expect(decoded.height, greaterThan(0));
+}
+
+Future<void> _pumpUntilAbsent(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 40; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isEmpty) return;
+  }
+  expect(finder, findsNothing);
 }
 
 class _PickerHost extends StatelessWidget {

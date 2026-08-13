@@ -729,6 +729,10 @@ class _BoardPageState extends State<BoardPage>
           HapticFeedback.selectionClick();
           context.read<NotesCubit>().toggleChecklistItem(note, item);
         },
+        attachmentLoader: note.photoAttachments.isEmpty
+            ? null
+            : (attachmentId) =>
+                  context.read<NotesCubit>().loadAttachment(note, attachmentId),
         completedChecklistExpanded: completedChecklistExpanded,
         onCompletedChecklistExpansionChanged:
             onCompletedChecklistExpansionChanged,
@@ -1962,13 +1966,21 @@ class _NotesGridState extends State<_NotesGrid> {
               : 40.0
         : 0.0;
     final reminderHeight = hasBody && note.reminderAt != null ? 32.0 : 0.0;
-    final footerHeight = note.assigneeUid != null
+    final hasAssignee =
+        note.assigneeUid != null ||
+        (note.customAssigneeName?.trim().isNotEmpty ?? false);
+    final hasColorIndicator =
+        NoteCategoryStyle.assetPath(note.category) != null;
+    final footerHeight = hasAssignee || hasColorIndicator
         ? 28.0
         : isCompact
         ? 0.0
         : 24.0;
+    final photoHeight =
+        note.photoAttachments.any((attachment) => attachment.isImage)
+        ? gridNotePhotoHeight(columnWidth)
+        : 0.0;
     if (!hasBody) {
-      final hasAssignee = note.assigneeUid != null;
       if (!hasAssignee) {
         final titleOnlyPainter = TextPainter(
           text: TextSpan(
@@ -1981,13 +1993,17 @@ class _NotesGridState extends State<_NotesGrid> {
           textScaler: textScaler,
           maxLines: 2,
         )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
-        return (36.0 + titleOnlyPainter.height)
+        final baseHeight = (36.0 + titleOnlyPainter.height)
             .clamp(isCompact ? 84.0 : 96.0, isCompact ? 120.0 : 136.0)
             .toDouble();
+        return baseHeight + photoHeight + (hasColorIndicator ? 36 : 0);
       }
-      final desiredEmptyHeight = 36.0 + headerHeight + 28;
+      final desiredEmptyHeight = 36.0 + headerHeight + 28 + photoHeight;
       return desiredEmptyHeight
-          .clamp(isCompact ? 136.0 : 142.0, isCompact ? 150.0 : 166.0)
+          .clamp(
+            isCompact ? 136.0 : 142.0,
+            (isCompact ? 150.0 : 166.0) + photoHeight,
+          )
           .toDouble();
     }
     final desiredHeight =
@@ -1997,7 +2013,8 @@ class _NotesGridState extends State<_NotesGrid> {
         categoryHeight +
         contentHeight +
         reminderHeight +
-        (note.assigneeUid != null ? 10 : 0) +
+        photoHeight +
+        (hasAssignee ? 10 : 0) +
         footerHeight +
         (note.checklist.isNotEmpty ? 10 : 0);
     final minimumHeight = isCompact ? 184.0 : 205.0;

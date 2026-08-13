@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as image_tools;
 import 'package:image_picker/image_picker.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
@@ -116,7 +118,7 @@ class _BlurredBackgroundTransition extends StatelessWidget {
             child: ImageFiltered(
               key: const ValueKey('background-transition-blur'),
               enabled: blur > 0.01,
-              imageFilter: ImageFilter.blur(
+              imageFilter: ui.ImageFilter.blur(
                 sigmaX: blur,
                 sigmaY: blur,
                 tileMode: TileMode.clamp,
@@ -150,7 +152,7 @@ class _BackgroundLayer extends StatelessWidget {
           ClipRect(
             child: BackdropFilter(
               key: const ValueKey('board-background-blur'),
-              filter: ImageFilter.blur(
+              filter: ui.ImageFilter.blur(
                 sigmaX: appearance.backgroundBlur,
                 sigmaY: appearance.backgroundBlur,
               ),
@@ -355,6 +357,9 @@ extension ListBackgroundPresetStyle on ListBackgroundPreset {
 
 typedef ListBackgroundImagePicker = Future<Uint8List?> Function();
 
+const _maximumListBackgroundImageBytes = 2250000;
+const _maximumFramedImageSide = 1080.0;
+
 Future<Uint8List?> _pickListBackgroundImage() async {
   final image = await ImagePicker().pickImage(
     source: ImageSource.gallery,
@@ -365,6 +370,47 @@ Future<Uint8List?> _pickListBackgroundImage() async {
   );
   return image?.readAsBytes();
 }
+
+Future<Uint8List?> _showListBackgroundImageFramer(
+  BuildContext context,
+  Uint8List bytes,
+) {
+  final mediaQuery = MediaQuery.of(context);
+  final availableHeight = math.max(
+    1.0,
+    mediaQuery.size.height - mediaQuery.padding.vertical,
+  );
+  final targetAspectRatio = (mediaQuery.size.width / availableHeight)
+      .clamp(0.48, 1.4)
+      .toDouble();
+  return showModalBottomSheet<Uint8List>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.black.withValues(
+      alpha: Theme.of(context).brightness == Brightness.dark ? 0.42 : 0.28,
+    ),
+    builder: (_) => _BackgroundImageFrameSheet(
+      imageBytes: bytes,
+      targetAspectRatio: targetAspectRatio,
+    ),
+  );
+}
+
+Future<Size> _decodeListBackgroundImageSize(Uint8List bytes) async {
+  final image = await Future<image_tools.Image?>(
+    () => image_tools.decodeImage(bytes),
+  );
+  if (image == null) {
+    throw const FormatException('Unsupported list background image');
+  }
+  final oriented = image_tools.bakeOrientation(image);
+  return Size(oriented.width.toDouble(), oriented.height.toDouble());
+}
+
+double _clampDouble(double value, double min, double max) =>
+    math.min(math.max(value, min), max);
 
 Future<ListAppearance?> showListBackgroundPicker(
   BuildContext context, {
@@ -384,6 +430,527 @@ Future<ListAppearance?> showListBackgroundPicker(
   ),
 );
 
+class _BackgroundImageFrameSheet extends StatefulWidget {
+  const _BackgroundImageFrameSheet({
+    required this.imageBytes,
+    required this.targetAspectRatio,
+  });
+
+  final Uint8List imageBytes;
+  final double targetAspectRatio;
+
+  @override
+  State<_BackgroundImageFrameSheet> createState() =>
+      _BackgroundImageFrameSheetState();
+}
+
+class _BackgroundImageFrameSheetState
+    extends State<_BackgroundImageFrameSheet> {
+  late final Future<Size> _imageSizeFuture;
+  double _zoom = 1;
+  Offset _offset = Offset.zero;
+  Size _lastFrameSize = Size.zero;
+  Size _lastSourceSize = Size.zero;
+  double _gestureStartZoom = 1;
+  bool _isApplying = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _imageSizeFuture = _decodeListBackgroundImageSize(widget.imageBytes);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final sheetRadius = BorderRadius.vertical(top: Radius.circular(30));
+    return ClipRRect(
+      key: const ValueKey('background-frame-sheet'),
+      borderRadius: sheetRadius,
+      child: BackdropFilter(
+        key: const ValueKey('background-frame-glass-filter'),
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          constraints: BoxConstraints(maxHeight: mediaQuery.size.height * 0.94),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface.withValues(
+              alpha: theme.brightness == Brightness.dark ? 0.9 : 0.86,
+            ),
+            borderRadius: sheetRadius,
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withValues(
+                  alpha: theme.brightness == Brightness.dark ? 0.14 : 0.5,
+                ),
+              ),
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Encuadrar foto',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ),
+                      IconButton.filledTonal(
+                        key: const ValueKey('close-background-frame-button'),
+                        tooltip: 'Cerrar',
+                        onPressed: _isApplying
+                            ? null
+                            : () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Flexible(
+                    child: FutureBuilder<Size>(
+                      future: _imageSizeFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const SizedBox(
+                            height: 220,
+                            child: Center(
+                              child: CircularProgressIndicator(strokeWidth: 3),
+                            ),
+                          );
+                        }
+                        final sourceSize = snapshot.data;
+                        if (sourceSize == null || snapshot.hasError) {
+                          return _frameError(
+                            theme,
+                            'No pudimos leer esta foto. Prueba con otra imagen.',
+                          );
+                        }
+                        return SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _frameEditor(theme, sourceSize),
+                              const SizedBox(height: 12),
+                              _frameControls(theme),
+                              if (_error case final error?) ...[
+                                const SizedBox(height: 10),
+                                _frameError(theme, error),
+                              ],
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const ValueKey('cancel-background-frame-button'),
+                          onPressed: _isApplying
+                              ? null
+                              : () => Navigator.pop(context),
+                          child: const Text('Cancelar'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.icon(
+                          key: const ValueKey('apply-background-frame-button'),
+                          onPressed: _isApplying ? null : _applyFrame,
+                          icon: _isApplying
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                  ),
+                                )
+                              : const Icon(Icons.check_rounded),
+                          label: const Text('Listo'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _frameEditor(ThemeData theme, Size sourceSize) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = math.min(constraints.maxWidth, 420.0);
+        final availableHeight = math.min(
+          MediaQuery.sizeOf(context).height * 0.55,
+          520.0,
+        );
+        var frameWidth = availableWidth;
+        var frameHeight = frameWidth / widget.targetAspectRatio;
+        if (frameHeight > availableHeight) {
+          frameHeight = availableHeight;
+          frameWidth = frameHeight * widget.targetAspectRatio;
+        }
+        final frameSize = Size(frameWidth, frameHeight);
+        final displaySize = _displayImageSize(sourceSize, frameSize, _zoom);
+        final effectiveOffset = _clampOffset(_offset, frameSize, displaySize);
+        _lastFrameSize = frameSize;
+        _lastSourceSize = sourceSize;
+        if (effectiveOffset != _offset) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && effectiveOffset != _offset) {
+              setState(() => _offset = effectiveOffset);
+            }
+          });
+        }
+        return Center(
+          child: SizedBox(
+            width: frameWidth,
+            height: frameHeight,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRect(
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: GestureDetector(
+                      key: const ValueKey('background-frame-gesture-area'),
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: _resetFrame,
+                      onScaleStart: (_) => _gestureStartZoom = _zoom,
+                      onScaleUpdate: _handleScaleUpdate,
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          Positioned(
+                            left:
+                                (frameWidth - displaySize.width) / 2 +
+                                effectiveOffset.dx,
+                            top:
+                                (frameHeight - displaySize.height) / 2 +
+                                effectiveOffset.dy,
+                            width: displaySize.width,
+                            height: displaySize.height,
+                            child: Image.memory(
+                              widget.imageBytes,
+                              fit: BoxFit.fill,
+                              filterQuality: FilterQuality.high,
+                              gaplessPlayback: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.76),
+                        width: 1.4,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: CustomPaint(
+                        painter: _BackgroundFrameGridPainter(
+                          Colors.white.withValues(alpha: 0.34),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _frameControls(ThemeData theme) {
+    return Row(
+      children: [
+        IconButton.outlined(
+          key: const ValueKey('reset-background-frame-button'),
+          tooltip: 'Centrar',
+          onPressed: _resetFrame,
+          icon: const Icon(Icons.center_focus_strong_rounded),
+        ),
+        const SizedBox(width: 8),
+        Icon(
+          Icons.zoom_in_rounded,
+          color: theme.colorScheme.onSurfaceVariant,
+          size: 21,
+        ),
+        Expanded(
+          child: Slider(
+            key: const ValueKey('background-frame-zoom-slider'),
+            value: _zoom,
+            min: 1,
+            max: 4,
+            divisions: 30,
+            label: '${_zoom.toStringAsFixed(1)}x',
+            onChanged: (value) {
+              final nextDisplaySize = _displayImageSize(
+                _lastSourceSize,
+                _lastFrameSize,
+                value,
+              );
+              setState(() {
+                _zoom = value;
+                _offset = _clampOffset(
+                  _offset,
+                  _lastFrameSize,
+                  nextDisplaySize,
+                );
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _frameError(ThemeData theme, String error) {
+    return Container(
+      key: const ValueKey('background-frame-error'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(
+        error,
+        style: TextStyle(
+          color: theme.colorScheme.onErrorContainer,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Size _displayImageSize(Size sourceSize, Size frameSize, double zoom) {
+    if (sourceSize.isEmpty || frameSize.isEmpty) return Size.zero;
+    final coverScale = math.max(
+      frameSize.width / sourceSize.width,
+      frameSize.height / sourceSize.height,
+    );
+    return Size(
+      sourceSize.width * coverScale * zoom,
+      sourceSize.height * coverScale * zoom,
+    );
+  }
+
+  Offset _clampOffset(Offset offset, Size frameSize, Size displaySize) {
+    if (frameSize.isEmpty || displaySize.isEmpty) return Offset.zero;
+    final maxDx = math.max(0.0, (displaySize.width - frameSize.width) / 2);
+    final maxDy = math.max(0.0, (displaySize.height - frameSize.height) / 2);
+    return Offset(
+      _clampDouble(offset.dx, -maxDx, maxDx),
+      _clampDouble(offset.dy, -maxDy, maxDy),
+    );
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    if (_lastFrameSize.isEmpty || _lastSourceSize.isEmpty) return;
+    final nextZoom = _clampDouble(_gestureStartZoom * details.scale, 1, 4);
+    final nextDisplaySize = _displayImageSize(
+      _lastSourceSize,
+      _lastFrameSize,
+      nextZoom,
+    );
+    final frameCenter = _lastFrameSize.center(Offset.zero);
+    final focalFromCenter =
+        Offset(
+          _clampDouble(details.localFocalPoint.dx, 0, _lastFrameSize.width),
+          _clampDouble(details.localFocalPoint.dy, 0, _lastFrameSize.height),
+        ) -
+        frameCenter;
+    final scaleRatio = _zoom == 0 ? 1.0 : nextZoom / _zoom;
+    final movedOffset = _offset + details.focalPointDelta;
+    final anchoredOffset =
+        focalFromCenter + (movedOffset - focalFromCenter) * scaleRatio;
+    setState(() {
+      _zoom = nextZoom;
+      _offset = _clampOffset(anchoredOffset, _lastFrameSize, nextDisplaySize);
+    });
+  }
+
+  void _resetFrame() {
+    setState(() {
+      _zoom = 1;
+      _offset = Offset.zero;
+      _error = null;
+    });
+  }
+
+  Future<void> _applyFrame() async {
+    setState(() {
+      _isApplying = true;
+      _error = null;
+    });
+    try {
+      final bytes = await _captureFrame();
+      if (!mounted) return;
+      Navigator.pop(context, bytes);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No pudimos encuadrar esta foto. Prueba con otra imagen.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isApplying = false);
+    }
+  }
+
+  Future<Uint8List> _captureFrame() async {
+    if (_lastFrameSize.isEmpty || _lastSourceSize.isEmpty) {
+      throw StateError('Missing background frame geometry');
+    }
+    final decoded = await Future<image_tools.Image?>(
+      () => image_tools.decodeImage(widget.imageBytes),
+    );
+    if (decoded == null) {
+      throw const FormatException('Unsupported list background image');
+    }
+    final source = image_tools.bakeOrientation(decoded);
+    final sourceSize = Size(source.width.toDouble(), source.height.toDouble());
+    final displaySize = _displayImageSize(sourceSize, _lastFrameSize, _zoom);
+    final effectiveOffset = _clampOffset(_offset, _lastFrameSize, displaySize);
+    final displayLeft =
+        (_lastFrameSize.width - displaySize.width) / 2 + effectiveOffset.dx;
+    final displayTop =
+        (_lastFrameSize.height - displaySize.height) / 2 + effectiveOffset.dy;
+    final sourceScale = displaySize.width / sourceSize.width;
+    final cropLeft = _clampDouble(
+      -displayLeft / sourceScale,
+      0,
+      sourceSize.width - 1,
+    );
+    final cropTop = _clampDouble(
+      -displayTop / sourceScale,
+      0,
+      sourceSize.height - 1,
+    );
+    final cropRight = _clampDouble(
+      (_lastFrameSize.width - displayLeft) / sourceScale,
+      cropLeft + 1,
+      sourceSize.width,
+    );
+    final cropBottom = _clampDouble(
+      (_lastFrameSize.height - displayTop) / sourceScale,
+      cropTop + 1,
+      sourceSize.height,
+    );
+    final cropX = cropLeft.floor().clamp(0, source.width - 1);
+    final cropY = cropTop.floor().clamp(0, source.height - 1);
+    final cropWidth = math.max(
+      1,
+      math.min(source.width - cropX, (cropRight - cropX).ceil()),
+    );
+    final cropHeight = math.max(
+      1,
+      math.min(source.height - cropY, (cropBottom - cropY).ceil()),
+    );
+    final cropped = image_tools.copyCrop(
+      source,
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
+    );
+    final longestSide = math.max(_lastFrameSize.width, _lastFrameSize.height);
+    final outputScale = _clampDouble(
+      _maximumFramedImageSide / math.max(1, longestSide),
+      1,
+      3,
+    );
+    final outputWidth = math.max(
+      1,
+      (_lastFrameSize.width * outputScale).round(),
+    );
+    final outputHeight = math.max(
+      1,
+      (_lastFrameSize.height * outputScale).round(),
+    );
+    final resized = image_tools.copyResize(
+      cropped,
+      width: outputWidth,
+      height: outputHeight,
+      interpolation: image_tools.Interpolation.average,
+    );
+    Uint8List? lastEncoded;
+    for (final quality in const [80, 70, 60]) {
+      final encoded = Uint8List.fromList(
+        image_tools.encodeJpg(resized, quality: quality),
+      );
+      lastEncoded = encoded;
+      if (encoded.length <= _maximumListBackgroundImageBytes) {
+        return encoded;
+      }
+    }
+    return lastEncoded!;
+  }
+}
+
+class _BackgroundFrameGridPainter extends CustomPainter {
+  const _BackgroundFrameGridPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+    for (final fraction in const [1 / 3, 2 / 3]) {
+      canvas
+        ..drawLine(
+          Offset(size.width * fraction, 0),
+          Offset(size.width * fraction, size.height),
+          paint,
+        )
+        ..drawLine(
+          Offset(0, size.height * fraction),
+          Offset(size.width, size.height * fraction),
+          paint,
+        );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BackgroundFrameGridPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 class _ListBackgroundSheet extends StatefulWidget {
   const _ListBackgroundSheet({
     required this.initialAppearance,
@@ -398,7 +965,6 @@ class _ListBackgroundSheet extends StatefulWidget {
 }
 
 class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
-  static const _maximumImageBytes = 2250000;
   late ListBackgroundPreset _preset = widget.initialAppearance.backgroundPreset;
   late double _blur = widget.initialAppearance.backgroundBlur;
   late String? _customImage = widget.initialAppearance.customBackgroundImage;
@@ -436,7 +1002,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
       borderRadius: sheetRadius,
       child: BackdropFilter(
         key: const ValueKey('background-sheet-glass-filter'),
-        filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+        filter: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26),
         child: Container(
           constraints: BoxConstraints(maxHeight: mediaQuery.size.height * 0.94),
           decoration: BoxDecoration(
@@ -497,7 +1063,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
                                   style: theme.textTheme.headlineSmall
                                       ?.copyWith(
                                         fontWeight: FontWeight.w900,
-                                        letterSpacing: -0.35,
+                                        letterSpacing: 0,
                                       ),
                                 ),
                               ),
@@ -618,7 +1184,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
               ClipRect(
                 child: BackdropFilter(
                   key: const ValueKey('background-action-glass-filter'),
-                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: theme.colorScheme.surface.withValues(alpha: 0.68),
@@ -716,7 +1282,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
           child: Container(
             padding: const EdgeInsets.fromLTRB(9, 7, 12, 7),
             decoration: BoxDecoration(
@@ -785,7 +1351,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
       return ClipRRect(
         borderRadius: BorderRadius.circular(14),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
             width: 46,
             height: 42,
@@ -883,7 +1449,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
       borderRadius: BorderRadius.circular(18),
       child: BackdropFilter(
         key: const ValueKey('background-blur-glass-filter'),
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: AnimatedContainer(
           duration: motionDuration,
           curve: Curves.easeOutCubic,
@@ -1254,7 +1820,17 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
     try {
       final bytes = await widget.imagePicker();
       if (bytes == null || !mounted) return;
-      if (bytes.length > _maximumImageBytes) {
+      if (bytes.length > _maximumListBackgroundImageBytes) {
+        setState(() {
+          _error =
+              'La foto sigue siendo muy pesada. Elige una de menor tamaño.';
+        });
+        return;
+      }
+      setState(() => _isPicking = false);
+      final framedBytes = await _showListBackgroundImageFramer(context, bytes);
+      if (framedBytes == null || !mounted) return;
+      if (framedBytes.length > _maximumListBackgroundImageBytes) {
         setState(() {
           _error =
               'La foto sigue siendo muy pesada. Elige una de menor tamaño.';
@@ -1262,7 +1838,7 @@ class _ListBackgroundSheetState extends State<_ListBackgroundSheet> {
         return;
       }
       setState(() {
-        _customImage = base64Encode(bytes);
+        _customImage = base64Encode(framedBytes);
         _preset = ListBackgroundPreset.custom;
       });
     } catch (_) {
