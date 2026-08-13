@@ -20,6 +20,7 @@ void main() {
   });
 
   test('exposes the expanded note color palette', () {
+    expect(NotePalette.color(NoteColor.none), isNotNull);
     expect(NotePalette.color(NoteColor.orange), isNotNull);
     expect(NotePalette.color(NoteColor.mint), isNotNull);
     expect(NotePalette.color(NoteColor.coral), isNotNull);

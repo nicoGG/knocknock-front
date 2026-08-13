@@ -174,6 +174,7 @@ void main() {
   testWidgets('shows two local photo thumbnails and enforces the limit', (
     tester,
   ) async {
+    NoteDraft? savedDraft;
     const onePixelPng =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+'
         'A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -219,6 +220,10 @@ void main() {
               layout: PostItCardLayout.large,
               showPin: false,
               enableHero: false,
+              onInlineSave: (draft) async {
+                savedDraft = draft;
+                return true;
+              },
               onToggle: () {},
               onPin: () {},
               onOpen: () {},
@@ -238,6 +243,21 @@ void main() {
       find.byKey(const ValueKey('attachment-image-photo-2')),
       findsOneWidget,
     );
+
+    await tester.tap(
+      find.byKey(const ValueKey('remove-preview-photo-photo-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('¿Eliminar imagen?'), findsOneWidget);
+    expect(savedDraft, isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('confirm-remove-preview-photo')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(savedDraft?.photoAttachments.map((entry) => entry.id), ['photo-2']);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -259,7 +279,7 @@ void main() {
       find.byKey(const ValueKey('note-editor-photo-photo-2')),
       findsOneWidget,
     );
-    expect(find.text('Fotos · 2/2'), findsOneWidget);
+    expect(find.text('Adjuntos · 2/2'), findsOneWidget);
     expect(find.byKey(const ValueKey('add-note-photo-button')), findsNothing);
   });
 

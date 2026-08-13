@@ -428,6 +428,10 @@ typedef NoteLinkMetadataLoader = Future<NoteLinkMetadata> Function(String url);
 
 final Map<String, Future<NoteLinkMetadata>> _metadataCache = {};
 
+const _linkPreviewUserAgent =
+    'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/136.0 Mobile Safari/537.36';
+
 Future<NoteLinkMetadata> loadNoteLinkMetadata(String input) {
   final url = normalizeNoteLink(input);
   return _metadataCache.putIfAbsent(url, () => _fetchNoteLinkMetadata(url));
@@ -448,7 +452,10 @@ Future<NoteLinkMetadata> _fetchNoteLinkMetadata(String url) async {
         maxRedirects: 5,
         headers: const {
           'Accept': 'text/html,application/xhtml+xml',
-          'User-Agent': 'NockNock-LinkPreview/1.0',
+          // Several commerce sites reject non-browser user agents even though
+          // their public metadata is otherwise available.
+          'User-Agent': _linkPreviewUserAgent,
+          'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
         },
         sendTimeout: const Duration(seconds: 4),
         receiveTimeout: const Duration(seconds: 5),
@@ -475,9 +482,15 @@ Future<NoteLinkMetadata> _fetchNoteLinkMetadata(String url) async {
     ]);
     final imageCandidate = _firstNotEmpty([
       meta('property', 'og:image'),
+      meta('property', 'og:image:url'),
+      meta('property', 'og:image:secure_url'),
       meta('name', 'twitter:image'),
+      meta('name', 'twitter:image:src'),
       document
-          .querySelector('link[rel="apple-touch-icon"], link[rel="icon"]')
+          .querySelector(
+            'link[rel~="apple-touch-icon"], link[rel~="icon"], '
+            'link[rel="shortcut icon"]',
+          )
           ?.attributes['href']
           ?.trim(),
     ]);

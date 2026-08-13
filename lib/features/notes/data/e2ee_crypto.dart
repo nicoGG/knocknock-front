@@ -304,8 +304,22 @@ class E2eeCipher {
 String encodeBase64Url(List<int> bytes) =>
     base64Url.encode(bytes).replaceAll('=', '');
 
-bool _isBase64Url(String value) =>
-    value.isNotEmpty && RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
+bool _isBase64Url(String value) {
+  if (value.isEmpty) return false;
+  for (final codeUnit in value.codeUnits) {
+    final isUppercase = codeUnit >= 0x41 && codeUnit <= 0x5A;
+    final isLowercase = codeUnit >= 0x61 && codeUnit <= 0x7A;
+    final isDigit = codeUnit >= 0x30 && codeUnit <= 0x39;
+    if (!isUppercase &&
+        !isLowercase &&
+        !isDigit &&
+        codeUnit != 0x5F &&
+        codeUnit != 0x2D) {
+      return false;
+    }
+  }
+  return true;
+}
 
 Uint8List decodeBase64Url(String value) {
   final padding = (4 - value.length % 4) % 4;

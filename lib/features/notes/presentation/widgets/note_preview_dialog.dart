@@ -72,7 +72,7 @@ Future<NoteDraft?> showCreateNoteDialog({
     boardId: '',
     title: '',
     content: '',
-    color: NoteColor.yellow,
+    color: NoteColor.none,
     authorName: defaultAuthorName,
     isCompleted: false,
     positionX: 0,
@@ -439,7 +439,8 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     }
     if (!mounted) return;
     try {
-      final attachments = await pickNotePhotos(
+      final attachments = await pickNoteAttachments(
+        context: context,
         remaining: noteAttachmentMaxCount - note.photoAttachments.length,
       );
       if (!mounted || attachments.isEmpty) return;
@@ -523,8 +524,6 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                         isSaving: _isSaving,
                         canUndo: _undoHistory.isNotEmpty,
                         canRedo: _redoHistory.isNotEmpty,
-                        onEdit: () => _inlineEditTarget.value =
-                            PostItInlineEditTarget.description,
                         onUndo: _undo,
                         onRedo: _redo,
                         onColor: _editColor,
@@ -1047,6 +1046,14 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         _QuickPhotoStrip(
                           attachments: _attachments,
                           foregroundColor: foregroundColor,
+                          onOpen: (attachment) => showNotePhotoViewer(
+                            context,
+                            attachments: _attachments,
+                            initialIndex: _attachments.indexWhere(
+                              (entry) => entry.id == attachment.id,
+                            ),
+                            loader: null,
+                          ),
                           onRemove: (attachment) => setState(
                             () => _attachments.removeWhere(
                               (entry) => entry.id == attachment.id,
@@ -1267,7 +1274,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
       }
     }
     try {
-      final attachments = await pickNotePhotos(
+      final attachments = await pickNoteAttachments(
+        context: context,
         remaining: noteAttachmentMaxCount - _attachments.length,
       );
       if (!mounted || attachments.isEmpty) return;
@@ -1424,8 +1432,8 @@ class _QuickEditorTools extends StatelessWidget {
               _PreviewDockAction(
                 key: const ValueKey('quick-editor-attachment-action'),
                 tooltip: attachmentCount == 0
-                    ? 'Agregar hasta 2 fotos'
-                    : 'Administrar fotos ($attachmentCount/2)',
+                    ? 'Agregar fotos o PDF'
+                    : 'Administrar adjuntos ($attachmentCount/2)',
                 icon: Icons.add_photo_alternate_outlined,
                 dimension: actionExtent,
                 selected: attachmentCount > 0,
@@ -1451,11 +1459,13 @@ class _QuickPhotoStrip extends StatelessWidget {
   const _QuickPhotoStrip({
     required this.attachments,
     required this.foregroundColor,
+    required this.onOpen,
     required this.onRemove,
   });
 
   final List<NoteAttachment> attachments;
   final Color foregroundColor;
+  final ValueChanged<NoteAttachment> onOpen;
   final ValueChanged<NoteAttachment> onRemove;
 
   @override
@@ -1469,16 +1479,32 @@ class _QuickPhotoStrip extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(13),
-                  child: _thumbnail(attachment),
+                Tooltip(
+                  message: 'Ver foto en grande',
+                  child: Semantics(
+                    button: true,
+                    image: true,
+                    label: 'Ver ${attachment.name} en grande',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        key: ValueKey('quick-open-photo-${attachment.id}'),
+                        borderRadius: BorderRadius.circular(13),
+                        onTap: () => onOpen(attachment),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(13),
+                          child: _thumbnail(attachment),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 Positioned(
                   top: 3,
                   right: 3,
                   child: IconButton.filledTonal(
                     key: ValueKey('quick-remove-photo-${attachment.id}'),
-                    tooltip: 'Quitar foto',
+                    tooltip: 'Quitar adjunto',
                     visualDensity: VisualDensity.compact,
                     onPressed: () => onRemove(attachment),
                     icon: const Icon(Icons.close_rounded, size: 17),
@@ -1561,7 +1587,6 @@ class _PreviewEditingDock extends StatelessWidget {
     required this.isSaving,
     required this.canUndo,
     required this.canRedo,
-    required this.onEdit,
     required this.onUndo,
     required this.onRedo,
     required this.onColor,
@@ -1576,7 +1601,6 @@ class _PreviewEditingDock extends StatelessWidget {
   final bool isSaving;
   final bool canUndo;
   final bool canRedo;
-  final VoidCallback onEdit;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onColor;
@@ -1653,31 +1677,6 @@ class _PreviewEditingDock extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 _PreviewDockAction(
-                                  key: const ValueKey('quick-edit-note-button'),
-                                  tooltip: 'Editar descripción',
-                                  icon: Icons.edit_note_rounded,
-                                  onPressed: isSaving ? null : onEdit,
-                                ),
-                                const SizedBox(width: 2),
-                                _PreviewDockAction(
-                                  key: const ValueKey('preview-undo-action'),
-                                  tooltip: 'Deshacer',
-                                  icon: Icons.undo_rounded,
-                                  onPressed: isSaving || !canUndo
-                                      ? null
-                                      : onUndo,
-                                ),
-                                const SizedBox(width: 2),
-                                _PreviewDockAction(
-                                  key: const ValueKey('preview-redo-action'),
-                                  tooltip: 'Rehacer',
-                                  icon: Icons.redo_rounded,
-                                  onPressed: isSaving || !canRedo
-                                      ? null
-                                      : onRedo,
-                                ),
-                                const SizedBox(width: 2),
-                                _PreviewDockAction(
                                   key: const ValueKey('preview-color-action'),
                                   tooltip: 'Cambiar color',
                                   icon: Icons.palette_outlined,
@@ -1715,8 +1714,8 @@ class _PreviewEditingDock extends StatelessWidget {
                                     'preview-attachment-action',
                                   ),
                                   tooltip: note.photoAttachments.isEmpty
-                                      ? 'Agregar hasta 2 fotos'
-                                      : 'Administrar fotos '
+                                      ? 'Agregar fotos o PDF'
+                                      : 'Administrar adjuntos '
                                             '(${note.photoAttachments.length}/2)',
                                   icon: Icons.add_photo_alternate_outlined,
                                   selected: note.photoAttachments.isNotEmpty,
@@ -1727,6 +1726,20 @@ class _PreviewEditingDock extends StatelessWidget {
                           ),
                         ),
                       ),
+                    ),
+                    const SizedBox(width: 2),
+                    _PreviewDockAction(
+                      key: const ValueKey('preview-undo-action'),
+                      tooltip: 'Deshacer',
+                      icon: Icons.undo_rounded,
+                      onPressed: isSaving || !canUndo ? null : onUndo,
+                    ),
+                    const SizedBox(width: 2),
+                    _PreviewDockAction(
+                      key: const ValueKey('preview-redo-action'),
+                      tooltip: 'Rehacer',
+                      icon: Icons.redo_rounded,
+                      onPressed: isSaving || !canRedo ? null : onRedo,
                     ),
                     const SizedBox(width: 2),
                     _PreviewDockAction(
@@ -1941,6 +1954,11 @@ class _PreviewColorPickerSheet extends StatelessWidget {
                             ? Icon(
                                 Icons.check_rounded,
                                 color: colorScheme.onPrimaryContainer,
+                              )
+                            : color == NoteColor.none
+                            ? Icon(
+                                Icons.block_rounded,
+                                color: colorScheme.onSurfaceVariant,
                               )
                             : null,
                       ),
@@ -2204,14 +2222,14 @@ class _PhotoActionsSheet extends StatelessWidget {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: Text('Fotos · ${attachments.length}/2'),
+              title: Text('Adjuntos · ${attachments.length}/2'),
               subtitle: const Text('Comprimidas para ocupar menos espacio'),
             ),
             if (attachments.length < noteAttachmentMaxCount)
               ListTile(
                 key: const ValueKey('replace-note-attachment'),
                 leading: const Icon(Icons.add_photo_alternate_outlined),
-                title: const Text('Agregar otra foto'),
+                title: const Text('Agregar otro adjunto'),
                 onTap: () => Navigator.pop(context, const _PhotoAction.add()),
               ),
             for (final (index, attachment) in attachments.indexed)
@@ -2301,6 +2319,7 @@ String _collaboratorInitial(ListCollaborator person) =>
     _collaboratorLabel(person).characters.first.toUpperCase();
 
 String _noteColorName(NoteColor color) => switch (color) {
+  NoteColor.none => 'Sin color',
   NoteColor.yellow => 'Amarillo',
   NoteColor.pink => 'Rosa',
   NoteColor.blue => 'Azul',

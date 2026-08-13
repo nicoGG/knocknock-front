@@ -93,7 +93,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _customAssigneeController = TextEditingController(
       text: note?.customAssigneeName ?? '',
     );
-    _color = note?.color ?? NoteColor.yellow;
+    _color = note?.color ?? NoteColor.none;
     _category = note?.category ?? NoteCategory.general;
     _checklist = [...?note?.checklist];
     _assigneeUid =
@@ -383,6 +383,12 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                                     size: 20,
                                     color: AppTheme.ink,
                                   )
+                                : color == NoteColor.none
+                                ? const Icon(
+                                    Icons.block_rounded,
+                                    size: 20,
+                                    color: AppTheme.ink,
+                                  )
                                 : null,
                           ),
                         ),
@@ -517,7 +523,8 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
 
   Future<void> _pickAttachment() async {
     try {
-      final attachments = await pickNotePhotos(
+      final attachments = await pickNoteAttachments(
+        context: context,
         remaining: noteAttachmentMaxCount - _attachments.length,
       );
       if (!mounted || attachments.isEmpty) return;
@@ -555,7 +562,7 @@ class _NotePhotosField extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Fotos · ${attachments.length}/$noteAttachmentMaxCount',
+                'Adjuntos · ${attachments.length}/$noteAttachmentMaxCount',
                 style: Theme.of(
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
@@ -604,7 +611,7 @@ class _NotePhotosField extends StatelessWidget {
                                 : ValueKey(
                                     'remove-note-attachment-${attachment.id}',
                                   ),
-                            tooltip: 'Quitar foto',
+                            tooltip: 'Quitar adjunto',
                             visualDensity: VisualDensity.compact,
                             onPressed: () => onRemove(attachment),
                             icon: const Icon(Icons.close_rounded, size: 18),

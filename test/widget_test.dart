@@ -821,14 +821,8 @@ void main() {
     expect(assignedTo, findsOneWidget);
     expect(createdAt, findsOneWidget);
     expect(updatedAt, findsOneWidget);
-    expect(
-      tester.widget<Text>(createdAt).data,
-      'Creación 02 ene 2026 09:05',
-    );
-    expect(
-      tester.widget<Text>(updatedAt).data,
-      'Última edición hace 1 hora',
-    );
+    expect(tester.widget<Text>(createdAt).data, 'Creación 02 ene 2026 09:05');
+    expect(tester.widget<Text>(updatedAt).data, 'Última edición hace 1 hora');
     expect(tester.widget<Text>(createdAt).overflow, isNull);
     expect(tester.widget<Text>(updatedAt).overflow, isNull);
     expect(tester.widget<Text>(createdAt).style?.fontSize, 8);
@@ -858,10 +852,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Abrir nota'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('quick-edit-note-button')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('quick-edit-note-button')), findsNothing);
     expect(find.byKey(const ValueKey('preview-color-action')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('preview-category-action')),
@@ -1609,6 +1600,14 @@ void main() {
     expect(undoAction, findsOneWidget);
     expect(redoAction, findsOneWidget);
     expect(deleteAction, findsOneWidget);
+    expect(
+      tester.getCenter(undoAction).dx,
+      lessThan(tester.getCenter(redoAction).dx),
+    );
+    expect(
+      tester.getCenter(redoAction).dx,
+      lessThan(tester.getCenter(deleteAction).dx),
+    );
     expect(actionButton(undoAction).onPressed, isNull);
     expect(actionButton(redoAction).onPressed, isNull);
 

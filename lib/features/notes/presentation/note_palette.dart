@@ -3,6 +3,7 @@ import 'package:nocknock/features/notes/domain/note.dart';
 
 abstract final class NotePalette {
   static Color color(NoteColor color) => switch (color) {
+    NoteColor.none => const Color(0xFFF7F3EA),
     NoteColor.yellow => const Color(0xFFFFE58A),
     NoteColor.pink => const Color(0xFFFFB8C6),
     NoteColor.blue => const Color(0xFFACDDF2),

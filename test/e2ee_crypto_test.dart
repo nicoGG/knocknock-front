@@ -90,6 +90,16 @@ void main() {
       throwsA(isA<SecretBoxAuthenticationError>()),
     );
   });
+
+  test('recognizes large encrypted attachments without overflowing', () {
+    final nonce = encodeBase64Url(List<int>.filled(12, 0));
+    final largePayload = encodeBase64Url(List<int>.filled(1024 * 1024, 1));
+
+    expect(
+      E2eeCipher.isCiphertext('$e2eeCiphertextPrefix$nonce:$largePayload'),
+      isTrue,
+    );
+  });
 }
 
 class _MemorySecureStore implements SecureKeyValueStore {

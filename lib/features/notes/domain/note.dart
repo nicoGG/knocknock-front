@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 enum NoteColor {
+  none,
   yellow,
   pink,
   blue,

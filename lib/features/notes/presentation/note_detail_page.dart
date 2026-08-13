@@ -1545,6 +1545,7 @@ String _monthName(int month) => const [
 ][month - 1];
 
 String _colorName(NoteColor color) => switch (color) {
+  NoteColor.none => 'Sin color',
   NoteColor.yellow => 'Amarillo',
   NoteColor.pink => 'Rosado',
   NoteColor.blue => 'Azul',
