@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:image/image.dart' as image_tools;
 import 'package:image_picker/image_picker.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -60,16 +60,16 @@ Future<List<NoteAttachment>> pickNoteAttachments({
   return attachment == null ? const [] : [attachment];
 }
 
-Future<NoteAttachment?> pickNotePdf({FilePicker? filePicker}) async {
-  final result = await (filePicker ?? FilePicker.platform).pickFiles(
-    type: FileType.custom,
-    allowedExtensions: const ['pdf'],
-    allowMultiple: false,
-    withData: true,
+Future<NoteAttachment?> pickNotePdf() async {
+  const pdfType = XTypeGroup(
+    label: 'PDF',
+    extensions: ['pdf'],
+    mimeTypes: ['application/pdf'],
+    uniformTypeIdentifiers: ['com.adobe.pdf'],
   );
-  final file = result?.files.singleOrNull;
+  final file = await openFile(acceptedTypeGroups: const [pdfType]);
   if (file == null) return null;
-  final bytes = file.bytes;
+  final bytes = await file.readAsBytes();
   return createNotePdfAttachment(name: file.name, bytes: bytes);
 }
 
