@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:nocknock/features/notes/data/e2ee_account_recovery.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/data/note_search.dart';
@@ -27,11 +28,14 @@ class E2eeNotesRepository
     required E2eeUserIdProvider userIdProvider,
     E2eeKeyStore? keyStore,
     E2eeCipher? cipher,
+    E2eeAccountRecoveryIdentityStore? accountRecoveryIdentityStore,
   }) : _repository = repository,
        // ignore: prefer_initializing_formals
        _userIdProvider = userIdProvider,
        _keyStore = keyStore ?? E2eeKeyStore(),
-       _cipher = cipher ?? E2eeCipher() {
+       _cipher = cipher ?? E2eeCipher(),
+       // ignore: prefer_initializing_formals
+       _accountRecoveryIdentityStore = accountRecoveryIdentityStore {
     if (repository is! E2eeNotesTransport) {
       throw ArgumentError('El repositorio remoto no soporta cifrado E2EE');
     }
@@ -55,6 +59,7 @@ class E2eeNotesRepository
   final E2eeUserIdProvider _userIdProvider;
   final E2eeKeyStore _keyStore;
   final E2eeCipher _cipher;
+  final E2eeAccountRecoveryIdentityStore? _accountRecoveryIdentityStore;
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final _listKeys = <String, SecretKey>{};
   final _rawLists = <String, NoteList>{};
@@ -65,8 +70,10 @@ class E2eeNotesRepository
 
   late final StreamSubscription<NotesRealtimeEvent> _subscription;
   E2eeDeviceIdentity? _identity;
+  E2eeDeviceIdentity? _accountRecoveryIdentity;
   String? _identityUserId;
   Future<void>? _registration;
+  Future<void>? _accountRecoveryRegistration;
   Future<void>? _searchWarmup;
 
   E2eeNotesTransport get _transport => _repository as E2eeNotesTransport;
@@ -99,6 +106,7 @@ class E2eeNotesRepository
   @override
   Future<List<NoteList>> fetchLists() async {
     final identity = await _ensureIdentity(register: true);
+    await _ensureAccountRecoveryIdentityBestEffort(register: true);
     final rawLists = List<NoteList>.of(await _repository.fetchLists());
     final fetchedIds = rawLists.map((list) => list.id).toSet();
     final removedIds = _rawLists.keys
@@ -120,10 +128,10 @@ class E2eeNotesRepository
       _rawLists[migrated.id] = migrated;
       await _resolveListKey(migrated, identity);
     }
-    for (final raw in rawLists.where((list) => list.canInvite)) {
+    for (final raw in rawLists) {
       final key = _listKeys[raw.id];
       if (key != null && raw.encryption.version == 1) {
-        await _shareMissingKeys(raw, key);
+        await _shareMissingKeysBestEffort(raw, key);
       }
     }
     final clearLists = await Future.wait(rawLists.map(_decryptList));
@@ -136,6 +144,7 @@ class E2eeNotesRepository
   @override
   Future<NoteList> createList(String name) async {
     final identity = await _ensureIdentity(register: true);
+    await _ensureAccountRecoveryIdentityBestEffort(register: true);
     final key = await _cipher.newListKey();
     final publicKey = await identity.publicKeyEncoded();
     final envelope = ListKeyEnvelope(
@@ -375,7 +384,8 @@ class E2eeNotesRepository
             list:
                 _clearLists[note.boardId] ??
                 _rawLists[note.boardId]!.copyWith(
-                  name: 'Lista cifrada pendiente de llave',
+                  name: 'Recuperando lista cifrada',
+                  isEncryptionKeyPending: true,
                 ),
           ),
         )
@@ -463,7 +473,10 @@ class E2eeNotesRepository
   }
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) async {
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
     final boardId = _noteBoards[noteId];
     if (boardId == null) throw const EncryptionKeyUnavailableFailure();
     final key = await _requireListKey(boardId);
@@ -472,7 +485,10 @@ class E2eeNotesRepository
       throw const NotesPersistenceFailure();
     }
     return _decryptAttachment(
-      await (repository as NoteAttachmentsRepository).fetchAttachment(noteId),
+      await (repository as NoteAttachmentsRepository).fetchAttachment(
+        noteId,
+        attachmentId,
+      ),
       key,
     );
   }
@@ -657,7 +673,9 @@ class E2eeNotesRepository
     if (_identityUserId != userId) {
       _identityUserId = userId;
       _identity = null;
+      _accountRecoveryIdentity = null;
       _registration = null;
+      _accountRecoveryRegistration = null;
       _listKeys.clear();
       _rawLists.clear();
       _clearLists.clear();
@@ -682,6 +700,41 @@ class E2eeNotesRepository
     return identity;
   }
 
+  Future<E2eeDeviceIdentity?> _ensureAccountRecoveryIdentity({
+    required bool register,
+  }) async {
+    final store = _accountRecoveryIdentityStore;
+    if (store == null) return null;
+    final identity = _accountRecoveryIdentity ??= await store
+        .loadOrCreateIdentity(_requireUserId());
+    if (identity == null) return null;
+    if (register) {
+      _accountRecoveryRegistration ??= _transport.registerEncryptionDevice(
+        deviceId: identity.deviceId,
+        publicKey: await identity.publicKeyEncoded(),
+      );
+      try {
+        await _accountRecoveryRegistration;
+      } on Object {
+        _accountRecoveryRegistration = null;
+        rethrow;
+      }
+    }
+    return identity;
+  }
+
+  Future<E2eeDeviceIdentity?> _ensureAccountRecoveryIdentityBestEffort({
+    required bool register,
+  }) async {
+    try {
+      return await _ensureAccountRecoveryIdentity(register: register);
+    } on Object {
+      // A temporary Drive failure must not hide lists that this device can
+      // already decrypt. The next refresh retries account recovery setup.
+      return null;
+    }
+  }
+
   Future<NoteList> _migrateLegacyList(
     NoteList raw,
     E2eeDeviceIdentity identity,
@@ -695,14 +748,21 @@ class E2eeNotesRepository
     for (final note in notes) {
       _noteBoards[note.id] = note.boardId;
       var noteToEncrypt = note;
-      if (note.attachment case final attachment?
-          when attachment.dataBase64 == null) {
+      if (note.photoAttachments.any((entry) => entry.dataBase64 == null)) {
         final repository = _repository;
         if (repository is! NoteAttachmentsRepository) {
           throw const NotesPersistenceFailure();
         }
-        final fullAttachment = await (repository as NoteAttachmentsRepository)
-            .fetchAttachment(note.id);
+        final fullAttachments = await Future.wait(
+          note.photoAttachments.map(
+            (attachment) => attachment.dataBase64 != null
+                ? Future.value(attachment)
+                : (repository as NoteAttachmentsRepository).fetchAttachment(
+                    note.id,
+                    attachment.id,
+                  ),
+          ),
+        );
         noteToEncrypt = _copyNote(
           note,
           title: note.title,
@@ -710,7 +770,7 @@ class E2eeNotesRepository
           contentDelta: note.contentDelta,
           authorName: note.authorName,
           customAssigneeName: note.customAssigneeName,
-          attachment: fullAttachment,
+          attachments: fullAttachments,
           checklist: note.checklist,
         );
       }
@@ -761,16 +821,35 @@ class E2eeNotesRepository
     final envelope = raw.encryption.keyEnvelopes
         .where((entry) => entry.deviceId == identity.deviceId)
         .firstOrNull;
-    if (envelope == null) return null;
-    final key = await _cipher.unwrapListKey(
-      envelope.envelope,
-      identity.keyPair,
+    if (envelope != null) {
+      final key = await _cipher.unwrapListKey(
+        envelope.envelope,
+        identity.keyPair,
+      );
+      if (!await _canDecryptList(raw, key)) {
+        throw const EncryptionKeyUnavailableFailure();
+      }
+      await _rememberListKey(raw.id, key);
+      return key;
+    }
+
+    final recoveryIdentity =
+        _accountRecoveryIdentity ??
+        await _ensureAccountRecoveryIdentityBestEffort(register: true);
+    if (recoveryIdentity == null) return null;
+    final recoveryEnvelope = raw.encryption.keyEnvelopes
+        .where((entry) => entry.deviceId == recoveryIdentity.deviceId)
+        .firstOrNull;
+    if (recoveryEnvelope == null) return null;
+    final recoveredKey = await _cipher.unwrapListKey(
+      recoveryEnvelope.envelope,
+      recoveryIdentity.keyPair,
     );
-    if (!await _canDecryptList(raw, key)) {
+    if (!await _canDecryptList(raw, recoveredKey)) {
       throw const EncryptionKeyUnavailableFailure();
     }
-    await _rememberListKey(raw.id, key);
-    return key;
+    await _rememberListKey(raw.id, recoveredKey);
+    return recoveredKey;
   }
 
   Future<bool> _canDecryptList(NoteList raw, SecretKey key) async {
@@ -784,7 +863,7 @@ class E2eeNotesRepository
   }
 
   Future<void> _shareMissingKeys(NoteList raw, SecretKey key) async {
-    if (!raw.canInvite || raw.encryption.version != 1) return;
+    if (raw.encryption.version != 1) return;
     final recipients = await _transport.fetchEncryptionRecipients(raw.id);
     for (final recipient in recipients.where((entry) => !entry.hasEnvelope)) {
       await _transport.storeListKeyEnvelope(
@@ -796,17 +875,27 @@ class E2eeNotesRepository
     }
   }
 
+  Future<void> _shareMissingKeysBestEffort(NoteList raw, SecretKey key) async {
+    try {
+      await _shareMissingKeys(raw, key);
+    } on Object {
+      // Key propagation must not hide otherwise readable lists. This also keeps
+      // the new client compatible while the member-sharing backend rolls out.
+    }
+  }
+
   Future<NoteList> _decryptList(NoteList raw) async {
     final key = await _listKeyOrNull(raw.id);
     if (raw.encryption.version != 1 || key == null) {
       return raw.copyWith(
         name: raw.encryption.version == 0
             ? 'Lista pendiente de cifrado'
-            : 'Lista cifrada pendiente de llave',
+            : 'Recuperando lista cifrada',
         appearance: ListAppearance(
           backgroundPreset: raw.appearance.backgroundPreset,
           backgroundBlur: raw.appearance.backgroundBlur,
         ),
+        isEncryptionKeyPending: raw.encryption.version == 1,
       );
     }
     final customBackground = raw.appearance.customBackgroundImage;
@@ -823,6 +912,7 @@ class E2eeNotesRepository
                 field: _listBackgroundField,
               ),
       ),
+      isEncryptionKeyPending: false,
     );
   }
 
@@ -859,9 +949,11 @@ class E2eeNotesRepository
                 key,
                 field: _noteCustomAssigneeField,
               ),
-        attachment: draft.attachment == null
-            ? null
-            : await _encryptAttachment(draft.attachment!, key),
+        attachments: await Future.wait(
+          draft.photoAttachments.map(
+            (attachment) => _encryptAttachment(attachment, key),
+          ),
+        ),
         category: draft.category,
         checklist: await Future.wait(
           draft.checklist.map(
@@ -929,6 +1021,17 @@ class E2eeNotesRepository
         key,
       )).toJson();
     }
+    final attachments = encrypted['attachments'];
+    if (attachments is List) {
+      encrypted['attachments'] = await Future.wait(
+        attachments.map(
+          (raw) => _encryptAttachment(
+            NoteAttachment.fromJson(Map<String, dynamic>.from(raw as Map)),
+            key,
+          ).then((attachment) => attachment.toJson()),
+        ),
+      );
+    }
     return encrypted;
   }
 
@@ -960,8 +1063,12 @@ class E2eeNotesRepository
         key,
         field: _noteCustomAssigneeField,
       ),
-    if (note.attachment?.dataBase64 != null)
-      'attachment': (await _encryptAttachment(note.attachment!, key)).toJson(),
+    'attachments': await Future.wait(
+      note.photoAttachments.map(
+        (attachment) =>
+            _encryptAttachment(attachment, key).then((item) => item.toJson()),
+      ),
+    ),
     'checklist': await Future.wait(
       note.checklist.map(
         (item) async => {
@@ -985,11 +1092,12 @@ class E2eeNotesRepository
       contentDelta: changes['contentDelta'] as String?,
       authorName: changes['authorName'] as String,
       customAssigneeName: changes['customAssigneeName'] as String?,
-      attachment: changes['attachment'] is Map
-          ? NoteAttachment.fromJson(
-              Map<String, dynamic>.from(changes['attachment'] as Map),
-            )
-          : null,
+      attachments: (changes['attachments'] as List<dynamic>? ?? const [])
+          .map(
+            (item) =>
+                NoteAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(),
       checklist: (changes['checklist'] as List<dynamic>)
           .map(
             (item) => NoteChecklistItem.fromJson(
@@ -1007,8 +1115,12 @@ class E2eeNotesRepository
         raw.checklist.any((item) => !E2eeCipher.isCiphertext(item.text)) ||
         (raw.customAssigneeName != null &&
             !E2eeCipher.isCiphertext(raw.customAssigneeName!)) ||
-        (raw.attachment != null &&
-            !E2eeCipher.isCiphertext(raw.attachment!.name))) {
+        raw.photoAttachments.any(
+          (attachment) =>
+              !E2eeCipher.isCiphertext(attachment.name) ||
+              (attachment.dataBase64 != null &&
+                  !E2eeCipher.isCiphertext(attachment.dataBase64!)),
+        )) {
       throw const EncryptionKeyUnavailableFailure();
     }
     return _copyNote(
@@ -1042,9 +1154,11 @@ class E2eeNotesRepository
               key,
               field: _noteCustomAssigneeField,
             ),
-      attachment: raw.attachment == null
-          ? null
-          : await _decryptAttachment(raw.attachment!, key),
+      attachments: await Future.wait(
+        raw.photoAttachments.map(
+          (attachment) => _decryptAttachment(attachment, key),
+        ),
+      ),
       checklist: await Future.wait(
         raw.checklist.map(
           (item) async => item.copyWith(
@@ -1066,7 +1180,7 @@ class E2eeNotesRepository
     required String? contentDelta,
     required String authorName,
     required String? customAssigneeName,
-    required NoteAttachment? attachment,
+    required List<NoteAttachment> attachments,
     required List<NoteChecklistItem> checklist,
   }) => Note(
     id: note.id,
@@ -1078,7 +1192,7 @@ class E2eeNotesRepository
     authorName: authorName,
     assigneeUid: note.assigneeUid,
     customAssigneeName: customAssigneeName,
-    attachment: attachment,
+    attachments: attachments,
     isCompleted: note.isCompleted,
     isPinned: note.isPinned,
     sortOrder: note.sortOrder,
@@ -1277,7 +1391,7 @@ class E2eeNotesRepository
           _events.add(event);
         case ListKeyShareRequested(:final listId):
           final raw = _rawLists[listId];
-          if (raw == null || !raw.canInvite) return;
+          if (raw == null) return;
           final key = await _listKeyOrNull(listId);
           if (key != null) await _shareMissingKeys(raw, key);
         case ListKeyEnvelopeUpdated():

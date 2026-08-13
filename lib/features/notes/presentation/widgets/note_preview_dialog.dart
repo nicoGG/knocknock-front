@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -415,31 +416,44 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
 
   Future<void> _editAttachment() async {
     final note = widget.noteProvider();
-    var shouldPick = true;
-    if (note.attachment != null) {
-      final action = await showModalBottomSheet<_AttachmentAction>(
+    if (note.photoAttachments.isNotEmpty) {
+      final action = await showModalBottomSheet<_PhotoAction>(
         context: context,
         showDragHandle: true,
-        builder: (_) => _AttachmentActionsSheet(attachment: note.attachment!),
+        builder: (_) => _PhotoActionsSheet(attachments: note.photoAttachments),
       );
       if (!mounted || action == null) return;
-      if (action == _AttachmentAction.remove) {
+      if (action.removeId case final id?) {
         await _persistDraft(
           note,
-          _draftFromNote(note, replaceAttachment: true),
+          _draftFromNote(
+            note,
+            attachments: note.photoAttachments
+                .where((entry) => entry.id != id)
+                .toList(),
+            replaceAttachments: true,
+          ),
         );
         return;
       }
-      shouldPick = action == _AttachmentAction.replace;
     }
-    if (!shouldPick || !mounted) return;
+    if (!mounted) return;
     try {
-      final attachment = await pickNoteAttachment();
-      if (!mounted || attachment == null) return;
+      final attachments = await pickNotePhotos(
+        remaining: noteAttachmentMaxCount - note.photoAttachments.length,
+      );
+      if (!mounted || attachments.isEmpty) return;
       final latest = widget.noteProvider();
       await _persistDraft(
         latest,
-        _draftFromNote(latest, attachment: attachment, replaceAttachment: true),
+        _draftFromNote(
+          latest,
+          attachments: [
+            ...latest.photoAttachments,
+            ...attachments,
+          ].take(noteAttachmentMaxCount).toList(),
+          replaceAttachments: true,
+        ),
       );
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
@@ -679,7 +693,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   late NoteCategory _category;
   late String? _assigneeUid;
   late String? _customAssigneeName;
-  late NoteAttachment? _attachment;
+  late List<NoteAttachment> _attachments;
   late DateTime? _reminderAt;
   late bool _descriptionExpanded;
 
@@ -708,7 +722,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     _category = note.category;
     _assigneeUid = note.assigneeUid;
     _customAssigneeName = note.customAssigneeName;
-    _attachment = note.attachment;
+    _attachments = [...note.photoAttachments];
     _reminderAt = note.reminderAt;
     _descriptionExpanded = note.content.trim().isNotEmpty;
   }
@@ -1028,13 +1042,25 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                           ),
                         ),
                       ),
+                      if (_attachments.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _QuickPhotoStrip(
+                          attachments: _attachments,
+                          foregroundColor: foregroundColor,
+                          onRemove: (attachment) => setState(
+                            () => _attachments.removeWhere(
+                              (entry) => entry.id == attachment.id,
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       _QuickEditorTools(
                         color: _color,
                         category: _category,
                         reminderAt: _reminderAt,
                         assignee: _selectedAssignee,
-                        attachment: _attachment,
+                        attachmentCount: _attachments.length,
                         foregroundColor: foregroundColor,
                         onStyles: _expandDescription,
                         onChecklist: _openChecklist,
@@ -1228,22 +1254,24 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   Future<void> _pickAttachment() async {
-    if (_attachment != null) {
-      final action = await showModalBottomSheet<_AttachmentAction>(
+    if (_attachments.isNotEmpty) {
+      final action = await showModalBottomSheet<_PhotoAction>(
         context: context,
         showDragHandle: true,
-        builder: (_) => _AttachmentActionsSheet(attachment: _attachment!),
+        builder: (_) => _PhotoActionsSheet(attachments: _attachments),
       );
       if (!mounted || action == null) return;
-      if (action == _AttachmentAction.remove) {
-        setState(() => _attachment = null);
+      if (action.removeId case final id?) {
+        setState(() => _attachments.removeWhere((entry) => entry.id == id));
         return;
       }
     }
     try {
-      final attachment = await pickNoteAttachment();
-      if (!mounted || attachment == null) return;
-      setState(() => _attachment = attachment);
+      final attachments = await pickNotePhotos(
+        remaining: noteAttachmentMaxCount - _attachments.length,
+      );
+      if (!mounted || attachments.isEmpty) return;
+      setState(() => _attachments = [..._attachments, ...attachments]);
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -1282,7 +1310,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
             : note.authorName,
         assigneeUid: _assigneeUid,
         customAssigneeName: _customAssigneeName,
-        attachment: _attachment,
+        attachments: _attachments,
         reminderAt: _reminderAt,
       ),
     );
@@ -1295,7 +1323,7 @@ class _QuickEditorTools extends StatelessWidget {
     required this.category,
     required this.reminderAt,
     required this.assignee,
-    required this.attachment,
+    required this.attachmentCount,
     required this.foregroundColor,
     required this.onStyles,
     required this.onChecklist,
@@ -1310,7 +1338,7 @@ class _QuickEditorTools extends StatelessWidget {
   final NoteCategory category;
   final DateTime? reminderAt;
   final ListCollaborator? assignee;
-  final NoteAttachment? attachment;
+  final int attachmentCount;
   final Color foregroundColor;
   final VoidCallback onStyles;
   final VoidCallback onChecklist;
@@ -1333,65 +1361,169 @@ class _QuickEditorTools extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: foregroundColor.withValues(alpha: 0.18)),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-styles-action'),
-              tooltip: 'Editar contenido y estilos',
-              icon: Icons.format_shapes_rounded,
-              onPressed: onStyles,
-            ),
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-checklist-action'),
-              tooltip: 'Agregar o editar subtareas',
-              icon: Icons.checklist_rounded,
-              onPressed: onChecklist,
-            ),
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-color-action'),
-              tooltip: 'Cambiar color',
-              icon: Icons.palette_outlined,
-              indicatorColor: NotePalette.color(color),
-              onPressed: onColor,
-            ),
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-category-action'),
-              tooltip: 'Categoría y fondo',
-              icon: NoteCategoryStyle.icon(category),
-              selected: category != NoteCategory.general,
-              onPressed: onCategory,
-            ),
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-reminder-action'),
-              tooltip: reminderAt == null
-                  ? 'Agregar recordatorio'
-                  : 'Cambiar recordatorio',
-              icon: reminderAt == null
-                  ? Icons.notifications_none_rounded
-                  : Icons.notifications_active_rounded,
-              selected: reminderAt != null,
-              onPressed: onReminder,
-            ),
-            _PreviewAssigneeDockAction(
-              key: const ValueKey('quick-editor-assignee-action'),
-              assignee: assignee,
-              onPressed: onAssignee,
-            ),
-            _PreviewDockAction(
-              key: const ValueKey('quick-editor-attachment-action'),
-              tooltip: attachment == null
-                  ? 'Adjuntar imagen o PDF'
-                  : 'Cambiar o quitar adjunto',
-              icon: Icons.attach_file_rounded,
-              selected: attachment != null,
-              onPressed: onAttachment,
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const actionCount = 7;
+            const preferredActionExtent = 44.0;
+            const minimumSingleRowExtent = 40.0;
+            final availableActionExtent = constraints.maxWidth / actionCount;
+            final useSingleRow =
+                availableActionExtent >= minimumSingleRowExtent;
+            final actionExtent = useSingleRow
+                ? math.min(preferredActionExtent, availableActionExtent)
+                : preferredActionExtent;
+            final actions = [
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-styles-action'),
+                tooltip: 'Editar contenido y estilos',
+                icon: Icons.format_shapes_rounded,
+                dimension: actionExtent,
+                onPressed: onStyles,
+              ),
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-checklist-action'),
+                tooltip: 'Agregar o editar subtareas',
+                icon: Icons.checklist_rounded,
+                dimension: actionExtent,
+                onPressed: onChecklist,
+              ),
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-color-action'),
+                tooltip: 'Cambiar color',
+                icon: Icons.palette_outlined,
+                dimension: actionExtent,
+                indicatorColor: NotePalette.color(color),
+                onPressed: onColor,
+              ),
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-category-action'),
+                tooltip: 'Categoría y fondo',
+                icon: NoteCategoryStyle.icon(category),
+                dimension: actionExtent,
+                selected: category != NoteCategory.general,
+                onPressed: onCategory,
+              ),
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-reminder-action'),
+                tooltip: reminderAt == null
+                    ? 'Agregar recordatorio'
+                    : 'Cambiar recordatorio',
+                icon: reminderAt == null
+                    ? Icons.notifications_none_rounded
+                    : Icons.notifications_active_rounded,
+                dimension: actionExtent,
+                selected: reminderAt != null,
+                onPressed: onReminder,
+              ),
+              _PreviewAssigneeDockAction(
+                key: const ValueKey('quick-editor-assignee-action'),
+                assignee: assignee,
+                dimension: actionExtent,
+                onPressed: onAssignee,
+              ),
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-attachment-action'),
+                tooltip: attachmentCount == 0
+                    ? 'Agregar hasta 2 fotos'
+                    : 'Administrar fotos ($attachmentCount/2)',
+                icon: Icons.add_photo_alternate_outlined,
+                dimension: actionExtent,
+                selected: attachmentCount > 0,
+                onPressed: onAttachment,
+              ),
+            ];
+
+            if (useSingleRow) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: actions,
+              );
+            }
+            return Wrap(alignment: WrapAlignment.center, children: actions);
+          },
         ),
       ),
     );
   }
+}
+
+class _QuickPhotoStrip extends StatelessWidget {
+  const _QuickPhotoStrip({
+    required this.attachments,
+    required this.foregroundColor,
+    required this.onRemove,
+  });
+
+  final List<NoteAttachment> attachments;
+  final Color foregroundColor;
+  final ValueChanged<NoteAttachment> onRemove;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 82,
+    child: Row(
+      children: [
+        for (final (index, attachment) in attachments.indexed) ...[
+          if (index > 0) const SizedBox(width: 8),
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: _thumbnail(attachment),
+                ),
+                Positioned(
+                  top: 3,
+                  right: 3,
+                  child: IconButton.filledTonal(
+                    key: ValueKey('quick-remove-photo-${attachment.id}'),
+                    tooltip: 'Quitar foto',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => onRemove(attachment),
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+
+  Widget _thumbnail(NoteAttachment attachment) {
+    final encoded = attachment.dataBase64;
+    if (attachment.isImage && encoded != null) {
+      try {
+        return Image.memory(
+          base64Decode(encoded),
+          key: ValueKey('quick-photo-${attachment.id}'),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _fallback(attachment),
+        );
+      } on FormatException {
+        return _fallback(attachment);
+      }
+    }
+    return _fallback(attachment);
+  }
+
+  Widget _fallback(NoteAttachment attachment) => ColoredBox(
+    color: foregroundColor.withValues(alpha: 0.1),
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          attachment.name,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: foregroundColor, fontSize: 11),
+        ),
+      ),
+    ),
+  );
 }
 
 NoteDraft _draftFromNote(
@@ -1401,8 +1533,8 @@ NoteDraft _draftFromNote(
   String? assigneeUid,
   String? customAssigneeName,
   bool replaceAssignee = false,
-  NoteAttachment? attachment,
-  bool replaceAttachment = false,
+  List<NoteAttachment>? attachments,
+  bool replaceAttachments = false,
   DateTime? reminderAt,
   bool replaceReminder = false,
 }) => NoteDraft(
@@ -1417,7 +1549,9 @@ NoteDraft _draftFromNote(
   customAssigneeName: replaceAssignee
       ? customAssigneeName
       : note.customAssigneeName,
-  attachment: replaceAttachment ? attachment : note.attachment,
+  attachments: replaceAttachments
+      ? attachments ?? const []
+      : note.photoAttachments,
   reminderAt: replaceReminder ? reminderAt : note.reminderAt,
 );
 
@@ -1508,100 +1642,90 @@ class _PreviewEditingDock extends StatelessWidget {
                   children: [
                     Expanded(
                       child: LayoutBuilder(
-                        builder: (context, constraints) =>
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minWidth: constraints.maxWidth,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'quick-edit-note-button',
-                                      ),
-                                      tooltip: 'Editar descripción',
-                                      icon: Icons.edit_note_rounded,
-                                      onPressed: isSaving ? null : onEdit,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-undo-action',
-                                      ),
-                                      tooltip: 'Deshacer',
-                                      icon: Icons.undo_rounded,
-                                      onPressed: isSaving || !canUndo
-                                          ? null
-                                          : onUndo,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-redo-action',
-                                      ),
-                                      tooltip: 'Rehacer',
-                                      icon: Icons.redo_rounded,
-                                      onPressed: isSaving || !canRedo
-                                          ? null
-                                          : onRedo,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-color-action',
-                                      ),
-                                      tooltip: 'Cambiar color',
-                                      icon: Icons.palette_outlined,
-                                      indicatorColor: noteColor,
-                                      onPressed: isSaving ? null : onColor,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-category-action',
-                                      ),
-                                      tooltip: 'Categoría y fondo',
-                                      icon: NoteCategoryStyle.icon(
-                                        note.category,
-                                      ),
-                                      selected:
-                                          note.category != NoteCategory.general,
-                                      onPressed: isSaving ? null : onCategory,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-reminder-action',
-                                      ),
-                                      tooltip: note.reminderAt == null
-                                          ? 'Agregar recordatorio'
-                                          : 'Cambiar recordatorio',
-                                      icon: note.reminderAt == null
-                                          ? Icons.notifications_none_rounded
-                                          : Icons.notifications_active_rounded,
-                                      selected: note.reminderAt != null,
-                                      onPressed: isSaving ? null : onReminder,
-                                    ),
-                                    const SizedBox(width: 2),
-                                    _PreviewDockAction(
-                                      key: const ValueKey(
-                                        'preview-attachment-action',
-                                      ),
-                                      tooltip: note.attachment == null
-                                          ? 'Adjuntar imagen o PDF'
-                                          : 'Cambiar o quitar adjunto',
-                                      icon: Icons.attach_file_rounded,
-                                      selected: note.attachment != null,
-                                      onPressed: isSaving ? null : onAttachment,
-                                    ),
-                                  ],
-                                ),
-                              ),
+                        builder: (context, constraints) => SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minWidth: constraints.maxWidth,
                             ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _PreviewDockAction(
+                                  key: const ValueKey('quick-edit-note-button'),
+                                  tooltip: 'Editar descripción',
+                                  icon: Icons.edit_note_rounded,
+                                  onPressed: isSaving ? null : onEdit,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey('preview-undo-action'),
+                                  tooltip: 'Deshacer',
+                                  icon: Icons.undo_rounded,
+                                  onPressed: isSaving || !canUndo
+                                      ? null
+                                      : onUndo,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey('preview-redo-action'),
+                                  tooltip: 'Rehacer',
+                                  icon: Icons.redo_rounded,
+                                  onPressed: isSaving || !canRedo
+                                      ? null
+                                      : onRedo,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey('preview-color-action'),
+                                  tooltip: 'Cambiar color',
+                                  icon: Icons.palette_outlined,
+                                  indicatorColor: noteColor,
+                                  onPressed: isSaving ? null : onColor,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey(
+                                    'preview-category-action',
+                                  ),
+                                  tooltip: 'Categoría y fondo',
+                                  icon: NoteCategoryStyle.icon(note.category),
+                                  selected:
+                                      note.category != NoteCategory.general,
+                                  onPressed: isSaving ? null : onCategory,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey(
+                                    'preview-reminder-action',
+                                  ),
+                                  tooltip: note.reminderAt == null
+                                      ? 'Agregar recordatorio'
+                                      : 'Cambiar recordatorio',
+                                  icon: note.reminderAt == null
+                                      ? Icons.notifications_none_rounded
+                                      : Icons.notifications_active_rounded,
+                                  selected: note.reminderAt != null,
+                                  onPressed: isSaving ? null : onReminder,
+                                ),
+                                const SizedBox(width: 2),
+                                _PreviewDockAction(
+                                  key: const ValueKey(
+                                    'preview-attachment-action',
+                                  ),
+                                  tooltip: note.photoAttachments.isEmpty
+                                      ? 'Agregar hasta 2 fotos'
+                                      : 'Administrar fotos '
+                                            '(${note.photoAttachments.length}/2)',
+                                  icon: Icons.add_photo_alternate_outlined,
+                                  selected: note.photoAttachments.isNotEmpty,
+                                  onPressed: isSaving ? null : onAttachment,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 2),
@@ -1635,6 +1759,7 @@ class _PreviewDockAction extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.dimension = 44,
     this.selected = false,
     this.destructive = false,
     this.indicatorColor,
@@ -1644,6 +1769,7 @@ class _PreviewDockAction extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final double dimension;
   final bool selected;
   final bool destructive;
   final Color? indicatorColor;
@@ -1652,7 +1778,7 @@ class _PreviewDockAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return SizedBox.square(
-      dimension: 44,
+      dimension: dimension,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -1661,7 +1787,7 @@ class _PreviewDockAction extends StatelessWidget {
             onPressed: onPressed,
             padding: EdgeInsets.zero,
             style: IconButton.styleFrom(
-              minimumSize: const Size.square(44),
+              minimumSize: Size.square(dimension),
               foregroundColor: destructive
                   ? colorScheme.error
                   : selected
@@ -1700,11 +1826,13 @@ class _PreviewAssigneeDockAction extends StatelessWidget {
   const _PreviewAssigneeDockAction({
     required this.assignee,
     required this.onPressed,
+    this.dimension = 44,
     super.key,
   });
 
   final ListCollaborator? assignee;
   final VoidCallback? onPressed;
+  final double dimension;
 
   @override
   Widget build(BuildContext context) {
@@ -1716,7 +1844,7 @@ class _PreviewAssigneeDockAction extends StatelessWidget {
         ? 'Agregar responsable'
         : 'Responsable: ${_collaboratorLabel(person)}';
     return SizedBox.square(
-      dimension: 44,
+      dimension: dimension,
       child: Tooltip(
         message: tooltip,
         child: Semantics(
@@ -2054,12 +2182,17 @@ class _PreviewAssigneePickerSheet extends StatelessWidget {
   }
 }
 
-enum _AttachmentAction { replace, remove }
+class _PhotoAction {
+  const _PhotoAction.add() : removeId = null;
+  const _PhotoAction.remove(this.removeId);
 
-class _AttachmentActionsSheet extends StatelessWidget {
-  const _AttachmentActionsSheet({required this.attachment});
+  final String? removeId;
+}
 
-  final NoteAttachment attachment;
+class _PhotoActionsSheet extends StatelessWidget {
+  const _PhotoActionsSheet({required this.attachments});
+
+  final List<NoteAttachment> attachments;
 
   @override
   Widget build(BuildContext context) {
@@ -2070,34 +2203,35 @@ class _AttachmentActionsSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.attach_file_rounded),
-              title: Text(
-                attachment.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                attachment.isPdf ? 'Documento PDF' : 'Imagen adjunta',
-              ),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text('Fotos · ${attachments.length}/2'),
+              subtitle: const Text('Comprimidas para ocupar menos espacio'),
             ),
-            ListTile(
-              key: const ValueKey('replace-note-attachment'),
-              leading: const Icon(Icons.swap_horiz_rounded),
-              title: const Text('Reemplazar adjunto'),
-              onTap: () => Navigator.pop(context, _AttachmentAction.replace),
-            ),
-            ListTile(
-              key: const ValueKey('remove-note-attachment'),
-              leading: Icon(
-                Icons.delete_outline_rounded,
-                color: Theme.of(context).colorScheme.error,
+            if (attachments.length < noteAttachmentMaxCount)
+              ListTile(
+                key: const ValueKey('replace-note-attachment'),
+                leading: const Icon(Icons.add_photo_alternate_outlined),
+                title: const Text('Agregar otra foto'),
+                onTap: () => Navigator.pop(context, const _PhotoAction.add()),
               ),
-              title: Text(
-                'Quitar adjunto',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+            for (final (index, attachment) in attachments.indexed)
+              ListTile(
+                key: index == 0
+                    ? const ValueKey('remove-note-attachment')
+                    : ValueKey('remove-note-attachment-${attachment.id}'),
+                leading: Icon(
+                  Icons.delete_outline_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  'Quitar ${attachment.name}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: () =>
+                    Navigator.pop(context, _PhotoAction.remove(attachment.id)),
               ),
-              onTap: () => Navigator.pop(context, _AttachmentAction.remove),
-            ),
           ],
         ),
       ),

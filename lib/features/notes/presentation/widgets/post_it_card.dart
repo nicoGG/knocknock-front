@@ -21,6 +21,8 @@ enum PostItCardLayout { grid, compact, large }
 enum PostItInlineEditTarget { none, title, description, checklist }
 
 typedef PostItInlineSave = Future<bool> Function(NoteDraft draft);
+typedef NoteAttachmentLoader =
+    Future<NoteAttachment> Function(String attachmentId);
 
 const noteMosaicLinkBlue = Color(0xFF64B5F6);
 const noteMosaicLinkBlueOnLight = Color(0xFF1565C0);
@@ -87,7 +89,7 @@ class PostItCard extends StatelessWidget {
   final VoidCallback? onAssigneeTap;
   final ValueNotifier<PostItInlineEditTarget>? inlineEditTarget;
   final PostItInlineSave? onInlineSave;
-  final Future<NoteAttachment> Function()? attachmentLoader;
+  final NoteAttachmentLoader? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -539,7 +541,7 @@ class _NoteBody extends StatelessWidget {
   final bool? completedChecklistExpanded;
   final ValueChanged<bool>? onCompletedChecklistExpansionChanged;
   final VoidCallback? onAssigneeTap;
-  final Future<NoteAttachment> Function()? attachmentLoader;
+  final NoteAttachmentLoader? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -562,9 +564,11 @@ class _NoteBody extends StatelessWidget {
             ),
           ),
         ),
-        if (isGrid && note.attachment != null)
+        if (isGrid && note.photoAttachments.isNotEmpty)
           Tooltip(
-            message: 'Tiene adjunto: ${note.attachment!.name}',
+            message: note.photoAttachments.length == 1
+                ? 'Tiene una foto'
+                : 'Tiene ${note.photoAttachments.length} fotos',
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Icon(
@@ -692,10 +696,10 @@ class _NoteBody extends StatelessWidget {
                   ),
                 ),
         ),
-        if (!isGrid && note.attachment != null) ...[
+        if (!isGrid && note.photoAttachments.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _NoteAttachmentPreview(
-            attachment: note.attachment!,
+          _NoteAttachmentsPreview(
+            attachments: note.photoAttachments,
             foregroundColor: foregroundColor,
             loader: attachmentLoader,
           ),
@@ -793,6 +797,37 @@ class _NoteBody extends StatelessWidget {
   }
 }
 
+class _NoteAttachmentsPreview extends StatelessWidget {
+  const _NoteAttachmentsPreview({
+    required this.attachments,
+    required this.foregroundColor,
+    required this.loader,
+  });
+
+  final List<NoteAttachment> attachments;
+  final Color foregroundColor;
+  final NoteAttachmentLoader? loader;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 88,
+    child: Row(
+      children: [
+        for (final (index, attachment) in attachments.indexed) ...[
+          if (index > 0) const SizedBox(width: 8),
+          Expanded(
+            child: _NoteAttachmentPreview(
+              attachment: attachment,
+              foregroundColor: foregroundColor,
+              loader: loader,
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
 class _NoteAttachmentPreview extends StatefulWidget {
   const _NoteAttachmentPreview({
     required this.attachment,
@@ -802,7 +837,7 @@ class _NoteAttachmentPreview extends StatefulWidget {
 
   final NoteAttachment attachment;
   final Color foregroundColor;
-  final Future<NoteAttachment> Function()? loader;
+  final NoteAttachmentLoader? loader;
 
   @override
   State<_NoteAttachmentPreview> createState() => _NoteAttachmentPreviewState();
@@ -831,7 +866,7 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
         ? null
         : attachment.dataBase64 != null
         ? Future.value(attachment)
-        : widget.loader?.call();
+        : widget.loader?.call(attachment.id);
   }
 
   @override
@@ -884,30 +919,17 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
                     );
                   }
                   try {
-                    return Row(
-                      children: [
-                        SizedBox(
-                          width: 104,
-                          height: double.infinity,
-                          child: Image.memory(
-                            base64Decode(loaded.dataBase64!),
-                            key: ValueKey('attachment-image-${loaded.id}'),
-                            fit: BoxFit.cover,
-                            gaplessPlayback: true,
-                            errorBuilder: (_, _, _) => Icon(
-                              Icons.broken_image_outlined,
-                              color: foregroundColor,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: _AttachmentFileTile(
-                            attachment: loaded,
-                            foregroundColor: foregroundColor,
-                            compact: true,
-                          ),
-                        ),
-                      ],
+                    return Image.memory(
+                      base64Decode(loaded.dataBase64!),
+                      key: ValueKey('attachment-image-${loaded.id}'),
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => Icon(
+                        Icons.broken_image_outlined,
+                        color: foregroundColor,
+                      ),
                     );
                   } on FormatException {
                     return _AttachmentFileTile(
@@ -928,19 +950,17 @@ class _AttachmentFileTile extends StatelessWidget {
     required this.attachment,
     required this.foregroundColor,
     this.unavailable = false,
-    this.compact = false,
   });
 
   final NoteAttachment attachment;
   final Color foregroundColor;
   final bool unavailable;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final kilobytes = (attachment.sizeBytes / 1024).ceil();
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: [
           Icon(
@@ -1017,7 +1037,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
   final bool isSavingReaction;
   final Future<void> Function(String emoji)? onToggleReaction;
   final VoidCallback? onAssigneeTap;
-  final Future<NoteAttachment> Function()? attachmentLoader;
+  final NoteAttachmentLoader? attachmentLoader;
   final ValueNotifier<PostItInlineEditTarget>? editTarget;
   final PostItInlineSave onSave;
 
@@ -1254,7 +1274,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       authorName: note.authorName,
       assigneeUid: note.assigneeUid,
       customAssigneeName: note.customAssigneeName,
-      attachment: note.attachment,
+      attachments: note.photoAttachments,
       reminderAt: note.reminderAt,
     );
   }
@@ -1604,10 +1624,10 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
             ),
           ),
         ),
-        if (note.attachment case final attachment?) ...[
+        if (note.photoAttachments.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _NoteAttachmentPreview(
-            attachment: attachment,
+          _NoteAttachmentsPreview(
+            attachments: note.photoAttachments,
             foregroundColor: foregroundColor,
             loader: widget.attachmentLoader,
           ),
@@ -2056,7 +2076,27 @@ String _formatSpanishTimestamp(DateTime value) {
   final day = local.day.toString().padLeft(2, '0');
   final hour = local.hour.toString().padLeft(2, '0');
   final minute = local.minute.toString().padLeft(2, '0');
-  return '$day ${months[local.month - 1]} ${local.year} · $hour:$minute';
+  return '$day ${months[local.month - 1]} ${local.year} $hour:$minute';
+}
+
+String formatRelativeNoteEdit(DateTime value, {DateTime? relativeTo}) {
+  final now = relativeTo ?? DateTime.now();
+  final elapsed = now.difference(value.toLocal());
+  if (elapsed.isNegative || elapsed.inMinutes < 1) return 'hace un momento';
+
+  final minutes = elapsed.inMinutes;
+  if (minutes < 60) {
+    return 'hace $minutes ${minutes == 1 ? 'minuto' : 'minutos'}';
+  }
+
+  final hours = elapsed.inHours;
+  if (hours < 24) return 'hace $hours ${hours == 1 ? 'hora' : 'horas'}';
+
+  final days = elapsed.inDays;
+  if (days < 30) return 'hace $days ${days == 1 ? 'día' : 'días'}';
+
+  final months = days ~/ 30;
+  return 'hace $months ${months == 1 ? 'mes' : 'meses'}';
 }
 
 class _LargeNotePeopleFooter extends StatelessWidget {
@@ -2089,7 +2129,7 @@ class _LargeNotePeopleFooter extends StatelessWidget {
       letterSpacing: 0.1,
     );
     final createdAt = _formatSpanishTimestamp(note.createdAt);
-    final updatedAt = _formatSpanishTimestamp(note.updatedAt);
+    final updatedAt = formatRelativeNoteEdit(note.updatedAt);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2176,20 +2216,16 @@ class _LargeNotePeopleFooter extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Creación · $createdAt',
+                'Creación $createdAt',
                 key: ValueKey('preview-created-at-${note.id}'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: timestampStyle,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Última edición · $updatedAt',
+                'Última edición $updatedAt',
                 key: ValueKey('preview-updated-at-${note.id}'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.right,
                 style: timestampStyle,
               ),

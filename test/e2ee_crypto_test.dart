@@ -3,6 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
 
 void main() {
+  test('does not silently reset Android E2EE keys after a storage error', () {
+    final options = e2eeAndroidSecureStorageOptions.toMap();
+
+    expect(options['resetOnError'], 'false');
+    expect(options['migrateOnAlgorithmChange'], 'true');
+    expect(options['migrateWithBackup'], 'true');
+  });
+
   test(
     'stores a stable device identity without exposing the private key',
     () async {

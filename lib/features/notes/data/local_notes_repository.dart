@@ -232,7 +232,7 @@ class LocalNotesRepository
       authorName: draft.authorName,
       assigneeUid: draft.assigneeUid,
       customAssigneeName: draft.customAssigneeName,
-      attachment: draft.attachment,
+      attachments: draft.photoAttachments,
       isCompleted: false,
       sortOrder: -now.microsecondsSinceEpoch,
       positionX: 0,
@@ -247,12 +247,17 @@ class LocalNotesRepository
   }
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) async {
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
     await _ensureLoaded();
     final attachment = _notes!
         .where((note) => note.id == noteId)
         .firstOrNull
-        ?.attachment;
+        ?.photoAttachments
+        .where((entry) => entry.id == attachmentId)
+        .firstOrNull;
     if (attachment?.dataBase64 == null) throw const NotesPersistenceFailure();
     return attachment!;
   }
@@ -301,13 +306,23 @@ class LocalNotesRepository
       customAssigneeName: changes.containsKey('customAssigneeName')
           ? changes['customAssigneeName'] as String?
           : existing.customAssigneeName,
-      attachment: changes.containsKey('attachment')
+      attachments: changes.containsKey('attachments')
+          ? (changes['attachments'] as List<dynamic>? ?? const [])
+                .whereType<Map>()
+                .map(
+                  (entry) =>
+                      NoteAttachment.fromJson(Map<String, dynamic>.from(entry)),
+                )
+                .toList()
+          : changes.containsKey('attachment')
           ? changes['attachment'] is Map
-                ? NoteAttachment.fromJson(
-                    Map<String, dynamic>.from(changes['attachment'] as Map),
-                  )
-                : null
-          : existing.attachment,
+                ? [
+                    NoteAttachment.fromJson(
+                      Map<String, dynamic>.from(changes['attachment'] as Map),
+                    ),
+                  ]
+                : const []
+          : existing.photoAttachments,
       isCompleted: changes['isCompleted'] as bool? ?? existing.isCompleted,
       isPinned: changes['isPinned'] as bool? ?? existing.isPinned,
       sortOrder: (changes['sortOrder'] as num?)?.toInt() ?? existing.sortOrder,

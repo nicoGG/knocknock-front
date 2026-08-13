@@ -10,6 +10,15 @@ const e2eeKeyEnvelopePrefix = 'e2ee-key:v1:';
 const e2eeListNameField = 'list:name:v1';
 const e2eeNoteTitleField = 'note:title:v1';
 
+/// Losing this storage means losing the only local copy of the private E2EE
+/// identity. Android's default `resetOnError` behavior deletes entries after a
+/// read failure, which is unsafe for non-recoverable cryptographic material.
+const e2eeAndroidSecureStorageOptions = AndroidOptions(
+  resetOnError: false,
+  migrateOnAlgorithmChange: true,
+  migrateWithBackup: true,
+);
+
 abstract interface class SecureKeyValueStore {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
@@ -18,7 +27,9 @@ abstract interface class SecureKeyValueStore {
 
 class FlutterSecureKeyValueStore implements SecureKeyValueStore {
   FlutterSecureKeyValueStore({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(aOptions: e2eeAndroidSecureStorageOptions);
 
   final FlutterSecureStorage _storage;
 

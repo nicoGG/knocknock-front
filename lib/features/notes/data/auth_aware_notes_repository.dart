@@ -216,14 +216,16 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.createNote(boardId, draft));
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) => _whenReady((
-    repository,
-  ) {
-    if (repository is! NoteAttachmentsRepository) {
-      throw const NotesPersistenceFailure();
-    }
-    return (repository as NoteAttachmentsRepository).fetchAttachment(noteId);
-  });
+  Future<NoteAttachment> fetchAttachment(String noteId, String attachmentId) =>
+      _whenReady((repository) {
+        if (repository is! NoteAttachmentsRepository) {
+          throw const NotesPersistenceFailure();
+        }
+        return (repository as NoteAttachmentsRepository).fetchAttachment(
+          noteId,
+          attachmentId,
+        );
+      });
 
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) =>

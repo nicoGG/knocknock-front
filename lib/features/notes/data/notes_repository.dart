@@ -220,7 +220,7 @@ abstract interface class PaginatedNotesRepository {
 /// Optional capability for repositories that can lazily load encrypted file
 /// bytes without adding them to every board response.
 abstract interface class NoteAttachmentsRepository {
-  Future<NoteAttachment> fetchAttachment(String noteId);
+  Future<NoteAttachment> fetchAttachment(String noteId, String attachmentId);
 }
 
 class CollaborationRequiresSignInFailure implements Exception {

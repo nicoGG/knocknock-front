@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -287,12 +288,18 @@ class SharedPreferencesOfflineMutationStore implements OfflineMutationStore {
 }
 
 class SqfliteOfflineMutationStore implements OfflineMutationStore {
+  SqfliteOfflineMutationStore() : _databaseOpener = _openDefaultDatabase;
+
+  @visibleForTesting
+  SqfliteOfflineMutationStore.testing(this._databaseOpener);
+
   static const _databaseName = 'nocknock_offline_v1.db';
   static const _table = 'offline_mutations';
 
-  Database? _database;
+  final Future<Database> Function() _databaseOpener;
+  Future<Database>? _databaseFuture;
 
-  Future<Database> get _db async => _database ??= await openDatabase(
+  static Future<Database> _openDefaultDatabase() => openDatabase(
     _databaseName,
     version: 1,
     onCreate: (database, _) => database.execute('''
@@ -312,6 +319,25 @@ class SqfliteOfflineMutationStore implements OfflineMutationStore {
       )
     '''),
   );
+
+  Future<Database> get _db {
+    final existing = _databaseFuture;
+    if (existing != null) return existing;
+
+    final opening = Future<Database>.sync(_databaseOpener);
+    _databaseFuture = opening;
+    unawaited(
+      opening.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_databaseFuture, opening)) {
+            _databaseFuture = null;
+          }
+        },
+      ),
+    );
+    return opening;
+  }
 
   @override
   Future<List<StoredOfflineMutation>> listForUser(String userId) async {
@@ -340,8 +366,16 @@ class SqfliteOfflineMutationStore implements OfflineMutationStore {
 
   @override
   Future<void> close() async {
-    final database = _database;
-    _database = null;
-    await database?.close();
+    final opening = _databaseFuture;
+    _databaseFuture = null;
+    if (opening == null) return;
+
+    final Database database;
+    try {
+      database = await opening;
+    } catch (_) {
+      return;
+    }
+    await database.close();
   }
 }

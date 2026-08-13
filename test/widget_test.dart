@@ -690,6 +690,7 @@ void main() {
   });
 
   testWidgets('tap previews a note in grid and list modes', (tester) async {
+    final lastEditedAt = DateTime.now().subtract(const Duration(hours: 1));
     await tester.pumpWidget(
       NockNockApp(
         repository: _FakeNotesRepository(
@@ -697,7 +698,7 @@ void main() {
           category: NoteCategory.shopping,
           initialContent: 'Texto importante para mañana',
           initialCreatedAt: DateTime(2026, 1, 2, 9, 5),
-          initialUpdatedAt: DateTime(2026, 2, 3, 18, 45),
+          initialUpdatedAt: lastEditedAt,
           initialContentDelta:
               '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
         ),
@@ -822,12 +823,14 @@ void main() {
     expect(updatedAt, findsOneWidget);
     expect(
       tester.widget<Text>(createdAt).data,
-      'Creación · 02 ene 2026 · 09:05',
+      'Creación 02 ene 2026 09:05',
     );
     expect(
       tester.widget<Text>(updatedAt).data,
-      'Última edición · 03 feb 2026 · 18:45',
+      'Última edición hace 1 hora',
     );
+    expect(tester.widget<Text>(createdAt).overflow, isNull);
+    expect(tester.widget<Text>(updatedAt).overflow, isNull);
     expect(tester.widget<Text>(createdAt).style?.fontSize, 8);
     expect(tester.widget<Text>(createdAt).style?.fontStyle, FontStyle.italic);
     expect(tester.widget<Text>(updatedAt).style?.fontSize, 8);
@@ -3994,6 +3997,39 @@ void main() {
     expect(find.text('Tu lista está lista'), findsOneWidget);
   });
 
+  testWidgets('shows key recovery instead of an empty-list create action', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(
+          isEncrypted: true,
+          isEncryptionKeyPending: true,
+          noteCount: 0,
+        ),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('board-encryption-key-recovery')),
+      findsOneWidget,
+    );
+    expect(find.text('Recuperando la llave de esta lista'), findsOneWidget);
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(find.text('Tu lista está lista'), findsNothing);
+    expect(find.text('Crear primera nota'), findsNothing);
+    expect(find.byKey(const ValueKey('new-note-fab')), findsNothing);
+  });
+
   testWidgets('reorders lists from the button beside the add action', (
     tester,
   ) async {
@@ -5408,6 +5444,7 @@ class _FakeNotesRepository
   _FakeNotesRepository({
     this.isConnected = false,
     this.isEncrypted = false,
+    this.isEncryptionKeyPending = false,
     this.withInvitedPeople = false,
     this.initiallyCompleted = false,
     this.noteCount = 1,
@@ -5480,6 +5517,7 @@ class _FakeNotesRepository
            encryption: isEncrypted
                ? const ListEncryption(version: 1)
                : const ListEncryption(),
+           isEncryptionKeyPending: isEncryptionKeyPending,
          ),
          if (withPinnedAcrossLists || withRemindersAcrossLists)
            NoteList(
@@ -5492,6 +5530,7 @@ class _FakeNotesRepository
 
   final bool isConnected;
   final bool isEncrypted;
+  final bool isEncryptionKeyPending;
   final bool withInvitedPeople;
   final bool initiallyCompleted;
   final int noteCount;

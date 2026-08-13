@@ -363,6 +363,55 @@ void main() {
       repository.dispose();
     },
   );
+
+  test('keeps optimized photo bytes available in the device cache', () async {
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeRemoteRepository(lists: [_list()], notes: []);
+    final repository = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => 'user-1',
+    );
+    const photo = NoteAttachment(
+      id: 'photo-1',
+      name: 'foto.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 4,
+      dataBase64: 'aG9sYQ==',
+    );
+
+    final created = await repository.createNote(
+      'list-1',
+      const NoteDraft(
+        title: 'Con foto',
+        content: '',
+        color: NoteColor.yellow,
+        authorName: 'Nico',
+        attachments: [photo],
+      ),
+    );
+
+    expect(created.photoAttachments.single.dataBase64, photo.dataBase64);
+    expect(remote.notes.single.photoAttachments.single.dataBase64, isNull);
+    expect(
+      (await repository.fetchAttachment(created.id, photo.id)).dataBase64,
+      photo.dataBase64,
+    );
+    expect(remote.attachmentFetchCount, 0);
+    repository.dispose();
+
+    final reopened = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => 'user-1',
+    );
+    expect(
+      (await reopened.fetchAttachment(created.id, photo.id)).dataBase64,
+      photo.dataBase64,
+    );
+    expect(remote.attachmentFetchCount, 0);
+    reopened.dispose();
+  });
 }
 
 NoteList _list() {
@@ -414,17 +463,30 @@ Note _note({
 }
 
 class _FakeRemoteRepository
-    implements NotesRepository, AggregateBoardAppearancesRepository {
+    implements
+        NotesRepository,
+        AggregateBoardAppearancesRepository,
+        NoteAttachmentsRepository {
   _FakeRemoteRepository({
     required this.lists,
     required this.notes,
     this.aggregateBoardAppearances = const AggregateBoardAppearances(),
-  });
+  }) {
+    for (final note in notes) {
+      for (final attachment in note.photoAttachments) {
+        if (attachment.dataBase64 != null) {
+          _attachmentPayloads['${note.id}/${attachment.id}'] = attachment;
+        }
+      }
+    }
+  }
 
   final List<NoteList> lists;
   List<Note> notes;
   AggregateBoardAppearances aggregateBoardAppearances;
   bool isOffline = false;
+  int attachmentFetchCount = 0;
+  final Map<String, NoteAttachment> _attachmentPayloads = {};
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => const Stream.empty();
@@ -448,6 +510,16 @@ class _FakeRemoteRepository
       color: draft.color,
       authorName: draft.authorName,
       assigneeUid: draft.assigneeUid,
+      attachments: draft.photoAttachments
+          .map(
+            (attachment) => NoteAttachment(
+              id: attachment.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+            ),
+          )
+          .toList(),
       isCompleted: draft.isCompleted,
       isPinned: draft.isPinned,
       sortOrder: draft.sortOrder ?? -now.microsecondsSinceEpoch,
@@ -460,8 +532,20 @@ class _FakeRemoteRepository
       createdAt: now,
       updatedAt: now,
     );
+    for (final attachment in draft.photoAttachments) {
+      _attachmentPayloads['${note.id}/${attachment.id}'] = attachment;
+    }
     notes = [...notes, note]..sort(compareNotes);
     return note;
+  }
+
+  @override
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
+    attachmentFetchCount++;
+    return _attachmentPayloads['$noteId/$attachmentId']!;
   }
 
   @override

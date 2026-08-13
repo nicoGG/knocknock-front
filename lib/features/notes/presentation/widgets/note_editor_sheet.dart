@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -64,7 +65,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   late List<NoteChecklistItem> _checklist;
   String? _assigneeUid;
   late bool _usesCustomAssignee;
-  NoteAttachment? _attachment;
+  late List<NoteAttachment> _attachments;
   DateTime? _reminderAt;
 
   @override
@@ -100,7 +101,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
         ? note?.assigneeUid
         : null;
     _usesCustomAssignee = note?.customAssigneeName?.trim().isNotEmpty == true;
-    _attachment = note?.attachment;
+    _attachments = [...?note?.photoAttachments];
     _reminderAt = note?.reminderAt;
   }
 
@@ -400,31 +401,17 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   onPressed: _selectReminder,
                 ),
                 const SizedBox(height: 12),
-                ListTile(
+                _NotePhotosField(
                   key: const ValueKey('note-attachment-field'),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  leading: const Icon(Icons.attach_file_rounded),
-                  title: Text(
-                    _attachment?.name ?? 'Adjuntar imagen o PDF',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  attachments: _attachments,
+                  onAdd: _attachments.length < noteAttachmentMaxCount
+                      ? _pickAttachment
+                      : null,
+                  onRemove: (attachment) => setState(
+                    () => _attachments.removeWhere(
+                      (entry) => entry.id == attachment.id,
+                    ),
                   ),
-                  subtitle: Text(
-                    _attachment == null
-                        ? 'Hasta 3 MB'
-                        : _attachment!.isPdf
-                        ? 'Documento PDF'
-                        : 'Imagen adjunta',
-                  ),
-                  trailing: _attachment == null
-                      ? const Icon(Icons.add_rounded)
-                      : IconButton(
-                          key: const ValueKey('remove-note-attachment-button'),
-                          tooltip: 'Quitar adjunto',
-                          onPressed: () => setState(() => _attachment = null),
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                  onTap: _pickAttachment,
                 ),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -522,7 +509,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
         customAssigneeName: _usesCustomAssignee
             ? _customAssigneeController.text.trim()
             : null,
-        attachment: _attachment,
+        attachments: _attachments,
         reminderAt: _reminderAt,
       ),
     );
@@ -530,9 +517,11 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
 
   Future<void> _pickAttachment() async {
     try {
-      final attachment = await pickNoteAttachment();
-      if (!mounted || attachment == null) return;
-      setState(() => _attachment = attachment);
+      final attachments = await pickNotePhotos(
+        remaining: noteAttachmentMaxCount - _attachments.length,
+      );
+      if (!mounted || attachments.isEmpty) return;
+      setState(() => _attachments = [..._attachments, ...attachments]);
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -540,6 +529,129 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
       ).showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
+}
+
+class _NotePhotosField extends StatelessWidget {
+  const _NotePhotosField({
+    required this.attachments,
+    required this.onAdd,
+    required this.onRemove,
+    super.key,
+  });
+
+  final List<NoteAttachment> attachments;
+  final VoidCallback? onAdd;
+  final ValueChanged<NoteAttachment> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.photo_library_outlined),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Fotos · ${attachments.length}/$noteAttachmentMaxCount',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            if (onAdd != null)
+              TextButton.icon(
+                key: const ValueKey('add-note-photo-button'),
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: Text(attachments.isEmpty ? 'Agregar' : 'Otra'),
+              ),
+          ],
+        ),
+        if (attachments.isEmpty)
+          Text(
+            'Se guardan comprimidas para usar menos espacio.',
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          SizedBox(
+            height: 92,
+            child: Row(
+              children: [
+                for (final (index, attachment) in attachments.indexed) ...[
+                  if (index > 0) const SizedBox(width: 10),
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: _editorPhoto(
+                            attachment,
+                            colorScheme.surfaceContainerHighest,
+                          ),
+                        ),
+                        Positioned(
+                          top: 3,
+                          right: 3,
+                          child: IconButton.filledTonal(
+                            key: index == 0
+                                ? const ValueKey(
+                                    'remove-note-attachment-button',
+                                  )
+                                : ValueKey(
+                                    'remove-note-attachment-${attachment.id}',
+                                  ),
+                            tooltip: 'Quitar foto',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => onRemove(attachment),
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _editorPhoto(NoteAttachment attachment, Color fallbackColor) {
+    final encoded = attachment.dataBase64;
+    if (attachment.isImage && encoded != null) {
+      try {
+        return Image.memory(
+          base64Decode(encoded),
+          key: ValueKey('note-editor-photo-${attachment.id}'),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _fallback(attachment, fallbackColor),
+        );
+      } on FormatException {
+        return _fallback(attachment, fallbackColor);
+      }
+    }
+    return _fallback(attachment, fallbackColor);
+  }
+
+  Widget _fallback(NoteAttachment attachment, Color color) => ColoredBox(
+    color: color,
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Text(
+          attachment.name,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    ),
+  );
 }
 
 class _GlassNoteEditorSurface extends StatelessWidget {

@@ -254,6 +254,7 @@ class NoteList extends Equatable {
     this.pendingInvitations = const [],
     this.appearance = const ListAppearance(),
     this.encryption = const ListEncryption(),
+    this.isEncryptionKeyPending = false,
   });
 
   factory NoteList.fromJson(Map<String, dynamic> json) => NoteList(
@@ -289,6 +290,7 @@ class NoteList extends Equatable {
           ? null
           : Map<String, dynamic>.from(json['encryption'] as Map),
     ),
+    isEncryptionKeyPending: json['isEncryptionKeyPending'] as bool? ?? false,
   );
 
   final String id;
@@ -300,6 +302,7 @@ class NoteList extends Equatable {
   final List<ListPendingInvitation> pendingInvitations;
   final ListAppearance appearance;
   final ListEncryption encryption;
+  final bool isEncryptionKeyPending;
 
   bool get canInvite => currentUserRole == ListMemberRole.owner;
   bool get isShared =>
@@ -317,6 +320,7 @@ class NoteList extends Equatable {
         .toList(),
     'appearance': appearance.toJson(),
     'encryption': encryption.toJson(),
+    if (isEncryptionKeyPending) 'isEncryptionKeyPending': true,
   };
 
   NoteList copyWith({
@@ -324,6 +328,7 @@ class NoteList extends Equatable {
     DateTime? updatedAt,
     ListAppearance? appearance,
     ListEncryption? encryption,
+    bool? isEncryptionKeyPending,
   }) => NoteList(
     id: id,
     name: name ?? this.name,
@@ -334,6 +339,8 @@ class NoteList extends Equatable {
     pendingInvitations: pendingInvitations,
     appearance: appearance ?? this.appearance,
     encryption: encryption ?? this.encryption,
+    isEncryptionKeyPending:
+        isEncryptionKeyPending ?? this.isEncryptionKeyPending,
   );
 
   @override
@@ -347,5 +354,6 @@ class NoteList extends Equatable {
     pendingInvitations,
     appearance,
     encryption,
+    isEncryptionKeyPending,
   ];
 }

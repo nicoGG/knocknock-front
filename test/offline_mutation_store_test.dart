@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:nocknock/features/notes/data/offline_mutation_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -84,6 +87,35 @@ void main() {
     expect(await store.listForUser('user-1'), [mutation]);
     expect(await primary.listForUser('user-1'), [mutation]);
     expect(await fallback.listForUser('user-1'), isEmpty);
+    await store.close();
+  });
+
+  test('shares an in-flight SQLite open and retries after failure', () async {
+    var attempts = 0;
+    var opening = Completer<Database>();
+    final store = SqfliteOfflineMutationStore.testing(() {
+      attempts += 1;
+      return opening.future;
+    });
+
+    final first = store.listForUser('user-1');
+    final second = store.listForUser('user-1');
+    final firstExpectation = expectLater(first, throwsStateError);
+    final secondExpectation = expectLater(second, throwsStateError);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(attempts, 1);
+    opening.completeError(StateError('database is locked'));
+    await Future.wait([firstExpectation, secondExpectation]);
+
+    opening = Completer<Database>();
+    final retry = store.listForUser('user-1');
+    final retryExpectation = expectLater(retry, throwsStateError);
+    await Future<void>.delayed(Duration.zero);
+    expect(attempts, 2);
+    opening.completeError(StateError('retry failed'));
+    await retryExpectation;
+
     await store.close();
   });
 }

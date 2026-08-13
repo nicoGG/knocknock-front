@@ -12,6 +12,7 @@ import 'package:nocknock/features/notes/data/api_notes_repository.dart';
 import 'package:nocknock/features/notes/data/auth_aware_notes_repository.dart';
 import 'package:nocknock/features/notes/data/cached_notes_repository.dart';
 import 'package:nocknock/features/notes/data/e2ee_notes_repository.dart';
+import 'package:nocknock/features/notes/data/e2ee_account_recovery.dart';
 import 'package:nocknock/features/notes/data/local_notes_repository.dart';
 import 'package:nocknock/features/notes/data/offline_mutation_store.dart';
 import 'package:nocknock/firebase_options.dart';
@@ -73,6 +74,13 @@ Future<void> main() async {
         localRepository: LocalNotesRepository(),
         remoteRepository: E2eeNotesRepository(
           userIdProvider: () => authRepository.currentUser?.id,
+          accountRecoveryIdentityStore:
+              GoogleDriveE2eeAccountRecoveryIdentityStore(
+                client: DioGoogleDriveAppDataClient(
+                  authorizationHeadersProvider:
+                      authRepository.accountRecoveryAuthorizationHeaders,
+                ),
+              ),
           repository: CachedNotesRepository(
             preferences: preferences,
             userIdProvider: () => authRepository.currentUser?.id,

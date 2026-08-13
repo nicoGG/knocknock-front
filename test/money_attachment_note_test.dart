@@ -169,4 +169,96 @@ void main() {
     );
     expect(find.text('Monto (CLP)'), findsOneWidget);
   });
+
+  testWidgets('shows two local photo thumbnails and enforces the limit', (
+    tester,
+  ) async {
+    const onePixelPng =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+'
+        'A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    final now = DateTime.utc(2026, 8, 12);
+    final note = Note(
+      id: 'note-two-photos',
+      boardId: 'board-1',
+      title: 'Dos fotos',
+      content: '',
+      color: NoteColor.yellow,
+      authorName: 'Nico',
+      attachments: const [
+        NoteAttachment(
+          id: 'photo-1',
+          name: 'foto-1.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+          dataBase64: onePixelPng,
+        ),
+        NoteAttachment(
+          id: 'photo-2',
+          name: 'foto-2.png',
+          mimeType: 'image/png',
+          sizeBytes: 68,
+          dataBase64: onePixelPng,
+        ),
+      ],
+      isCompleted: false,
+      positionX: 0,
+      positionY: 0,
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            height: 520,
+            child: PostItCard(
+              note: note,
+              layout: PostItCardLayout.large,
+              showPin: false,
+              enableHero: false,
+              onToggle: () {},
+              onPin: () {},
+              onOpen: () {},
+              onChecklistToggle: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('attachment-image-photo-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('attachment-image-photo-2')),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: NoteEditorSheet(
+            note: note,
+            defaultAuthorName: 'Nico',
+            showAuthorField: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('note-editor-photo-photo-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('note-editor-photo-photo-2')),
+      findsOneWidget,
+    );
+    expect(find.text('Fotos · 2/2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('add-note-photo-button')), findsNothing);
+  });
 }

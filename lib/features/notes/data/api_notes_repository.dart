@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/core/telemetry/app_telemetry.dart';
 import 'package:nocknock/core/telemetry/telemetry_dio.dart';
+import 'package:nocknock/features/notes/data/resilient_web_socket.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -32,6 +33,7 @@ class ApiNotesRepository
          '$socketBaseUrl/notes',
          io.OptionBuilder()
              .setTransports(['websocket'])
+             .setWebSocketConnector(connectResilientWebSocket)
              .disableAutoConnect()
              .build(),
        ) {
@@ -387,9 +389,12 @@ class ApiNotesRepository
   }
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) async {
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
     final response = await _dio.get<Map<String, dynamic>>(
-      '/notes/$noteId/attachment',
+      '/notes/$noteId/attachments/${Uri.encodeComponent(attachmentId)}',
     );
     return NoteAttachment.fromJson(response.data!);
   }
@@ -478,8 +483,9 @@ class ApiNotesRepository
                 if (note.assigneeUid != null) 'assigneeUid': note.assigneeUid,
                 if (note.customAssigneeName != null)
                   'customAssigneeName': note.customAssigneeName,
-                if (note.attachment != null)
-                  'attachment': note.attachment!.toJson(),
+                'attachments': note.photoAttachments
+                    .map((entry) => entry.toJson())
+                    .toList(),
                 'isCompleted': note.isCompleted,
                 'isPinned': note.isPinned,
                 'sortOrder': note.sortOrder,

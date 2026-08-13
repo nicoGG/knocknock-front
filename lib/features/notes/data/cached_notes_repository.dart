@@ -291,14 +291,22 @@ class CachedNotesRepository
   @override
   Future<List<Note>> fetchNotes(String boardId) async {
     final userId = _userIdProvider();
-    late final List<Note> notes;
+    late final List<Note> fetchedNotes;
     try {
-      notes = await _repository.fetchNotes(boardId);
+      fetchedNotes = await _repository.fetchNotes(boardId);
     } catch (error) {
       final cached = _cacheFor(userId)?.notesByBoard[boardId];
       if (!_isRetryable(error) || cached == null) rethrow;
       return List<Note>.unmodifiable(cached);
     }
+    final cachedById = {
+      for (final note
+          in _cacheFor(userId)?.notesByBoard[boardId] ?? const <Note>[])
+        note.id: note,
+    };
+    final notes = fetchedNotes
+        .map((note) => _preserveAttachmentData(note, cachedById[note.id]))
+        .toList();
     await _updateCache(userId, (cache) {
       cache.notesByBoard[boardId] = _sortedNotes(notes);
       cache.fullyLoadedBoardIds.add(boardId);
@@ -321,13 +329,10 @@ class CachedNotesRepository
     }
 
     final userId = _userIdProvider();
-    late final NotesPage page;
+    late final NotesPage remotePage;
     try {
-      page = await (repository as PaginatedNotesRepository).fetchNotesPage(
-        boardId,
-        cursor: cursor,
-        limit: limit,
-      );
+      remotePage = await (repository as PaginatedNotesRepository)
+          .fetchNotesPage(boardId, cursor: cursor, limit: limit);
     } catch (error) {
       final cached = _cacheFor(userId)?.notesByBoard[boardId];
       if (cursor != null || !_isRetryable(error) || cached == null) rethrow;
@@ -336,6 +341,18 @@ class CachedNotesRepository
         nextCursor: null,
       );
     }
+
+    final cachedById = {
+      for (final note
+          in _cacheFor(userId)?.notesByBoard[boardId] ?? const <Note>[])
+        note.id: note,
+    };
+    final page = NotesPage(
+      items: remotePage.items
+          .map((note) => _preserveAttachmentData(note, cachedById[note.id]))
+          .toList(),
+      nextCursor: remotePage.nextCursor,
+    );
 
     await _updateCache(userId, (cache) {
       if (cursor == null && !page.hasMore) {
@@ -396,7 +413,11 @@ class CachedNotesRepository
       clientMutationId: operationId,
     );
     try {
-      final note = await _repository.createNote(boardId, synchronizedDraft);
+      final remote = await _repository.createNote(boardId, synchronizedDraft);
+      final note = _withAttachmentData(
+        remote,
+        synchronizedDraft.photoAttachments,
+      );
       await _updateCache(userId, (cache) => _upsertNote(cache, note));
       return note;
     } catch (error) {
@@ -412,7 +433,7 @@ class CachedNotesRepository
         authorName: synchronizedDraft.authorName,
         assigneeUid: synchronizedDraft.assigneeUid,
         customAssigneeName: synchronizedDraft.customAssigneeName,
-        attachment: synchronizedDraft.attachment,
+        attachments: synchronizedDraft.photoAttachments,
         category: synchronizedDraft.category,
         checklist: synchronizedDraft.checklist,
         isCompleted: synchronizedDraft.isCompleted,
@@ -444,12 +465,28 @@ class CachedNotesRepository
   }
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) {
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
+    final userId = _userIdProvider();
+    final cached = _findCachedNote(
+      userId,
+      noteId,
+    )?.photoAttachments.where((entry) => entry.id == attachmentId).firstOrNull;
+    if (cached?.dataBase64 != null) return cached!;
     final repository = _repository;
     if (repository is! NoteAttachmentsRepository) {
       throw const NotesPersistenceFailure();
     }
-    return (repository as NoteAttachmentsRepository).fetchAttachment(noteId);
+    final loaded = await (repository as NoteAttachmentsRepository)
+        .fetchAttachment(noteId, attachmentId);
+    final current = _findCachedNote(userId, noteId);
+    if (current != null) {
+      final updated = _withAttachmentData(current, [loaded]);
+      await _updateCache(userId, (cache) => _upsertNote(cache, updated));
+    }
+    return loaded;
   }
 
   @override
@@ -464,7 +501,14 @@ class CachedNotesRepository
       ..['clientMutationId'] = operationId
       ..addAll({'expectedRevision': ?expectedRevision});
     try {
-      final note = await _repository.updateNote(id, synchronizedChanges);
+      final remote = await _repository.updateNote(id, synchronizedChanges);
+      final note = _withAttachmentData(
+        remote,
+        _attachmentsFromChanges(
+          synchronizedChanges,
+          fallback: current?.photoAttachments ?? const [],
+        ),
+      );
       await _updateCache(userId, (cache) => _upsertNote(cache, note));
       return note;
     } catch (error) {
@@ -761,7 +805,8 @@ class CachedNotesRepository
         final draft = NoteDraft.fromJson(
           Map<String, dynamic>.from(jsonDecode(mutation.payload) as Map),
         );
-        final saved = await _repository.createNote(mutation.boardId, draft);
+        final remote = await _repository.createNote(mutation.boardId, draft);
+        final saved = _withAttachmentData(remote, draft.photoAttachments);
         await _updateCache(
           mutation.userId,
           (cache) => _upsertNote(cache, saved),
@@ -772,7 +817,19 @@ class CachedNotesRepository
             Map<String, dynamic>.from(jsonDecode(mutation.payload) as Map)
               ..['expectedRevision'] = mutation.baseRevision
               ..['clientMutationId'] = mutation.id;
-        final saved = await _repository.updateNote(mutation.entityId, changes);
+        final remote = await _repository.updateNote(mutation.entityId, changes);
+        final saved = _withAttachmentData(
+          remote,
+          _attachmentsFromChanges(
+            changes,
+            fallback:
+                _findCachedNote(
+                  mutation.userId,
+                  mutation.entityId,
+                )?.photoAttachments ??
+                const [],
+          ),
+        );
         await _updateCache(
           mutation.userId,
           (cache) => _upsertNote(cache, saved),
@@ -1003,6 +1060,48 @@ class CachedNotesRepository
     return Note.fromJson(json);
   }
 
+  static List<NoteAttachment> _attachmentsFromChanges(
+    Map<String, dynamic> changes, {
+    required List<NoteAttachment> fallback,
+  }) {
+    final raw = changes['attachments'];
+    if (raw is! List) return fallback;
+    final fallbackById = {for (final entry in fallback) entry.id: entry};
+    return raw.whereType<Map>().map((entry) {
+      final attachment = NoteAttachment.fromJson(
+        Map<String, dynamic>.from(entry),
+      );
+      final cached = fallbackById[attachment.id];
+      return attachment.dataBase64 != null || cached?.dataBase64 == null
+          ? attachment
+          : attachment.copyWith(dataBase64: cached!.dataBase64);
+    }).toList();
+  }
+
+  static Note _preserveAttachmentData(Note remote, Note? cached) =>
+      cached == null
+      ? remote
+      : _withAttachmentData(remote, cached.photoAttachments);
+
+  static Note _withAttachmentData(
+    Note note,
+    Iterable<NoteAttachment> localAttachments,
+  ) {
+    final localById = {
+      for (final attachment in localAttachments)
+        if (attachment.dataBase64 != null) attachment.id: attachment,
+    };
+    if (localById.isEmpty) return note;
+    return note.copyWith(
+      attachments: note.photoAttachments.map((attachment) {
+        final local = localById[attachment.id];
+        return local == null
+            ? attachment
+            : attachment.copyWith(dataBase64: local.dataBase64);
+      }).toList(),
+    );
+  }
+
   Note _applyReaction(
     Note current, {
     required String emoji,
@@ -1168,16 +1267,29 @@ class CachedNotesRepository
     final userId = _userIdProvider();
     switch (event) {
       case NoteChanged(:final note):
-        unawaited(_updateCache(userId, (cache) => _upsertNote(cache, note)));
+        final merged = _preserveAttachmentData(
+          note,
+          _findCachedNote(userId, note.id),
+        );
+        unawaited(_updateCache(userId, (cache) => _upsertNote(cache, merged)));
       case NoteRemoved(:final id):
         unawaited(_updateCache(userId, (cache) => _removeNote(cache, id)));
       case NotesReordered(:final boardId, :final notes):
         unawaited(
           _updateCache(userId, (cache) {
-            cache.notesByBoard[boardId] = _sortedNotes(notes);
+            final cachedById = {
+              for (final note in cache.notesByBoard[boardId] ?? const <Note>[])
+                note.id: note,
+            };
+            final merged = notes
+                .map(
+                  (note) => _preserveAttachmentData(note, cachedById[note.id]),
+                )
+                .toList();
+            cache.notesByBoard[boardId] = _sortedNotes(merged);
             cache.fullyLoadedBoardIds.add(boardId);
-            _replaceKnownPinnedNotes(cache, notes);
-            _replaceKnownReminderNotes(cache, notes);
+            _replaceKnownPinnedNotes(cache, merged);
+            _replaceKnownReminderNotes(cache, merged);
           }),
         );
       case ListAppearanceChanged(:final listId, :final appearance):

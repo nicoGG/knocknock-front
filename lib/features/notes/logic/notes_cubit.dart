@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/data/selected_list_store.dart';
@@ -672,8 +673,10 @@ class NotesCubit extends Cubit<NotesState> {
             'assigneeUid': draft.assigneeUid,
             'customAssigneeName': draft.customAssigneeName,
           },
-          if (draft.attachment != note.attachment)
-            'attachment': draft.attachment?.toJson(),
+          if (!listEquals(draft.photoAttachments, note.photoAttachments))
+            'attachments': draft.photoAttachments
+                .map((entry) => entry.toJson())
+                .toList(),
           'reminderAt': draft.reminderAt?.toIso8601String(),
         }),
       );
@@ -714,12 +717,16 @@ class NotesCubit extends Cubit<NotesState> {
     'customAssigneeName': customAssigneeName,
   });
 
-  Future<NoteAttachment> loadAttachment(Note note) async {
+  Future<NoteAttachment> loadAttachment(Note note, String attachmentId) async {
     final repository = _repository;
-    if (repository is! NoteAttachmentsRepository || note.attachment == null) {
+    if (repository is! NoteAttachmentsRepository ||
+        !note.photoAttachments.any((entry) => entry.id == attachmentId)) {
       throw const NotesPersistenceFailure();
     }
-    return (repository as NoteAttachmentsRepository).fetchAttachment(note.id);
+    return (repository as NoteAttachmentsRepository).fetchAttachment(
+      note.id,
+      attachmentId,
+    );
   }
 
   Future<void> toggleReaction(

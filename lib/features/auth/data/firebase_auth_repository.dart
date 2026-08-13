@@ -5,10 +5,12 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:nocknock/core/config/app_config.dart';
 import 'package:nocknock/core/telemetry/app_telemetry.dart';
 import 'package:nocknock/core/telemetry/telemetry_dio.dart';
+import 'package:nocknock/features/auth/data/account_recovery_authorization.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 
-class FirebaseAuthRepository implements AuthRepository {
+class FirebaseAuthRepository
+    implements AuthRepository, AccountRecoveryAuthorizationProvider {
   FirebaseAuthRepository({
     FirebaseAuth? firebaseAuth,
     Dio? dio,
@@ -26,6 +28,8 @@ class FirebaseAuthRepository implements AuthRepository {
   final Dio _dio;
   final AppTelemetry? _telemetry;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+  GoogleSignInAccount? _googleAccount;
+  String? _googleDriveAccessToken;
   bool _isInitialized = false;
   Future<void> Function()? _beforeSignOut;
 
@@ -50,7 +54,16 @@ class FirebaseAuthRepository implements AuthRepository {
   Future<void> signInWithGoogle() async {
     try {
       if (kIsWeb) {
-        await _firebaseAuth.signInWithPopup(GoogleAuthProvider());
+        final provider = GoogleAuthProvider()
+          ..addScope(googleDriveAppDataScope);
+        final credential = await _firebaseAuth.signInWithPopup(provider);
+        _googleDriveAccessToken = credential.credential?.accessToken;
+        if (_googleDriveAccessToken?.isNotEmpty != true) {
+          await _firebaseAuth.signOut();
+          throw const AuthFailure(
+            'Google no autorizó la recuperación de tus notas.',
+          );
+        }
         await _telemetry?.logLogin('google');
         return;
       }
@@ -61,7 +74,13 @@ class FirebaseAuthRepository implements AuthRepository {
           'Google no está disponible en este dispositivo.',
         );
       }
-      final googleUser = await _googleSignIn.authenticate();
+      final googleUser = await _googleSignIn.authenticate(
+        scopeHint: const [googleDriveAppDataScope],
+      );
+      await googleUser.authorizationClient.authorizeScopes(const [
+        googleDriveAppDataScope,
+      ]);
+      _googleAccount = googleUser;
       final authentication = googleUser.authentication;
       final idToken = authentication.idToken;
       if (idToken == null) {
@@ -88,11 +107,28 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<Map<String, String>?> accountRecoveryAuthorizationHeaders() async {
+    if (kIsWeb) {
+      final accessToken = _googleDriveAccessToken;
+      return accessToken?.isNotEmpty == true
+          ? {'Authorization': 'Bearer $accessToken'}
+          : null;
+    }
+    await initialize();
+    final client =
+        _googleAccount?.authorizationClient ??
+        _googleSignIn.authorizationClient;
+    return client.authorizationHeaders(const [googleDriveAppDataScope]);
+  }
+
+  @override
   Future<void> signOut() async {
     await _beforeSignOut?.call();
     await _telemetry?.logEvent('logout');
     await _firebaseAuth.signOut();
     if (!kIsWeb && _isInitialized) await _googleSignIn.signOut();
+    _googleAccount = null;
+    _googleDriveAccessToken = null;
   }
 
   @override
@@ -111,6 +147,8 @@ class FirebaseAuthRepository implements AuthRepository {
       );
       await _firebaseAuth.signOut();
       if (!kIsWeb && _isInitialized) await _googleSignIn.signOut();
+      _googleAccount = null;
+      _googleDriveAccessToken = null;
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
         throw const AuthFailure(

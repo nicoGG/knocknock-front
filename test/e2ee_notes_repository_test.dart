@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/data/cached_notes_repository.dart';
+import 'package:nocknock/features/notes/data/e2ee_account_recovery.dart';
 import 'package:nocknock/features/notes/data/e2ee_crypto.dart';
 import 'package:nocknock/features/notes/data/e2ee_notes_repository.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
@@ -13,6 +14,146 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('adds an account recovery envelope to every readable list', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final recoveryIdentity = await E2eeKeyStore(
+      storage: _MemorySecureStore(),
+    ).loadOrCreateIdentity('recovery-user-1');
+    final remote = _FakeE2eeRemote()
+      ..deriveRecipientsFromRegisteredDevices = true;
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+      accountRecoveryIdentityStore: _FakeAccountRecoveryIdentityStore(
+        recoveryIdentity,
+      ),
+    );
+
+    await repository.fetchLists();
+
+    final recoveryEnvelope = remote.storedEnvelopes.singleWhere(
+      (entry) => entry.deviceId == recoveryIdentity.deviceId,
+    );
+    final recoveredKey = await E2eeCipher().unwrapListKey(
+      recoveryEnvelope.envelope,
+      recoveryIdentity.keyPair,
+    );
+    await expectLater(
+      E2eeCipher().decryptString(
+        remote.rawList.name,
+        recoveredKey,
+        field: e2eeListNameField,
+      ),
+      completion('Mis notas'),
+    );
+
+    repository.dispose();
+  });
+
+  test(
+    'recovers encrypted lists and notes after local app data is cleared',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final cipher = E2eeCipher();
+      final recoveryIdentity = await E2eeKeyStore(
+        storage: _MemorySecureStore(),
+      ).loadOrCreateIdentity('recovery-user-1');
+      final listKey = await cipher.newListKey();
+      final date = DateTime.utc(2026, 8, 12);
+      final remote = _FakeE2eeRemote()
+        ..deriveRecipientsFromRegisteredDevices = true
+        ..rawList = NoteList(
+          id: 'home-user-1',
+          name: await cipher.encryptString(
+            'Lista recuperada',
+            listKey,
+            field: e2eeListNameField,
+          ),
+          createdAt: date,
+          updatedAt: date,
+          encryption: ListEncryption(
+            version: 1,
+            keyEnvelopes: [
+              ListKeyEnvelope(
+                deviceId: recoveryIdentity.deviceId,
+                envelope: await cipher.wrapListKey(
+                  listKey,
+                  await recoveryIdentity.publicKeyEncoded(),
+                ),
+              ),
+            ],
+          ),
+        );
+      remote.rawNote = Note(
+        id: 'note-recovered',
+        boardId: remote.rawList.id,
+        title: await cipher.encryptString(
+          'Nota recuperada',
+          listKey,
+          field: e2eeNoteTitleField,
+        ),
+        content: await cipher.encryptString(
+          'Contenido recuperado',
+          listKey,
+          field: 'note:content:v1',
+        ),
+        color: NoteColor.yellow,
+        authorName: await cipher.encryptString(
+          'Nico',
+          listKey,
+          field: 'note:author-name:v1',
+        ),
+        isCompleted: false,
+        positionX: 0,
+        positionY: 0,
+        createdAt: date,
+        updatedAt: date,
+      );
+      final emptyDeviceStorage = _MemorySecureStore();
+      final repository = E2eeNotesRepository(
+        repository: CachedNotesRepository(
+          repository: remote,
+          preferences: preferences,
+          userIdProvider: () => 'user-1',
+        ),
+        userIdProvider: () => 'user-1',
+        keyStore: E2eeKeyStore(storage: emptyDeviceStorage),
+        accountRecoveryIdentityStore: _FakeAccountRecoveryIdentityStore(
+          recoveryIdentity,
+        ),
+      );
+
+      final lists = await repository.fetchLists();
+      final notes = await repository.fetchNotes('home-user-1');
+
+      expect(lists.single.name, 'Lista recuperada');
+      expect(lists.single.isEncryptionKeyPending, isFalse);
+      expect(notes.single.title, 'Nota recuperada');
+      expect(notes.single.content, 'Contenido recuperado');
+      expect(remote.registeredDeviceIds, contains(recoveryIdentity.deviceId));
+      expect(remote.storedEnvelopes, hasLength(1));
+      expect(
+        remote.storedEnvelopes.single.deviceId,
+        isNot(recoveryIdentity.deviceId),
+      );
+      expect(
+        emptyDeviceStorage.values.keys.any(
+          (key) => key.endsWith('.list.home-user-1'),
+        ),
+        isTrue,
+      );
+
+      repository.dispose();
+    },
+  );
 
   test('migrates legacy list data before returning readable content', () async {
     SharedPreferences.setMockInitialValues({});
@@ -75,8 +216,19 @@ void main() {
       );
 
       await repository.fetchLists();
+      expect(remote.rawNote.title, startsWith(e2eeCiphertextPrefix));
+      expect(remote.rawNote.content, startsWith(e2eeCiphertextPrefix));
+      expect(remote.rawNote.authorName, startsWith(e2eeCiphertextPrefix));
+      expect(
+        remote.rawNote.customAssigneeName,
+        startsWith(e2eeCiphertextPrefix),
+      );
+      expect(remote.rawNote.attachment?.name, startsWith(e2eeCiphertextPrefix));
       final note = (await repository.fetchNotes('home-user-1')).single;
-      final attachment = await repository.fetchAttachment(note.id);
+      final attachment = await repository.fetchAttachment(
+        note.id,
+        note.attachment!.id,
+      );
 
       expect(
         remote.rawNote.customAssigneeName,
@@ -122,6 +274,64 @@ void main() {
     ];
     remote.emit(const ListKeyShareRequested('home-user-1'));
     await pumpEventQueue(times: 10);
+
+    expect(remote.storedEnvelopes, hasLength(1));
+    final sharedKey = await E2eeCipher().unwrapListKey(
+      remote.storedEnvelopes.single.envelope,
+      recipientIdentity.keyPair,
+    );
+    await expectLater(
+      E2eeCipher().decryptString(
+        remote.rawList.name,
+        sharedKey,
+        field: e2eeListNameField,
+      ),
+      completion('Mis notas'),
+    );
+
+    repository.dispose();
+  });
+
+  test('lets an editor propagate a key it can already decrypt', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    final recipientIdentity = await E2eeKeyStore(
+      storage: _MemorySecureStore(),
+    ).loadOrCreateIdentity('user-2');
+
+    await repository.fetchLists();
+    final encrypted = remote.rawList;
+    remote.rawList = NoteList(
+      id: encrypted.id,
+      name: encrypted.name,
+      createdAt: encrypted.createdAt,
+      updatedAt: encrypted.updatedAt,
+      currentUserRole: ListMemberRole.editor,
+      collaborators: encrypted.collaborators,
+      pendingInvitations: encrypted.pendingInvitations,
+      appearance: encrypted.appearance,
+      encryption: encrypted.encryption,
+    );
+    remote.recipients = [
+      EncryptionRecipient(
+        userUid: 'user-2',
+        deviceId: recipientIdentity.deviceId,
+        publicKey: await recipientIdentity.publicKeyEncoded(),
+        hasEnvelope: false,
+      ),
+    ];
+
+    await repository.fetchLists();
 
     expect(remote.storedEnvelopes, hasLength(1));
     final sharedKey = await E2eeCipher().unwrapListKey(
@@ -311,6 +521,8 @@ class _FakeE2eeRemote extends Fake
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';
+  final registeredPublicKeys = <String, String>{};
+  bool deriveRecipientsFromRegisteredDevices = false;
   List<EncryptionRecipient> recipients = const [];
   final storedEnvelopes = <_StoredEnvelope>[];
   AggregateBoardAppearances aggregateBoardAppearances =
@@ -358,8 +570,11 @@ class _FakeE2eeRemote extends Fake
     required String publicKey,
   }) async {
     registeredDeviceId = deviceId;
+    registeredPublicKeys[deviceId] = publicKey;
     expect(publicKey, hasLength(43));
   }
+
+  Iterable<String> get registeredDeviceIds => registeredPublicKeys.keys;
 
   @override
   Future<List<NoteList>> fetchLists() async => [rawList];
@@ -379,7 +594,10 @@ class _FakeE2eeRemote extends Fake
   }
 
   @override
-  Future<NoteAttachment> fetchAttachment(String noteId) async {
+  Future<NoteAttachment> fetchAttachment(
+    String noteId,
+    String attachmentId,
+  ) async {
     final attachment = attachmentPayload;
     if (attachment == null) throw const NotesPersistenceFailure();
     return attachment;
@@ -412,6 +630,12 @@ class _FakeE2eeRemote extends Fake
     if (changes['attachment'] case final Map attachment) {
       attachmentPayload = NoteAttachment.fromJson(
         Map<String, dynamic>.from(attachment),
+      );
+    }
+    if (changes['attachments'] case final List attachments
+        when attachments.isNotEmpty && attachments.first is Map) {
+      attachmentPayload = NoteAttachment.fromJson(
+        Map<String, dynamic>.from(attachments.first as Map),
       );
     }
     rawNote = Note.fromJson({...rawNote.toJson(), ...changes});
@@ -465,7 +689,22 @@ class _FakeE2eeRemote extends Fake
   @override
   Future<List<EncryptionRecipient>> fetchEncryptionRecipients(
     String listId,
-  ) async => recipients;
+  ) async {
+    if (!deriveRecipientsFromRegisteredDevices) return recipients;
+    final envelopeDeviceIds = rawList.encryption.keyEnvelopes
+        .map((entry) => entry.deviceId)
+        .toSet();
+    return registeredPublicKeys.entries
+        .map(
+          (entry) => EncryptionRecipient(
+            userUid: 'user-1',
+            deviceId: entry.key,
+            publicKey: entry.value,
+            hasEnvelope: envelopeDeviceIds.contains(entry.key),
+          ),
+        )
+        .toList();
+  }
 
   @override
   Future<void> storeListKeyEnvelope({
@@ -482,6 +721,15 @@ class _FakeE2eeRemote extends Fake
         envelope: envelope,
       ),
     );
+    rawList = rawList.copyWith(
+      encryption: ListEncryption(
+        version: rawList.encryption.version,
+        keyEnvelopes: [
+          ...rawList.encryption.keyEnvelopes,
+          ListKeyEnvelope(deviceId: deviceId, envelope: envelope),
+        ],
+      ),
+    );
   }
 
   void emit(NotesRealtimeEvent event) => _events.add(event);
@@ -490,6 +738,17 @@ class _FakeE2eeRemote extends Fake
   void dispose() {
     unawaited(_events.close());
   }
+}
+
+class _FakeAccountRecoveryIdentityStore
+    implements E2eeAccountRecoveryIdentityStore {
+  const _FakeAccountRecoveryIdentityStore(this.identity);
+
+  final E2eeDeviceIdentity identity;
+
+  @override
+  Future<E2eeDeviceIdentity?> loadOrCreateIdentity(String userId) async =>
+      identity;
 }
 
 class _StoredEnvelope {

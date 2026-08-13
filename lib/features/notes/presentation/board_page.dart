@@ -233,6 +233,8 @@ class _BoardPageState extends State<BoardPage>
         final isAggregateScope = isPinnedScope || isWithReminderScope;
         final isListScope = _scope == _BoardScope.list;
         final selectedList = state.selectedList;
+        final selectedListKeyPending =
+            isListScope && (selectedList?.isEncryptionKeyPending ?? false);
         final selectedListRequiresUnlock =
             (_scope == _BoardScope.list ||
                 _scope == _BoardScope.assignedToMe) &&
@@ -275,7 +277,10 @@ class _BoardPageState extends State<BoardPage>
             onOpenSettings: _openSettings,
           ),
           floatingActionButton:
-              isCompact && !isAggregateScope && !selectedListRequiresUnlock
+              isCompact &&
+                  !isAggregateScope &&
+                  !selectedListRequiresUnlock &&
+                  !selectedListKeyPending
               ? ScaleTransition(
                   scale: _fabScale,
                   child: CollapsingNewNoteFab(
@@ -384,7 +389,8 @@ class _BoardPageState extends State<BoardPage>
                                             onViewModeChanged: _changeViewMode,
                                             onAdd:
                                                 state.isSaving ||
-                                                    isAggregateScope
+                                                    isAggregateScope ||
+                                                    selectedListKeyPending
                                                 ? null
                                                 : _openNewNoteEditor,
                                             onShare:
@@ -488,6 +494,20 @@ class _BoardPageState extends State<BoardPage>
         icon: Icons.cloud_off_rounded,
         title: 'No pudimos abrir el tablero',
         detail: 'Enciende el backend y vuelve a intentarlo.',
+        actionLabel: 'Reintentar',
+        onAction: context.read<NotesCubit>().load,
+      );
+    }
+    if (_scope == _BoardScope.list &&
+        (state.selectedList?.isEncryptionKeyPending ?? false)) {
+      return _MessageState(
+        key: const ValueKey('board-encryption-key-recovery'),
+        icon: Icons.key_rounded,
+        title: 'Recuperando la llave de esta lista',
+        detail:
+            'Tus notas siguen cifradas y seguras. Mantén NockNock abierto aquí '
+            'y abre la lista en otro dispositivo o desde la cuenta de otra '
+            'persona que ya tenga acceso.',
         actionLabel: 'Reintentar',
         onAction: context.read<NotesCubit>().load,
       );
@@ -1013,9 +1033,10 @@ class _BoardPageState extends State<BoardPage>
                 },
                 onOpen: () {},
                 onAssigneeTap: editAssignee,
-                attachmentLoader: note.attachment == null
+                attachmentLoader: note.photoAttachments.isEmpty
                     ? null
-                    : () => cubit.loadAttachment(note),
+                    : (attachmentId) =>
+                          cubit.loadAttachment(note, attachmentId),
                 inlineEditTarget: editTarget,
                 onInlineSave: saveInline,
                 onChecklistToggle: (item) {
@@ -6851,6 +6872,7 @@ class _MessageState extends StatelessWidget {
     required this.detail,
     this.actionLabel,
     this.onAction,
+    super.key,
   });
 
   final IconData icon;

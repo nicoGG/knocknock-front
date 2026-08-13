@@ -169,6 +169,21 @@ class NoteAttachment extends Equatable {
   List<Object?> get props => [id, name, mimeType, sizeBytes, dataBase64];
 }
 
+List<NoteAttachment> _attachmentsFromJson(Map<String, dynamic> json) {
+  final rawAttachments = json['attachments'];
+  if (rawAttachments is List) {
+    return rawAttachments
+        .whereType<Map>()
+        .map((item) => NoteAttachment.fromJson(Map<String, dynamic>.from(item)))
+        .take(2)
+        .toList(growable: false);
+  }
+  final legacy = json['attachment'];
+  return legacy is Map
+      ? [NoteAttachment.fromJson(Map<String, dynamic>.from(legacy))]
+      : const [];
+}
+
 List<NoteChecklistItem> normalizeNoteChecklist(
   Iterable<NoteChecklistItem> items, {
   bool trimText = false,
@@ -219,11 +234,12 @@ class Note extends Equatable {
     this.reactions = const [],
     this.assigneeUid,
     this.customAssigneeName,
-    this.attachment,
+    this.attachments = const [],
+    NoteAttachment? attachment,
     this.reminderAt,
     this.contentDelta,
     this.revision = 0,
-  });
+  }) : _legacyAttachment = attachment;
 
   factory Note.fromJson(Map<String, dynamic> json) {
     return Note(
@@ -239,11 +255,7 @@ class Note extends Equatable {
       authorName: json['authorName'] as String? ?? 'Invitado',
       assigneeUid: json['assigneeUid'] as String?,
       customAssigneeName: json['customAssigneeName'] as String?,
-      attachment: json['attachment'] is Map
-          ? NoteAttachment.fromJson(
-              Map<String, dynamic>.from(json['attachment'] as Map),
-            )
-          : null,
+      attachments: _attachmentsFromJson(json),
       isCompleted: json['isCompleted'] as bool? ?? false,
       isPinned: json['isPinned'] as bool? ?? false,
       sortOrder: (json['sortOrder'] as num?)?.toInt() ?? 0,
@@ -283,7 +295,14 @@ class Note extends Equatable {
   final String authorName;
   final String? assigneeUid;
   final String? customAssigneeName;
-  final NoteAttachment? attachment;
+  final List<NoteAttachment> attachments;
+  final NoteAttachment? _legacyAttachment;
+  List<NoteAttachment> get photoAttachments => attachments.isNotEmpty
+      ? attachments
+      : _legacyAttachment == null
+      ? const []
+      : [_legacyAttachment];
+  NoteAttachment? get attachment => photoAttachments.firstOrNull;
   final bool isCompleted;
   final bool isPinned;
   final int sortOrder;
@@ -307,7 +326,7 @@ class Note extends Equatable {
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
     if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
-    if (attachment != null) 'attachment': attachment!.toJson(),
+    'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'isCompleted': isCompleted,
     'isPinned': isPinned,
     'sortOrder': sortOrder,
@@ -329,6 +348,7 @@ class Note extends Equatable {
     NoteCategory? category,
     List<NoteChecklistItem>? checklist,
     List<NoteReaction>? reactions,
+    List<NoteAttachment>? attachments,
     DateTime? updatedAt,
     int? revision,
   }) => Note(
@@ -341,7 +361,7 @@ class Note extends Equatable {
     authorName: authorName,
     assigneeUid: assigneeUid,
     customAssigneeName: customAssigneeName,
-    attachment: attachment,
+    attachments: attachments ?? photoAttachments,
     isCompleted: isCompleted ?? this.isCompleted,
     isPinned: isPinned ?? this.isPinned,
     sortOrder: sortOrder ?? this.sortOrder,
@@ -367,7 +387,7 @@ class Note extends Equatable {
     authorName,
     assigneeUid,
     customAssigneeName,
-    attachment,
+    photoAttachments,
     isCompleted,
     isPinned,
     sortOrder,
@@ -393,7 +413,8 @@ class NoteDraft extends Equatable {
     this.checklist = const [],
     this.assigneeUid,
     this.customAssigneeName,
-    this.attachment,
+    this.attachments = const [],
+    NoteAttachment? attachment,
     this.reminderAt,
     this.contentDelta,
     this.clientNoteId,
@@ -403,7 +424,7 @@ class NoteDraft extends Equatable {
     this.sortOrder,
     this.positionX = 0,
     this.positionY = 0,
-  });
+  }) : _legacyAttachment = attachment;
 
   factory NoteDraft.fromJson(Map<String, dynamic> json) => NoteDraft(
     title: json['title'] as String,
@@ -416,11 +437,7 @@ class NoteDraft extends Equatable {
     authorName: json['authorName'] as String? ?? 'Invitado',
     assigneeUid: json['assigneeUid'] as String?,
     customAssigneeName: json['customAssigneeName'] as String?,
-    attachment: json['attachment'] is Map
-        ? NoteAttachment.fromJson(
-            Map<String, dynamic>.from(json['attachment'] as Map),
-          )
-        : null,
+    attachments: _attachmentsFromJson(json),
     category: NoteCategory.values.firstWhere(
       (category) => category.name == json['category'],
       orElse: () => NoteCategory.general,
@@ -449,7 +466,14 @@ class NoteDraft extends Equatable {
   final String authorName;
   final String? assigneeUid;
   final String? customAssigneeName;
-  final NoteAttachment? attachment;
+  final List<NoteAttachment> attachments;
+  final NoteAttachment? _legacyAttachment;
+  List<NoteAttachment> get photoAttachments => attachments.isNotEmpty
+      ? attachments
+      : _legacyAttachment == null
+      ? const []
+      : [_legacyAttachment];
+  NoteAttachment? get attachment => photoAttachments.firstOrNull;
   final NoteCategory category;
   final List<NoteChecklistItem> checklist;
   final DateTime? reminderAt;
@@ -472,7 +496,7 @@ class NoteDraft extends Equatable {
     authorName: authorName,
     assigneeUid: assigneeUid,
     customAssigneeName: customAssigneeName,
-    attachment: attachment,
+    attachments: photoAttachments,
     category: category,
     checklist: checklist,
     reminderAt: reminderAt,
@@ -493,7 +517,7 @@ class NoteDraft extends Equatable {
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
     if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
-    if (attachment != null) 'attachment': attachment!.toJson(),
+    'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
@@ -515,7 +539,7 @@ class NoteDraft extends Equatable {
     authorName,
     assigneeUid,
     customAssigneeName,
-    attachment,
+    photoAttachments,
     category,
     checklist,
     reminderAt,
