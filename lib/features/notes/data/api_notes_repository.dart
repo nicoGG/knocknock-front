@@ -17,6 +17,7 @@ class ApiNotesRepository
         GuestDataSyncTarget,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
+        AssignedNotesRepository,
         NoteAttachmentsRepository,
         PaginatedNotesRepository {
   ApiNotesRepository({
@@ -360,6 +361,14 @@ class ApiNotesRepository
           .toList(),
       nextCursor: data['nextCursor'] as String?,
     );
+  }
+
+  @override
+  Future<List<Note>> fetchAssignedNotes() async {
+    final response = await _dio.get<List<dynamic>>('/notes/assigned');
+    return (response.data ?? const [])
+        .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
   }
 
   @override

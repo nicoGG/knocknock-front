@@ -198,6 +198,12 @@ abstract interface class NotesSearchRepository {
   Future<List<NoteSearchResult>> searchNotes(String query);
 }
 
+/// Optional aggregate view containing tasks assigned to the signed-in user
+/// across every list they can access.
+abstract interface class AssignedNotesRepository {
+  Future<List<Note>> fetchAssignedNotes();
+}
+
 class NotesPage {
   const NotesPage({required this.items, required this.nextCursor});
 

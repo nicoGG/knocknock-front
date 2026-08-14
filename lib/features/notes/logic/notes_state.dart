@@ -8,6 +8,7 @@ class NotesState extends Equatable {
   const NotesState({
     this.status = NotesStatus.initial,
     this.notes = const [],
+    this.assignedNotes = const [],
     this.pinnedNotes = const [],
     this.reminderNotes = const [],
     this.aggregateBoardAppearances = const AggregateBoardAppearances(),
@@ -20,6 +21,7 @@ class NotesState extends Equatable {
     this.isInviting = false,
     this.isRemovingCollaborator = false,
     this.isSavingAppearance = false,
+    this.isLoadingAssigned = false,
     this.isLoadingPinned = false,
     this.isLoadingReminderNotes = false,
     this.isLoadingMoreNotes = false,
@@ -33,6 +35,7 @@ class NotesState extends Equatable {
 
   final NotesStatus status;
   final List<Note> notes;
+  final List<Note> assignedNotes;
   final List<Note> pinnedNotes;
   final List<Note> reminderNotes;
   final AggregateBoardAppearances aggregateBoardAppearances;
@@ -45,6 +48,7 @@ class NotesState extends Equatable {
   final bool isInviting;
   final bool isRemovingCollaborator;
   final bool isSavingAppearance;
+  final bool isLoadingAssigned;
   final bool isLoadingPinned;
   final bool isLoadingReminderNotes;
   final bool isLoadingMoreNotes;
@@ -65,6 +69,7 @@ class NotesState extends Equatable {
   NotesState copyWith({
     NotesStatus? status,
     List<Note>? notes,
+    List<Note>? assignedNotes,
     List<Note>? pinnedNotes,
     List<Note>? reminderNotes,
     AggregateBoardAppearances? aggregateBoardAppearances,
@@ -77,6 +82,7 @@ class NotesState extends Equatable {
     bool? isInviting,
     bool? isRemovingCollaborator,
     bool? isSavingAppearance,
+    bool? isLoadingAssigned,
     bool? isLoadingPinned,
     bool? isLoadingReminderNotes,
     bool? isLoadingMoreNotes,
@@ -90,6 +96,7 @@ class NotesState extends Equatable {
   }) => NotesState(
     status: status ?? this.status,
     notes: notes ?? this.notes,
+    assignedNotes: assignedNotes ?? this.assignedNotes,
     pinnedNotes: pinnedNotes ?? this.pinnedNotes,
     reminderNotes: reminderNotes ?? this.reminderNotes,
     aggregateBoardAppearances:
@@ -104,6 +111,7 @@ class NotesState extends Equatable {
     isRemovingCollaborator:
         isRemovingCollaborator ?? this.isRemovingCollaborator,
     isSavingAppearance: isSavingAppearance ?? this.isSavingAppearance,
+    isLoadingAssigned: isLoadingAssigned ?? this.isLoadingAssigned,
     isLoadingPinned: isLoadingPinned ?? this.isLoadingPinned,
     isLoadingReminderNotes:
         isLoadingReminderNotes ?? this.isLoadingReminderNotes,
@@ -123,6 +131,7 @@ class NotesState extends Equatable {
   List<Object?> get props => [
     status,
     notes,
+    assignedNotes,
     pinnedNotes,
     reminderNotes,
     aggregateBoardAppearances,
@@ -135,6 +144,7 @@ class NotesState extends Equatable {
     isInviting,
     isRemovingCollaborator,
     isSavingAppearance,
+    isLoadingAssigned,
     isLoadingPinned,
     isLoadingReminderNotes,
     isLoadingMoreNotes,

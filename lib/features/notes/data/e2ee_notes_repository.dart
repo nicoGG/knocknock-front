@@ -19,6 +19,7 @@ class E2eeNotesRepository
         NotesCacheReader,
         GuestDataSyncTarget,
         AggregateBoardAppearancesRepository,
+        AssignedNotesRepository,
         OfflineSyncRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
@@ -339,9 +340,33 @@ class E2eeNotesRepository
   }
 
   @override
+  Future<List<Note>> fetchAssignedNotes() async {
+    final repository = _repository;
+    if (repository is! AssignedNotesRepository) return const [];
+    if (_rawLists.isEmpty) await fetchLists();
+    final rawNotes = await (repository as AssignedNotesRepository)
+        .fetchAssignedNotes();
+    return _decryptAggregateNotes(rawNotes);
+  }
+
+  @override
   Future<List<Note>> fetchPinnedNotes() async {
     if (_rawLists.isEmpty) await fetchLists();
     final rawNotes = await _repository.fetchPinnedNotes();
+    final clearNotes = <Note>[];
+    for (final raw in rawNotes) {
+      _noteBoards[raw.id] = raw.boardId;
+      final key = await _listKeyOrNull(raw.boardId);
+      if (key != null) {
+        final note = await _decryptNote(raw, key);
+        _searchIndex.upsert(note);
+        clearNotes.add(note);
+      }
+    }
+    return clearNotes;
+  }
+
+  Future<List<Note>> _decryptAggregateNotes(List<Note> rawNotes) async {
     final clearNotes = <Note>[];
     for (final raw in rawNotes) {
       _noteBoards[raw.id] = raw.boardId;

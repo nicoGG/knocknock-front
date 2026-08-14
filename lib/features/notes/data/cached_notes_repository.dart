@@ -23,6 +23,7 @@ class CachedNotesRepository
         GuestDataSyncTarget,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
+        AssignedNotesRepository,
         OfflineSyncRepository,
         NoteAttachmentsRepository,
         PaginatedNotesRepository {
@@ -374,6 +375,13 @@ class CachedNotesRepository
       _replaceKnownReminderNotes(cache, page.items);
     });
     return page;
+  }
+
+  @override
+  Future<List<Note>> fetchAssignedNotes() async {
+    final repository = _repository;
+    if (repository is! AssignedNotesRepository) return const [];
+    return (repository as AssignedNotesRepository).fetchAssignedNotes();
   }
 
   @override

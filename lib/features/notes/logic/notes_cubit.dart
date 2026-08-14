@@ -30,9 +30,11 @@ class NotesCubit extends Cubit<NotesState> {
         lists: const [],
         selectedListId: 'home',
         notes: const [],
+        assignedNotes: const [],
         pinnedNotes: const [],
         reminderNotes: const [],
         aggregateBoardAppearances: const AggregateBoardAppearances(),
+        isLoadingAssigned: false,
         isLoadingPinned: false,
         isLoadingReminderNotes: false,
         isLoadingMoreNotes: false,
@@ -98,6 +100,7 @@ class NotesCubit extends Cubit<NotesState> {
               aggregateBoardAppearances ?? state.aggregateBoardAppearances,
         ),
       );
+      await loadAssignedNotes();
     } catch (error) {
       if (generation != _loadGeneration || isClosed) return;
       if (didShowCache) {
@@ -184,6 +187,31 @@ class NotesCubit extends Cubit<NotesState> {
       emit(
         state.copyWith(
           status: NotesStatus.failure,
+          message: _friendlyMessage(error),
+        ),
+      );
+    }
+  }
+
+  Future<void> loadAssignedNotes() async {
+    if (state.isLoadingAssigned) return;
+    final repository = _repository;
+    if (repository is! AssignedNotesRepository) {
+      emit(state.copyWith(assignedNotes: const [], isLoadingAssigned: false));
+      return;
+    }
+    emit(state.copyWith(isLoadingAssigned: true));
+    try {
+      final assignedNotes =
+          await (repository as AssignedNotesRepository).fetchAssignedNotes()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      emit(
+        state.copyWith(assignedNotes: assignedNotes, isLoadingAssigned: false),
+      );
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isLoadingAssigned: false,
           message: _friendlyMessage(error),
         ),
       );
@@ -397,6 +425,9 @@ class NotesCubit extends Cubit<NotesState> {
           lists: remaining,
           selectedListId: nextList.id,
           notes: const [],
+          assignedNotes: state.assignedNotes
+              .where((note) => note.boardId != selected.id)
+              .toList(),
           pinnedNotes: state.pinnedNotes
               .where((note) => note.boardId != selected.id)
               .toList(),
@@ -1166,6 +1197,18 @@ class NotesCubit extends Cubit<NotesState> {
       notes.sort(compareNotes);
     }
 
+    final assignedNotes = [...state.assignedNotes];
+    final assignedIndex = assignedNotes.indexWhere(
+      (item) => item.id == note.id,
+    );
+    if (assignedIndex != -1) {
+      if (note.assigneeUid == assignedNotes[assignedIndex].assigneeUid) {
+        assignedNotes[assignedIndex] = note;
+      } else {
+        assignedNotes.removeAt(assignedIndex);
+      }
+    }
+
     final pinnedNotes = [...state.pinnedNotes];
     final pinnedIndex = pinnedNotes.indexWhere((item) => item.id == note.id);
     if (note.isPinned) {
@@ -1198,6 +1241,7 @@ class NotesCubit extends Cubit<NotesState> {
       state.copyWith(
         status: NotesStatus.ready,
         notes: notes,
+        assignedNotes: assignedNotes,
         pinnedNotes: pinnedNotes,
         reminderNotes: reminderNotes,
       ),
@@ -1208,6 +1252,9 @@ class NotesCubit extends Cubit<NotesState> {
     emit(
       state.copyWith(
         notes: state.notes.where((note) => note.id != id).toList(),
+        assignedNotes: state.assignedNotes
+            .where((note) => note.id != id)
+            .toList(),
         pinnedNotes: state.pinnedNotes.where((note) => note.id != id).toList(),
         reminderNotes: state.reminderNotes
             .where((note) => note.id != id)

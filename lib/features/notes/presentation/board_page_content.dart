@@ -11,7 +11,8 @@ extension _BoardPageContent on _BoardPageState {
     NoteCategory? selectedCategory,
     String? selectedAssigneeUid,
   ) {
-    if ((_scope == _BoardScope.pinned && state.isLoadingPinned) ||
+    if ((_scope == _BoardScope.assignedToMe && state.isLoadingAssigned) ||
+        (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
         (_scope == _BoardScope.withReminder && state.isLoadingReminderNotes) ||
         state.status == NotesStatus.loading ||
         state.status == NotesStatus.initial) {
@@ -68,7 +69,7 @@ extension _BoardPageContent on _BoardPageState {
           title: switch (_scope) {
             _BoardScope.assignedToMe =>
               isUnfiltered
-                  ? 'No tienes notas asignadas en esta lista'
+                  ? 'No tienes notas asignadas'
                   : 'No hay notas asignadas en este filtro',
             _BoardScope.pinned =>
               isUnfiltered
@@ -119,6 +120,7 @@ extension _BoardPageContent on _BoardPageState {
             completedSectionExpanded: _completedSectionExpanded,
             animateEntrances: _animateNoteEntrances,
             showOriginList:
+                _scope == _BoardScope.assignedToMe ||
                 _scope == _BoardScope.pinned ||
                 _scope == _BoardScope.withReminder,
             buildCard: _buildCard,
@@ -155,7 +157,7 @@ extension _BoardPageContent on _BoardPageState {
     if (notification.depth == 0 &&
         notification.metrics.axis == Axis.vertical &&
         notification.metrics.extentAfter < 480 &&
-        (_scope == _BoardScope.list || _scope == _BoardScope.assignedToMe)) {
+        _scope == _BoardScope.list) {
       final cubit = context.read<NotesCubit>();
       if (cubit.state.hasMoreNotes && !cubit.state.isLoadingMoreNotes) {
         unawaited(cubit.loadMoreNotes());
@@ -213,7 +215,9 @@ extension _BoardPageContent on _BoardPageState {
         note: displayedNote,
         layout: layout,
         originListName:
-            _scope == _BoardScope.pinned || _scope == _BoardScope.withReminder
+            _scope == _BoardScope.assignedToMe ||
+                _scope == _BoardScope.pinned ||
+                _scope == _BoardScope.withReminder
             ? noteList?.name ?? 'Lista desconocida'
             : null,
         assignee: assignee,
@@ -373,7 +377,7 @@ extension _BoardPageContent on _BoardPageState {
     return true;
   }
 
-  void _openAssignedToMe() {
+  Future<void> _openAssignedToMe() async {
     final authRepository = context.read<AuthRepository>();
     if (authRepository.currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -384,12 +388,16 @@ extension _BoardPageContent on _BoardPageState {
       _openProfile();
       return;
     }
+    widget.listProtectionController
+      ..setActiveList(null)
+      ..lockAll();
     _update(() {
       _scope = _BoardScope.assignedToMe;
       _categoryFilter = null;
       _assigneeFilterUid = null;
     });
     _scheduleActiveListProtectionSync(context.read<NotesCubit>().state);
+    await context.read<NotesCubit>().loadAssignedNotes();
   }
 
   Future<void> _openPinned() async {
@@ -417,7 +425,7 @@ extension _BoardPageContent on _BoardPageState {
   }
 
   void _reorderNotes(List<String> orderedIds) {
-    if (_scope == _BoardScope.pinned || _scope == _BoardScope.withReminder) {
+    if (_scope != _BoardScope.list) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Ordena estas notas dentro de su lista original.'),
@@ -919,8 +927,7 @@ extension _BoardPageContent on _BoardPageState {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final currentState = context.read<NotesCubit>().state;
-      final showsSelectedList =
-          _scope == _BoardScope.list || _scope == _BoardScope.assignedToMe;
+      final showsSelectedList = _scope == _BoardScope.list;
       final list = showsSelectedList ? currentState.selectedList : null;
       widget.listProtectionController.setActiveList(list?.id, name: list?.name);
     });

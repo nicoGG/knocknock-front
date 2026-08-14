@@ -4613,6 +4613,125 @@ void main() {
     );
   });
 
+  testWidgets('keeps the assigned total when another list is selected', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository(
+      withInvitedPeople: true,
+      withAssignedAcrossLists: true,
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'person-ana',
+            displayName: 'Ana Torres',
+            email: 'ana@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    var assignedShortcut = find.byKey(
+      const ValueKey('assigned-to-me-menu-button'),
+    );
+    expect(
+      find.descendant(of: assignedShortcut, matching: find.text('2')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Trabajo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Trabajo'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    assignedShortcut = find.byKey(const ValueKey('assigned-to-me-menu-button'));
+    expect(
+      find.descendant(of: assignedShortcut, matching: find.text('2')),
+      findsOneWidget,
+    );
+
+    await tester.tap(assignedShortcut);
+    await tester.pumpAndSettle();
+    expect(find.text('Comprar café'), findsOneWidget);
+    expect(find.text('Preparar presentación'), findsOneWidget);
+    expect(find.text('Mis notas'), findsOneWidget);
+    expect(find.text('Trabajo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scope counters exclude completed notes', (tester) async {
+    final repository = _FakeNotesRepository(
+      withInvitedPeople: true,
+      withAssignedAcrossLists: true,
+      withPinnedAcrossLists: true,
+      withRemindersAcrossLists: true,
+      initiallyCompleted: true,
+      initialReminderAt: DateTime(2026, 8, 12, 9),
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(
+          user: const AppUser(
+            id: 'person-ana',
+            displayName: 'Ana Torres',
+            email: 'ana@example.com',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    var assignedShortcut = find.byKey(
+      const ValueKey('assigned-to-me-menu-button'),
+    );
+    expect(
+      find.descendant(of: assignedShortcut, matching: find.text('1')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('pinned-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    var pinnedShortcut = find.byKey(const ValueKey('pinned-menu-button'));
+    expect(
+      find.descendant(of: pinnedShortcut, matching: find.text('1')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('with-reminder-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+    await tester.pumpAndSettle();
+    final reminderShortcut = find.byKey(
+      const ValueKey('with-reminder-menu-button'),
+    );
+    expect(
+      find.descendant(of: reminderShortcut, matching: find.text('1')),
+      findsOneWidget,
+    );
+    assignedShortcut = find.byKey(const ValueKey('assigned-to-me-menu-button'));
+    pinnedShortcut = find.byKey(const ValueKey('pinned-menu-button'));
+    expect(
+      find.descendant(of: assignedShortcut, matching: find.text('1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: pinnedShortcut, matching: find.text('1')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows pinned notes from every list with their origin', (
     tester,
   ) async {
@@ -4808,10 +4927,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Comprar café'), findsNothing);
-    expect(
-      find.text('No tienes notas asignadas en esta lista'),
-      findsOneWidget,
-    );
+    expect(find.text('No tienes notas asignadas'), findsOneWidget);
   });
 
   testWidgets('keeps appearance controls in the profile instead of settings', (
@@ -5649,7 +5765,8 @@ class _FakeNotesRepository
         NotesRepository,
         NotesSearchRepository,
         LocalNotesDataCleaner,
-        AggregateBoardAppearancesRepository {
+        AggregateBoardAppearancesRepository,
+        AssignedNotesRepository {
   _FakeNotesRepository({
     this.isConnected = false,
     this.isEncrypted = false,
@@ -5661,6 +5778,7 @@ class _FakeNotesRepository
     this.initialAssigneeUid,
     this.withPinnedAcrossLists = false,
     this.withRemindersAcrossLists = false,
+    this.withAssignedAcrossLists = false,
     this.initialContent = 'Para la reunión de mañana',
     String? initialContentDelta,
     NoteCategory category = NoteCategory.general,
@@ -5728,7 +5846,9 @@ class _FakeNotesRepository
                : const ListEncryption(),
            isEncryptionKeyPending: isEncryptionKeyPending,
          ),
-         if (withPinnedAcrossLists || withRemindersAcrossLists)
+         if (withPinnedAcrossLists ||
+             withRemindersAcrossLists ||
+             withAssignedAcrossLists)
            NoteList(
              id: 'work',
              name: 'Trabajo',
@@ -5747,6 +5867,7 @@ class _FakeNotesRepository
   final String? initialAssigneeUid;
   final bool withPinnedAcrossLists;
   final bool withRemindersAcrossLists;
+  final bool withAssignedAcrossLists;
   final String initialContent;
   final _realtimeController = StreamController<NotesRealtimeEvent>.broadcast();
 
@@ -5944,6 +6065,29 @@ class _FakeNotesRepository
         createdAt: DateTime(2026),
         updatedAt: DateTime(2026, 1, 2),
       ),
+    ];
+  }
+
+  @override
+  Future<List<Note>> fetchAssignedNotes() async {
+    if (didClearLocalData) return const [];
+    return [
+      if (_note.assigneeUid != null) _note,
+      if (withAssignedAcrossLists)
+        Note(
+          id: 'note-assigned-work',
+          boardId: 'work',
+          title: 'Preparar presentación',
+          content: 'Revisar los últimos detalles',
+          color: NoteColor.blue,
+          authorName: 'Nico',
+          assigneeUid: 'person-ana',
+          isCompleted: false,
+          positionX: 0,
+          positionY: 0,
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026, 1, 2),
+        ),
     ];
   }
 

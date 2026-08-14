@@ -234,10 +234,13 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         final rawScopedNotes = switch (_scope) {
           _BoardScope.pinned => state.pinnedNotes,
           _BoardScope.withReminder => state.reminderNotes,
-          _BoardScope.list || _BoardScope.assignedToMe => state.notes,
+          _BoardScope.assignedToMe => state.assignedNotes,
+          _BoardScope.list => state.notes,
         };
         final scopedNotes =
-            _scope == _BoardScope.pinned || _scope == _BoardScope.withReminder
+            _scope == _BoardScope.assignedToMe ||
+                _scope == _BoardScope.pinned ||
+                _scope == _BoardScope.withReminder
             ? rawScopedNotes
                   .where(
                     (note) =>
@@ -278,14 +281,15 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                   .toList();
         final isPinnedScope = _scope == _BoardScope.pinned;
         final isWithReminderScope = _scope == _BoardScope.withReminder;
-        final isAggregateScope = isPinnedScope || isWithReminderScope;
+        final isAssignedScope = _scope == _BoardScope.assignedToMe;
+        final isAggregateScope =
+            isAssignedScope || isPinnedScope || isWithReminderScope;
         final isListScope = _scope == _BoardScope.list;
         final selectedList = state.selectedList;
         final selectedListKeyPending =
             isListScope && (selectedList?.isEncryptionKeyPending ?? false);
         final selectedListRequiresUnlock =
-            (_scope == _BoardScope.list ||
-                _scope == _BoardScope.assignedToMe) &&
+            _scope == _BoardScope.list &&
             selectedList != null &&
             !widget.listProtectionController.canAccess(selectedList.id);
         if (selectedListRequiresUnlock) {
@@ -326,9 +330,15 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             favoriteListIds: _listShortcutsController.favorites,
             recentListIds: _listShortcutsController.recents,
             onToggleFavorite: _listShortcutsController.toggleFavorite,
-            assignedCount: _assignedToCurrentUser(state.notes).length,
-            pinnedCount: state.pinnedNotes.length,
-            reminderCount: state.reminderNotes.length,
+            assignedCount: _assignedToCurrentUser(
+              state.assignedNotes,
+            ).where((note) => !note.isCompleted).length,
+            pinnedCount: state.pinnedNotes
+                .where((note) => !note.isCompleted)
+                .length,
+            reminderCount: state.reminderNotes
+                .where((note) => !note.isCompleted)
+                .length,
           ),
           floatingActionButton:
               isCompact &&
@@ -361,6 +371,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                 )
               : ListBoardBackground(
                   useThemeBackground:
+                      (isAssignedScope && state.isLoadingAssigned) ||
                       (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
                       (_scope == _BoardScope.withReminder &&
                           state.isLoadingReminderNotes) ||
@@ -595,9 +606,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                               ),
                             ),
                           ),
-                          if (state.isLoadingMoreNotes &&
-                              (_scope == _BoardScope.list ||
-                                  _scope == _BoardScope.assignedToMe))
+                          if (state.isLoadingMoreNotes && isListScope)
                             Positioned(
                               left: 24,
                               right: 24,

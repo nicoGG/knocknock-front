@@ -13,6 +13,7 @@ class AuthAwareNotesRepository
         LocalNotesDataCleaner,
         NotesCacheReader,
         AggregateBoardAppearancesRepository,
+        AssignedNotesRepository,
         OfflineSyncRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
@@ -154,6 +155,14 @@ class AuthAwareNotesRepository
       items: await repository.fetchNotes(boardId),
       nextCursor: null,
     );
+  });
+
+  @override
+  Future<List<Note>> fetchAssignedNotes() => _whenReady((repository) {
+    if (repository is! AssignedNotesRepository) {
+      return Future.value(const <Note>[]);
+    }
+    return (repository as AssignedNotesRepository).fetchAssignedNotes();
   });
 
   @override
