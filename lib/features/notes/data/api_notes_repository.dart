@@ -493,6 +493,8 @@ class ApiNotesRepository
                 'positionY': note.positionY,
                 if (note.reminderAt != null)
                   'reminderAt': note.reminderAt!.toIso8601String(),
+                if (note.reminderRecurrence != null)
+                  'reminderRecurrence': note.reminderRecurrence!.toJson(),
                 'reactions': note.reactions
                     .where(
                       (reaction) =>

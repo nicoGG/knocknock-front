@@ -442,6 +442,7 @@ class CachedNotesRepository
         positionX: synchronizedDraft.positionX,
         positionY: synchronizedDraft.positionY,
         reminderAt: synchronizedDraft.reminderAt,
+        reminderRecurrence: synchronizedDraft.reminderRecurrence,
         createdAt: now,
         updatedAt: now,
       );

@@ -158,9 +158,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(
-      find.byKey(const ValueKey('save-inline-checklist-button')),
-    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
     expect(savedDraft?.checklist.map((item) => item.text), ['Leche', 'Avena']);
@@ -170,6 +168,108 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'add another subtask appends and focuses a row with a finish check',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      NoteDraft? savedDraft;
+      final note = Note(
+        id: 'travel-note',
+        boardId: 'home',
+        title: 'Pasajes',
+        content: 'Comprar pasajes',
+        color: NoteColor.orange,
+        authorName: 'Nico',
+        isCompleted: false,
+        positionX: 0,
+        positionY: 0,
+        checklist: const [
+          NoteChecklistItem(id: 'easter-island', text: 'Isla de Pascua'),
+          NoteChecklistItem(id: 'rio', text: 'Río de Janeiro'),
+        ],
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 390,
+                height: 720,
+                child: PostItCard(
+                  note: note,
+                  layout: PostItCardLayout.large,
+                  onInlineSave: (draft) async {
+                    savedDraft = draft;
+                    return true;
+                  },
+                  onToggle: () {},
+                  onPin: () {},
+                  onOpen: () {},
+                  onChecklistToggle: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('add-inline-subtask-button')));
+      await tester.pumpAndSettle();
+
+      final editor = find.byKey(const ValueKey('quick-edit-checklist-editor'));
+      final fields = find.descendant(
+        of: editor,
+        matching: find.byType(TextFormField),
+      );
+      expect(fields, findsNWidgets(3));
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: fields.last,
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(
+        find.byKey(const ValueKey('finish-inline-checklist-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('finish-inline-checklist-button')),
+          matching: find.byIcon(Icons.check_rounded),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(fields.last, 'Reservar hotel');
+      await tester.tap(
+        find.byKey(const ValueKey('finish-inline-checklist-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(savedDraft?.checklist.map((item) => item.text), [
+        'Isla de Pascua',
+        'Río de Janeiro',
+        'Reservar hotel',
+      ]);
+      expect(editor, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('a subtask can use a renamed link', (tester) async {
     tester.view.physicalSize = const Size(430, 900);
@@ -246,9 +346,7 @@ void main() {
     await tester.pump();
     await tester.enterText(taskField, 'Huevos de campo');
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('save-inline-checklist-button')),
-    );
+    FocusManager.instance.primaryFocus?.unfocus();
     await tester.pumpAndSettle();
 
     final savedLink = noteChecklistLinkFromText(
@@ -260,7 +358,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('description X clears locally and persists only after save', (
+  testWidgets('description saves automatically when it loses focus', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(430, 900);
@@ -331,30 +429,27 @@ void main() {
       note.content,
     );
 
-    final delete = find.byKey(
-      const ValueKey('delete-inline-description-button'),
+    final editor = tester.widget<QuillEditor>(editorFinder);
+    const editedContent = 'Lavar la ropita con cuidado';
+    editor.controller.replaceText(
+      0,
+      editor.controller.document.length - 1,
+      editedContent,
+      const TextSelection.collapsed(offset: editedContent.length),
     );
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
+    await tester.pump();
+    FocusManager.instance.primaryFocus?.unfocus();
     await tester.pumpAndSettle();
 
-    expect(savedDraft, isNull);
+    expect(savedDraft?.content, editedContent);
     expect(
-      tester
-          .widget<QuillEditor>(editorFinder)
-          .controller
-          .document
-          .toPlainText()
-          .trim(),
-      isEmpty,
+      find.byKey(const ValueKey('save-inline-description-button')),
+      findsNothing,
     );
-
-    final save = find.byKey(const ValueKey('save-inline-description-button'));
-    await tester.ensureVisible(save);
-    await tester.tap(save);
-    await tester.pumpAndSettle();
-
-    expect(savedDraft?.content, isEmpty);
+    expect(
+      find.byKey(const ValueKey('cancel-inline-description-button')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }

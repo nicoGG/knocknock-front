@@ -612,7 +612,11 @@ class _NoteLinkPreviewCardState extends State<NoteLinkPreviewCard> {
             }
           },
           child: Container(
-            height: 96,
+            // The title can occupy two lines alongside a description and the
+            // site name. This needs slightly more than the old 96px height
+            // at narrow widths, while keeping a finite height for the
+            // cross-axis-stretching row.
+            height: 104,
             decoration: BoxDecoration(
               border: Border.all(color: foreground.withValues(alpha: 0.12)),
               borderRadius: BorderRadius.circular(16),

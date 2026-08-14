@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note_fab.dart';
@@ -6,6 +7,8 @@ void main() {
   testWidgets('progressively compacts the new-note button while scrolling', (
     tester,
   ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final progress = ValueNotifier<double>(0);
     var tapCount = 0;
     addTearDown(progress.dispose);
@@ -38,7 +41,9 @@ void main() {
     expect(compactWidth, closeTo(56, 0.1));
     expect(tester.getSize(button).height, closeTo(56, 0.1));
     expect(find.byIcon(Icons.add_rounded), findsOne);
-    expect(find.byKey(const ValueKey('new-note-fab-glass-blur')), findsOne);
+    final androidGlass = find.byKey(const ValueKey('new-note-fab-glass-blur'));
+    expect(androidGlass, findsOne);
+    expect(tester.widget(androidGlass), isNot(isA<BackdropFilter>()));
 
     final surface = tester.widget<Ink>(
       find.byKey(const ValueKey('new-note-fab-glass-surface')),
@@ -50,11 +55,14 @@ void main() {
 
     await tester.tap(button);
     expect(tapCount, 1);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('desktop new-note button keeps the theme tint in its glass', (
     tester,
   ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     const themeColor = Color(0xFF7A5AF8);
     var tapCount = 0;
 
@@ -73,7 +81,11 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const ValueKey('new-note-button-glass-blur')), findsOne);
+    final desktopGlass = find.byKey(
+      const ValueKey('new-note-button-glass-blur'),
+    );
+    expect(desktopGlass, findsOne);
+    expect(tester.widget(desktopGlass), isA<BackdropFilter>());
     final surface = tester.widget<Ink>(
       find.byKey(const ValueKey('new-note-button-glass-surface')),
     );
@@ -87,5 +99,6 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('new-note-button')));
     expect(tapCount, 1);
+    debugDefaultTargetPlatformOverride = null;
   });
 }

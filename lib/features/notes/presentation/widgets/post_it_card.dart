@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as image_tools;
 import 'package:intl/intl.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
@@ -14,6 +18,7 @@ import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart
 import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
+import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:uuid/uuid.dart';
 
 enum PostItCardLayout { grid, compact, large }
@@ -40,6 +45,183 @@ Color gridNoteLinkColor(Color foregroundColor) =>
 double gridNotePhotoHeight(double cardWidth) =>
     (cardWidth * 0.72).clamp(112.0, 180.0).toDouble();
 
+int _physicalImageCacheSize(
+  BuildContext context,
+  double logicalSize, {
+  int maximum = 1024,
+}) => (logicalSize * MediaQuery.devicePixelRatioOf(context)).ceil().clamp(
+  1,
+  maximum,
+);
+
+int _noteBackgroundCacheWidth(BuildContext context, PostItCardLayout layout) {
+  final viewportWidth = MediaQuery.sizeOf(context).width;
+  final logicalWidth = switch (layout) {
+    PostItCardLayout.grid =>
+      viewportWidth < 720
+          ? ((viewportWidth - 46) / 2).clamp(120.0, 360.0)
+          : 320.0,
+    PostItCardLayout.compact || PostItCardLayout.large => viewportWidth,
+  };
+  return _physicalImageCacheSize(context, logicalWidth);
+}
+
+ImageProvider<Object> _avatarImageProvider(
+  BuildContext context,
+  String url,
+  double logicalDiameter,
+) => ResizeImage(
+  NetworkImage(url),
+  width: _physicalImageCacheSize(context, logicalDiameter, maximum: 256),
+);
+
+class _MosaicThumbnailCacheKey {
+  const _MosaicThumbnailCacheKey({
+    required this.attachmentId,
+    required this.dataLength,
+    required this.cacheWidth,
+    required this.cacheHeight,
+  });
+
+  final String attachmentId;
+  final int dataLength;
+  final int cacheWidth;
+  final int cacheHeight;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _MosaicThumbnailCacheKey &&
+      attachmentId == other.attachmentId &&
+      dataLength == other.dataLength &&
+      cacheWidth == other.cacheWidth &&
+      cacheHeight == other.cacheHeight;
+
+  @override
+  int get hashCode =>
+      Object.hash(attachmentId, dataLength, cacheWidth, cacheHeight);
+}
+
+class _MosaicThumbnailCacheEntry {
+  _MosaicThumbnailCacheEntry({
+    required this.provider,
+    required this.weightBytes,
+  });
+
+  final Future<ImageProvider<Object>> provider;
+  int weightBytes;
+}
+
+abstract final class _MosaicThumbnailCache {
+  static const _maximumEntries = 48;
+  static const _maximumWeightBytes = 32 * 1024 * 1024;
+  static final Map<_MosaicThumbnailCacheKey, _MosaicThumbnailCacheEntry>
+  _entries = {};
+  static int _totalWeightBytes = 0;
+
+  static Future<ImageProvider<Object>> resolve({
+    required String attachmentId,
+    required String dataBase64,
+    required int cacheWidth,
+    required int cacheHeight,
+  }) {
+    final key = _MosaicThumbnailCacheKey(
+      attachmentId: attachmentId,
+      dataLength: dataBase64.length,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
+    final cached = _entries.remove(key);
+    if (cached != null) {
+      _entries[key] = cached;
+      return cached.provider;
+    }
+
+    final bytes = compute<Map<String, Object>, Uint8List>(
+      _createMosaicThumbnailBytes,
+      {'dataBase64': dataBase64, 'width': cacheWidth, 'height': cacheHeight},
+    );
+    final provider = bytes.then<ImageProvider<Object>>(
+      (thumbnailBytes) =>
+          ResizeImage(MemoryImage(thumbnailBytes), width: cacheWidth),
+    );
+    final estimatedBytes = (dataBase64.length * 0.75).ceil();
+    final entry = _MosaicThumbnailCacheEntry(
+      provider: provider,
+      weightBytes: estimatedBytes,
+    );
+    _entries[key] = entry;
+    _totalWeightBytes += estimatedBytes;
+    _trim();
+    unawaited(
+      bytes.then<void>(
+        (thumbnailBytes) {
+          if (!identical(_entries[key], entry)) return;
+          _totalWeightBytes -= entry.weightBytes;
+          entry.weightBytes = thumbnailBytes.length;
+          _totalWeightBytes += entry.weightBytes;
+          _trim();
+        },
+        onError: (Object _, StackTrace _) {
+          if (!identical(_entries[key], entry)) return;
+          _entries.remove(key);
+          _totalWeightBytes -= entry.weightBytes;
+        },
+      ),
+    );
+    return provider;
+  }
+
+  static void _trim() {
+    while (_entries.length > _maximumEntries ||
+        (_totalWeightBytes > _maximumWeightBytes && _entries.length > 1)) {
+      final oldestKey = _entries.keys.first;
+      final removed = _entries.remove(oldestKey);
+      if (removed != null) _totalWeightBytes -= removed.weightBytes;
+    }
+  }
+}
+
+Uint8List _createMosaicThumbnailBytes(Map<String, Object> request) {
+  final originalBytes = base64Decode(request['dataBase64']! as String);
+  final targetWidth = request['width']! as int;
+  final targetHeight = request['height']! as int;
+  final decoded = image_tools.decodeImage(originalBytes);
+  if (decoded == null) return originalBytes;
+
+  final source = image_tools.bakeOrientation(decoded);
+  final targetAspectRatio = targetWidth / targetHeight;
+  final sourceAspectRatio = source.width / source.height;
+  var cropX = 0;
+  var cropY = 0;
+  var cropWidth = source.width;
+  var cropHeight = source.height;
+  if (sourceAspectRatio > targetAspectRatio) {
+    cropWidth = math.max(1, (source.height * targetAspectRatio).round());
+    cropX = math.max(0, (source.width - cropWidth) ~/ 2);
+  } else if (sourceAspectRatio < targetAspectRatio) {
+    cropHeight = math.max(1, (source.width / targetAspectRatio).round());
+    cropY = math.max(0, (source.height - cropHeight) ~/ 2);
+  }
+  final cropped = image_tools.copyCrop(
+    source,
+    x: cropX,
+    y: cropY,
+    width: cropWidth,
+    height: cropHeight,
+  );
+  final resized = image_tools.copyResize(
+    cropped,
+    width: targetWidth,
+    height: targetHeight,
+    interpolation: image_tools.Interpolation.average,
+  );
+  return Uint8List.fromList(
+    resized.hasAlpha
+        ? image_tools.encodePng(resized, level: 6)
+        : image_tools.encodeJpg(resized, quality: 84),
+  );
+}
+
 class PostItCard extends StatelessWidget {
   const PostItCard({
     required this.note,
@@ -63,6 +245,7 @@ class PostItCard extends StatelessWidget {
     this.completedChecklistExpanded,
     this.onCompletedChecklistExpansionChanged,
     this.onAssigneeTap,
+    this.onAttachmentTap,
     this.inlineEditTarget,
     this.onInlineSave,
     this.attachmentLoader,
@@ -90,6 +273,7 @@ class PostItCard extends StatelessWidget {
   final bool? completedChecklistExpanded;
   final ValueChanged<bool>? onCompletedChecklistExpansionChanged;
   final VoidCallback? onAssigneeTap;
+  final VoidCallback? onAttachmentTap;
   final ValueNotifier<PostItInlineEditTarget>? inlineEditTarget;
   final PostItInlineSave? onInlineSave;
   final NoteAttachmentLoader? attachmentLoader;
@@ -101,6 +285,12 @@ class PostItCard extends StatelessWidget {
         : NoteCategoryStyle.baseColor(note.category);
     final foregroundColor = NoteCategoryStyle.foregroundColor(note.category);
     final backgroundAsset = NoteCategoryStyle.assetPath(note.category);
+    final backgroundImage = backgroundAsset == null
+        ? null
+        : ResizeImage(
+            AssetImage(backgroundAsset),
+            width: _noteBackgroundCacheWidth(context, layout),
+          );
     final cardColor = note.isCompleted
         ? Color.alphaBlend(AppTheme.ink.withValues(alpha: 0.08), color)
         : color;
@@ -157,6 +347,7 @@ class PostItCard extends StatelessWidget {
                 isSavingReaction: isSavingReaction,
                 onToggleReaction: onToggleReaction,
                 onAssigneeTap: onAssigneeTap,
+                onAttachmentTap: onAttachmentTap,
                 attachmentLoader: attachmentLoader,
                 editTarget: inlineEditTarget,
                 onSave: onInlineSave!,
@@ -200,19 +391,6 @@ class PostItCard extends StatelessWidget {
                       MaterialRectCenterArcTween(begin: begin, end: end),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: cardColor,
-                      image: backgroundAsset == null
-                          ? null
-                          : DecorationImage(
-                              image: AssetImage(backgroundAsset),
-                              fit: BoxFit.cover,
-                              colorFilter: ColorFilter.mode(
-                                Colors.black.withValues(
-                                  alpha: note.isCompleted ? 0.32 : 0.16,
-                                ),
-                                BlendMode.darken,
-                              ),
-                            ),
                       borderRadius: BorderRadius.circular(borderRadius),
                       boxShadow: [
                         BoxShadow(
@@ -222,94 +400,85 @@ class PostItCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.only(top: pinClearance),
-            child: Material(
-              key: ValueKey('note-surface-${note.id}'),
-              color: cardColor,
-              borderRadius: BorderRadius.circular(borderRadius),
-              elevation: 0,
-              child: InkWell(
-                key: ValueKey('note-${note.id}'),
-                enableFeedback: false,
-                onTap: onInlineSave == null ? onOpen : null,
-                borderRadius: BorderRadius.circular(borderRadius),
-                child: Ink(
-                  padding: switch (layout) {
-                    PostItCardLayout.compact => EdgeInsets.fromLTRB(
-                      compactReadOnly ? 14 : 6,
-                      4,
-                      showPin ? 38 : 12,
-                      4,
-                    ),
-                    PostItCardLayout.grid =>
-                      gridPhotos.isEmpty
-                          ? const EdgeInsets.fromLTRB(20, 14, 12, 12)
-                          : EdgeInsets.zero,
-                    PostItCardLayout.large => const EdgeInsets.fromLTRB(
-                      20,
-                      16,
-                      12,
-                      14,
-                    ),
-                  },
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    image: backgroundAsset == null
-                        ? null
-                        : DecorationImage(
-                            image: AssetImage(backgroundAsset),
-                            fit: BoxFit.cover,
-                            colorFilter: ColorFilter.mode(
-                              Colors.black.withValues(
-                                alpha: note.isCompleted ? 0.32 : 0.16,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(borderRadius),
+                      child: Material(
+                        key: ValueKey('note-surface-${note.id}'),
+                        color: cardColor,
+                        borderRadius: BorderRadius.circular(borderRadius),
+                        clipBehavior: Clip.none,
+                        elevation: 0,
+                        child: InkWell(
+                          key: ValueKey('note-${note.id}'),
+                          enableFeedback: false,
+                          onTap: onInlineSave == null ? onOpen : null,
+                          borderRadius: BorderRadius.circular(borderRadius),
+                          child: Ink(
+                            padding: switch (layout) {
+                              PostItCardLayout.compact => EdgeInsets.fromLTRB(
+                                compactReadOnly ? 14 : 6,
+                                4,
+                                showPin ? 38 : 12,
+                                4,
                               ),
-                              BlendMode.darken,
+                              PostItCardLayout.grid =>
+                                gridPhotos.isEmpty
+                                    ? const EdgeInsets.fromLTRB(20, 14, 12, 12)
+                                    : EdgeInsets.zero,
+                              PostItCardLayout.large =>
+                                const EdgeInsets.fromLTRB(20, 16, 12, 14),
+                            },
+                            decoration: BoxDecoration(
+                              color: cardColor,
+                              image: backgroundImage == null
+                                  ? null
+                                  : DecorationImage(
+                                      image: backgroundImage,
+                                      fit: BoxFit.cover,
+                                      filterQuality: FilterQuality.low,
+                                      colorFilter: ColorFilter.mode(
+                                        Colors.black.withValues(
+                                          alpha: note.isCompleted ? 0.32 : 0.16,
+                                        ),
+                                        BlendMode.darken,
+                                      ),
+                                    ),
+                              borderRadius: BorderRadius.circular(borderRadius),
+                            ),
+                            child: _SettlingNoteOpacity(
+                              completed: note.isCompleted,
+                              duration: completionDuration,
+                              child: gridPhotos.isEmpty
+                                  ? body
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        _MosaicPhotoHeader(
+                                          noteId: note.id,
+                                          attachments: gridPhotos,
+                                          loader: attachmentLoader,
+                                          borderRadius: borderRadius,
+                                          foregroundColor: foregroundColor,
+                                        ),
+                                        Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              20,
+                                              12,
+                                              12,
+                                              12,
+                                            ),
+                                            child: body,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                             ),
                           ),
-                    borderRadius: BorderRadius.circular(borderRadius),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.ink.withValues(alpha: 0.1),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
+                        ),
                       ),
-                    ],
-                  ),
-                  child: AnimatedOpacity(
-                    opacity: note.isCompleted ? 0.82 : 1,
-                    duration: completionDuration,
-                    curve: Curves.easeOutCubic,
-                    child: gridPhotos.isEmpty
-                        ? body
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _MosaicPhotoHeader(
-                                noteId: note.id,
-                                attachments: gridPhotos,
-                                loader: attachmentLoader,
-                                borderRadius: borderRadius,
-                                foregroundColor: foregroundColor,
-                              ),
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    20,
-                                    12,
-                                    12,
-                                    12,
-                                  ),
-                                  child: body,
-                                ),
-                              ),
-                            ],
-                          ),
+                    ),
                   ),
                 ),
               ),
@@ -358,8 +527,13 @@ class PostItCard extends StatelessWidget {
             ),
           if (showPin)
             Positioned(
-              top: layout == PostItCardLayout.grid ? -5 : 0,
-              right: 0,
+              top: switch (layout) {
+                PostItCardLayout.grid => -5,
+                PostItCardLayout.large => 0,
+                PostItCardLayout.compact => 0,
+              },
+              left: layout == PostItCardLayout.large ? 10 : null,
+              right: layout == PostItCardLayout.large ? null : 0,
               child: _FloatingPinButton(
                 note: note,
                 color: cardColor,
@@ -401,6 +575,67 @@ class _FloatingReactionTransition extends StatelessWidget {
           child: child,
         ),
       ),
+    );
+  }
+}
+
+class _SettlingNoteOpacity extends StatefulWidget {
+  const _SettlingNoteOpacity({
+    required this.completed,
+    required this.duration,
+    required this.child,
+  });
+
+  final bool completed;
+  final Duration duration;
+  final Widget child;
+
+  @override
+  State<_SettlingNoteOpacity> createState() => _SettlingNoteOpacityState();
+}
+
+class _SettlingNoteOpacityState extends State<_SettlingNoteOpacity> {
+  late double _currentOpacity;
+  late double _targetOpacity;
+  bool _isAnimating = false;
+
+  double get _opacity => widget.completed ? 0.82 : 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentOpacity = _targetOpacity = _opacity;
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettlingNoteOpacity oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextOpacity = _opacity;
+    if (nextOpacity == _targetOpacity) return;
+    _targetOpacity = nextOpacity;
+    _isAnimating = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isAnimating) {
+      return _targetOpacity >= 1
+          ? widget.child
+          : Opacity(opacity: _targetOpacity, child: widget.child);
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: _currentOpacity, end: _targetOpacity),
+      duration: widget.duration,
+      curve: Curves.easeOutCubic,
+      onEnd: () {
+        _currentOpacity = _targetOpacity;
+        if (mounted) setState(() => _isAnimating = false);
+      },
+      child: widget.child,
+      builder: (context, value, child) {
+        _currentOpacity = value;
+        return Opacity(opacity: value, child: child);
+      },
     );
   }
 }
@@ -613,14 +848,27 @@ class _NoteBody extends StatelessWidget {
               ),
             ),
           ),
-        Checkbox(
-          value: note.isCompleted,
-          onChanged: (_) => onToggle(),
-          activeColor: foregroundColor,
-          checkColor: note.category == NoteCategory.general
-              ? Colors.white
-              : Colors.black87,
-          side: BorderSide(color: foregroundColor, width: 1.5),
+        Padding(
+          padding: EdgeInsets.only(right: isGrid ? 0 : 6),
+          child: note.isRecurring
+              ? Tooltip(
+                  message: 'Recordatorio recurrente',
+                  child: Icon(
+                    Icons.repeat_rounded,
+                    key: ValueKey('recurring-note-${note.id}'),
+                    color: foregroundColor,
+                    size: 24,
+                  ),
+                )
+              : Checkbox(
+                  value: note.isCompleted,
+                  onChanged: (_) => onToggle(),
+                  activeColor: foregroundColor,
+                  checkColor: note.category == NoteCategory.general
+                      ? Colors.white
+                      : Colors.black87,
+                  side: BorderSide(color: foregroundColor, width: 1.5),
+                ),
         ),
       ],
     );
@@ -745,14 +993,22 @@ class _NoteBody extends StatelessWidget {
             key: isGrid ? ValueKey('grid-reminder-${note.id}') : null,
             children: [
               Icon(
-                Icons.notifications_none_rounded,
+                note.isRecurring
+                    ? Icons.repeat_rounded
+                    : Icons.notifications_none_rounded,
                 size: 17,
                 color: foregroundColor.withValues(alpha: 0.8),
               ),
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
-                  DateFormat('dd MMM · HH:mm', 'es').format(reminder),
+                  note.reminderRecurrence == null
+                      ? DateFormat('dd MMM · HH:mm', 'es').format(reminder)
+                      : reminderRecurrenceLabel(
+                          note.reminderRecurrence!,
+                          reminder,
+                          includeTime: true,
+                        ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -924,6 +1180,14 @@ class _MosaicPhotoHeaderState extends State<_MosaicPhotoHeader> {
                     attachment: _attachment,
                     future: _loadedAttachment,
                     foregroundColor: widget.foregroundColor,
+                    cacheWidth: _physicalImageCacheSize(
+                      context,
+                      constraints.maxWidth,
+                    ),
+                    cacheHeight: _physicalImageCacheSize(
+                      context,
+                      gridNotePhotoHeight(constraints.maxWidth),
+                    ),
                   ),
                 ),
                 if (widget.attachments.length > 1)
@@ -959,55 +1223,110 @@ class _MosaicPhotoHeaderState extends State<_MosaicPhotoHeader> {
   );
 }
 
-class _MosaicPhotoContent extends StatelessWidget {
+class _MosaicPhotoContent extends StatefulWidget {
   const _MosaicPhotoContent({
     required this.attachment,
     required this.future,
     required this.foregroundColor,
+    required this.cacheWidth,
+    required this.cacheHeight,
   });
 
   final NoteAttachment attachment;
   final Future<NoteAttachment>? future;
   final Color foregroundColor;
+  final int cacheWidth;
+  final int cacheHeight;
+
+  @override
+  State<_MosaicPhotoContent> createState() => _MosaicPhotoContentState();
+}
+
+class _MosaicPhotoContentState extends State<_MosaicPhotoContent> {
+  Future<ImageProvider<Object>?>? _provider;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoading();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MosaicPhotoContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.future != widget.future ||
+        oldWidget.attachment.id != widget.attachment.id ||
+        oldWidget.cacheWidth != widget.cacheWidth ||
+        oldWidget.cacheHeight != widget.cacheHeight) {
+      _startLoading();
+    }
+  }
+
+  void _startLoading() {
+    final attachment = widget.future;
+    _provider = attachment == null ? null : _resolveProvider(attachment);
+  }
+
+  Future<ImageProvider<Object>?> _resolveProvider(
+    Future<NoteAttachment> attachment,
+  ) async {
+    final loaded = await attachment;
+    final dataBase64 = loaded.dataBase64;
+    if (dataBase64 == null) return null;
+    return _MosaicThumbnailCache.resolve(
+      attachmentId: loaded.id,
+      dataBase64: dataBase64,
+      cacheWidth: widget.cacheWidth,
+      cacheHeight: widget.cacheHeight,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final loading = future;
+    final loading = _provider;
     if (loading == null) {
-      return _PhotoUnavailable(foregroundColor: foregroundColor);
+      return _PhotoUnavailable(foregroundColor: widget.foregroundColor);
     }
-    return FutureBuilder<NoteAttachment>(
+    return FutureBuilder<ImageProvider<Object>?>(
       future: loading,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return Center(
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: foregroundColor,
-            ),
+          return _MosaicPhotoPlaceholder(
+            foregroundColor: widget.foregroundColor,
           );
         }
-        final loaded = snapshot.data;
-        if (loaded == null || loaded.dataBase64 == null) {
-          return _PhotoUnavailable(foregroundColor: foregroundColor);
+        final provider = snapshot.data;
+        if (provider == null || snapshot.hasError) {
+          return _PhotoUnavailable(foregroundColor: widget.foregroundColor);
         }
-        try {
-          return Image.memory(
-            base64Decode(loaded.dataBase64!),
-            key: ValueKey('mosaic-photo-image-${attachment.id}'),
-            width: double.infinity,
-            height: double.infinity,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, _, _) =>
-                _PhotoUnavailable(foregroundColor: foregroundColor),
-          );
-        } on FormatException {
-          return _PhotoUnavailable(foregroundColor: foregroundColor);
-        }
+        return Image(
+          key: ValueKey('mosaic-photo-image-${widget.attachment.id}'),
+          image: provider,
+          width: double.infinity,
+          height: double.infinity,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) =>
+              _PhotoUnavailable(foregroundColor: widget.foregroundColor),
+        );
       },
     );
   }
+}
+
+class _MosaicPhotoPlaceholder extends StatelessWidget {
+  const _MosaicPhotoPlaceholder({required this.foregroundColor});
+
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Icon(
+      Icons.image_outlined,
+      color: foregroundColor.withValues(alpha: 0.46),
+      size: 28,
+    ),
+  );
 }
 
 class _PhotoUnavailable extends StatelessWidget {
@@ -1484,6 +1803,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
     required this.isSavingReaction,
     required this.onToggleReaction,
     required this.onAssigneeTap,
+    required this.onAttachmentTap,
     required this.attachmentLoader,
     required this.editTarget,
     required this.onSave,
@@ -1501,6 +1821,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
   final bool isSavingReaction;
   final Future<void> Function(String emoji)? onToggleReaction;
   final VoidCallback? onAssigneeTap;
+  final VoidCallback? onAttachmentTap;
   final NoteAttachmentLoader? attachmentLoader;
   final ValueNotifier<PostItInlineEditTarget>? editTarget;
   final PostItInlineSave onSave;
@@ -1512,20 +1833,27 @@ class _EditableLargeNoteBody extends StatefulWidget {
 class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
   late final TextEditingController _titleController;
   late final FocusNode _titleFocusNode;
-  late NoteRichContent _content;
+  late final FocusNode _descriptionFocusNode;
+  final GlobalKey _descriptionEditorKey = GlobalKey();
+  final GlobalKey _checklistEditorKey = GlobalKey();
+  NoteRichContent? _content;
   late List<NoteChecklistItem> _checklist;
   int _descriptionRevision = 0;
   bool _editingTitle = false;
   bool _editingDescription = false;
   bool _editingChecklist = false;
   bool _isSaving = false;
+  bool _descriptionHadFocus = false;
+  bool _checklistHadFocus = false;
+  String? _checklistInitialFocusItemId;
 
   @override
   void initState() {
     super.initState();
     _titleController = TextEditingController(text: widget.note.title);
     _titleFocusNode = FocusNode();
-    _content = _richContentFromNote(widget.note);
+    _descriptionFocusNode = FocusNode()
+      ..addListener(_handleDescriptionFocusChanged);
     _checklist = [...widget.note.checklist];
     widget.editTarget?.addListener(_handleRequestedEdit);
   }
@@ -1540,7 +1868,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     if (!_editingTitle && _titleController.text != widget.note.title) {
       _titleController.text = widget.note.title;
     }
-    if (!_editingDescription) _content = _richContentFromNote(widget.note);
+    if (!_editingDescription) _content = null;
     if (!_editingChecklist) _checklist = [...widget.note.checklist];
   }
 
@@ -1549,6 +1877,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     widget.editTarget?.removeListener(_handleRequestedEdit);
     _titleController.dispose();
     _titleFocusNode.dispose();
+    _descriptionFocusNode
+      ..removeListener(_handleDescriptionFocusChanged)
+      ..dispose();
     super.dispose();
   }
 
@@ -1594,33 +1925,69 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       _editingChecklist = false;
       _content = _richContentFromNote(widget.note);
       _descriptionRevision += 1;
+      _descriptionHadFocus = false;
     });
   }
 
-  void _beginChecklistEditing() {
+  void _handleDescriptionFocusChanged() {
+    if (_descriptionFocusNode.hasFocus) {
+      _descriptionHadFocus = true;
+      _revealEditor(_descriptionEditorKey);
+      return;
+    }
+    if (_editingDescription && _descriptionHadFocus) {
+      unawaited(_saveDescription());
+    }
+  }
+
+  void _revealEditor(GlobalKey key) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || key.currentContext == null) return;
+      Scrollable.ensureVisible(
+        key.currentContext!,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: 0.12,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || key.currentContext == null) return;
+        Scrollable.ensureVisible(
+          key.currentContext!,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          alignment: 0.12,
+        );
+      });
+    });
+  }
+
+  void _beginChecklistEditing({bool appendItem = false}) {
     if (_isSaving || _editingChecklist) return;
     final checklist = widget.note.checklist;
+    final newItem = appendItem || checklist.isEmpty
+        ? NoteChecklistItem(id: const Uuid().v4(), text: '')
+        : null;
     setState(() {
       _editingTitle = false;
       _editingDescription = false;
       _editingChecklist = true;
-      _checklist = checklist.isEmpty
-          ? [NoteChecklistItem(id: const Uuid().v4(), text: '')]
-          : [...checklist];
+      _checklistHadFocus = false;
+      _checklistInitialFocusItemId = newItem?.id;
+      _checklist = [...checklist, ?newItem];
     });
   }
 
-  void _cancelEditing() {
-    if (_isSaving) return;
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() {
-      _editingTitle = false;
-      _editingDescription = false;
-      _editingChecklist = false;
-      _titleController.text = widget.note.title;
-      _content = _richContentFromNote(widget.note);
-      _checklist = [...widget.note.checklist];
-    });
+  void _handleChecklistFocusChanged(bool hasFocus) {
+    if (hasFocus) {
+      _checklistHadFocus = true;
+      _revealEditor(_checklistEditorKey);
+      return;
+    }
+    if (_editingChecklist && _checklistHadFocus) {
+      unawaited(_saveChecklist());
+    }
   }
 
   Future<void> _saveTitle() async {
@@ -1640,7 +2007,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
 
   Future<void> _saveDescription() async {
     if (_isSaving) return;
-    final content = normalizeNoteRichContent(_content);
+    final content = normalizeNoteRichContent(
+      _content ?? _richContentFromNote(widget.note),
+    );
     if (content.plainText.length > noteContentMaxLength) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1658,14 +2027,6 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
         _editingDescription = false;
         _content = content;
       }
-    });
-  }
-
-  void _clearDescription() {
-    if (_isSaving) return;
-    setState(() {
-      _content = _emptyRichContent();
-      _descriptionRevision += 1;
     });
   }
 
@@ -1717,6 +2078,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       _isSaving = false;
       if (saved) {
         _editingChecklist = false;
+        _checklistInitialFocusItemId = null;
         _checklist = checklist;
       }
     });
@@ -1777,6 +2139,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       customAssigneeName: note.customAssigneeName,
       attachments: attachments ?? note.photoAttachments,
       reminderAt: note.reminderAt,
+      reminderRecurrence: note.reminderRecurrence,
     );
   }
 
@@ -1803,6 +2166,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
   @override
   Widget build(BuildContext context) {
     final note = widget.note;
+    final hideContextualDetails =
+        MediaQuery.viewInsetsOf(context).bottom > 0 &&
+        (_editingDescription || _editingChecklist);
     final foregroundColor = widget.foregroundColor;
     final fieldFill = foregroundColor.computeLuminance() > 0.5
         ? Colors.black.withValues(alpha: 0.16)
@@ -1907,15 +2273,23 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                       ),
                     ),
             ),
-            Checkbox(
-              value: note.isCompleted,
-              onChanged: (_) => widget.onToggle(),
-              activeColor: foregroundColor,
-              checkColor: note.category == NoteCategory.general
-                  ? Colors.white
-                  : Colors.black87,
-              side: BorderSide(color: foregroundColor, width: 1.5),
-            ),
+            if (note.isRecurring)
+              Icon(
+                Icons.repeat_rounded,
+                key: ValueKey('recurring-note-${note.id}'),
+                color: foregroundColor,
+                size: 24,
+              )
+            else
+              Checkbox(
+                value: note.isCompleted,
+                onChanged: (_) => widget.onToggle(),
+                activeColor: foregroundColor,
+                checkColor: note.category == NoteCategory.general
+                    ? Colors.white
+                    : Colors.black87,
+                side: BorderSide(color: foregroundColor, width: 1.5),
+              ),
           ],
         ),
         if (widget.originListName != null ||
@@ -1974,29 +2348,25 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
               children: [
                 if (_editingDescription) ...[
                   KeyedSubtree(
-                    key: ValueKey(
-                      'inline-description-revision-$_descriptionRevision',
+                    key: _descriptionEditorKey,
+                    child: KeyedSubtree(
+                      key: ValueKey(
+                        'inline-description-revision-$_descriptionRevision',
+                      ),
+                      child: NoteRichTextEditor(
+                        key: const ValueKey('quick-edit-content-field'),
+                        editorKey: const ValueKey('quick-edit-content-editor'),
+                        initialPlainText: _content!.plainText,
+                        initialDeltaJson: _content!.deltaJson,
+                        autoFocus: true,
+                        minEditorHeight: 76,
+                        maxEditorHeight: 132,
+                        foregroundColor: foregroundColor,
+                        backgroundColor: fieldFill,
+                        focusNode: _descriptionFocusNode,
+                        onChanged: (content) => _content = content,
+                      ),
                     ),
-                    child: NoteRichTextEditor(
-                      key: const ValueKey('quick-edit-content-field'),
-                      editorKey: const ValueKey('quick-edit-content-editor'),
-                      initialPlainText: _content.plainText,
-                      initialDeltaJson: _content.deltaJson,
-                      autoFocus: true,
-                      minEditorHeight: 76,
-                      maxEditorHeight: 132,
-                      foregroundColor: foregroundColor,
-                      backgroundColor: fieldFill,
-                      onChanged: (content) => _content = content,
-                    ),
-                  ),
-                  _InlineFieldActions(
-                    keyPrefix: 'description',
-                    isSaving: _isSaving,
-                    onDelete: _clearDescription,
-                    deleteColor: foregroundColor,
-                    onCancel: _cancelEditing,
-                    onSave: _saveDescription,
                   ),
                 ] else
                   Semantics(
@@ -2085,15 +2455,16 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                 if (_editingChecklist) ...[
                   SimpleNoteChecklistEditor(
                     key: const ValueKey('quick-edit-checklist-editor'),
+                    editorKey: _checklistEditorKey,
                     items: _checklist,
                     foregroundColor: foregroundColor,
+                    initialFocusItemId: _checklistInitialFocusItemId,
                     onChanged: (items) => setState(() => _checklist = items),
-                  ),
-                  _InlineFieldActions(
-                    keyPrefix: 'checklist',
-                    isSaving: _isSaving,
-                    onCancel: _cancelEditing,
-                    onSave: _saveChecklist,
+                    onMutationCommitted: _saveChecklist,
+                    onFieldFocused: () => _revealEditor(_checklistEditorKey),
+                    onFocusChanged: _handleChecklistFocusChanged,
+                    onSubmitted: _saveChecklist,
+                    onDone: _saveChecklist,
                   ),
                 ] else ...[
                   if (note.checklist.isNotEmpty)
@@ -2108,7 +2479,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       key: const ValueKey('add-inline-subtask-button'),
-                      onPressed: _beginChecklistEditing,
+                      onPressed: () => _beginChecklistEditing(appendItem: true),
                       style: TextButton.styleFrom(
                         foregroundColor: foregroundColor,
                       ),
@@ -2125,60 +2496,127 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
             ),
           ),
         ),
-        if (note.photoAttachments.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          _NoteAttachmentsPreview(
-            attachments: note.photoAttachments,
-            foregroundColor: foregroundColor,
-            loader: widget.attachmentLoader,
-            onRemove: _confirmRemoveAttachment,
-          ),
-        ],
-        if (note.reminderAt case final reminder?) ...[
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Icon(
-                Icons.notifications_none_rounded,
-                size: 17,
-                color: foregroundColor.withValues(alpha: 0.8),
-              ),
-              const SizedBox(width: 5),
-              Expanded(
-                child: Text(
-                  DateFormat('dd MMM · HH:mm', 'es').format(reminder),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foregroundColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+        AnimatedSize(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: hideContextualDetails
+              ? const SizedBox.shrink()
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (note.photoAttachments.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _NoteAttachmentsPreview(
+                        attachments: note.photoAttachments,
+                        foregroundColor: foregroundColor,
+                        loader: widget.attachmentLoader,
+                        onRemove: _confirmRemoveAttachment,
+                      ),
+                    ],
+                    if (note.reminderAt case final reminder?) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.notifications_none_rounded,
+                            size: 17,
+                            color: foregroundColor.withValues(alpha: 0.8),
+                          ),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              DateFormat(
+                                'dd MMM · HH:mm',
+                                'es',
+                              ).format(reminder),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: foregroundColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    if (widget.onToggleReaction != null ||
+                        widget.onAttachmentTap != null) ...[
+                      Row(
+                        key: const ValueKey('preview-reactions-attachment-row'),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (widget.onToggleReaction
+                              case final toggleReaction?)
+                            Expanded(
+                              child: NoteReactionsBar(
+                                note: note,
+                                currentUserId: widget.currentUserId,
+                                reactionAuthorNames: widget.reactionAuthorNames,
+                                isSaving: widget.isSavingReaction,
+                                onToggle: toggleReaction,
+                              ),
+                            )
+                          else
+                            const Spacer(),
+                          if (widget.onAttachmentTap
+                              case final onAttachmentTap?) ...[
+                            const SizedBox(width: 6),
+                            IconButton(
+                              key: const ValueKey('preview-attachment-action'),
+                              tooltip: note.photoAttachments.isEmpty
+                                  ? 'Adjuntar foto o PDF'
+                                  : 'Administrar adjuntos '
+                                        '(${note.photoAttachments.length}/2)',
+                              onPressed: onAttachmentTap,
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 40,
+                                height: 40,
+                              ),
+                              padding: EdgeInsets.zero,
+                              style: IconButton.styleFrom(
+                                foregroundColor: foregroundColor,
+                                backgroundColor: note.photoAttachments.isEmpty
+                                    ? Colors.transparent
+                                    : foregroundColor.withValues(alpha: 0.14),
+                              ),
+                              icon: Badge(
+                                isLabelVisible:
+                                    note.photoAttachments.isNotEmpty,
+                                label: Text('${note.photoAttachments.length}'),
+                                child: const Icon(
+                                  Icons.attach_file_rounded,
+                                  key: ValueKey('preview-attachment-icon'),
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                    ] else if (note.reactions.isNotEmpty) ...[
+                      NoteReactionsSummary(
+                        note: note,
+                        foregroundColor: foregroundColor,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    _LargeNotePeopleFooter(
+                      note: note,
+                      authorPhotoUrl: widget.authorPhotoUrl,
+                      assignee: widget.assignee,
+                      foregroundColor: foregroundColor,
+                      onAssigneeTap: widget.onAssigneeTap,
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-        ],
-        if (widget.onToggleReaction != null) ...[
-          NoteReactionsBar(
-            note: note,
-            currentUserId: widget.currentUserId,
-            reactionAuthorNames: widget.reactionAuthorNames,
-            isSaving: widget.isSavingReaction,
-            onToggle: widget.onToggleReaction!,
-          ),
-          const SizedBox(height: 10),
-        ] else if (note.reactions.isNotEmpty) ...[
-          NoteReactionsSummary(note: note, foregroundColor: foregroundColor),
-          const SizedBox(height: 10),
-        ],
-        _LargeNotePeopleFooter(
-          note: note,
-          authorPhotoUrl: widget.authorPhotoUrl,
-          assignee: widget.assignee,
-          foregroundColor: foregroundColor,
-          onAssigneeTap: widget.onAssigneeTap,
         ),
       ],
     );
@@ -2190,12 +2628,26 @@ class SimpleNoteChecklistEditor extends StatefulWidget {
     required this.items,
     required this.foregroundColor,
     required this.onChanged,
+    this.editorKey,
+    this.onFieldFocused,
+    this.onFocusChanged,
+    this.onSubmitted,
+    this.onMutationCommitted,
+    this.onDone,
+    this.initialFocusItemId,
     super.key,
   });
 
   final List<NoteChecklistItem> items;
   final Color foregroundColor;
   final ValueChanged<List<NoteChecklistItem>> onChanged;
+  final GlobalKey? editorKey;
+  final VoidCallback? onFieldFocused;
+  final ValueChanged<bool>? onFocusChanged;
+  final VoidCallback? onSubmitted;
+  final VoidCallback? onMutationCommitted;
+  final VoidCallback? onDone;
+  final String? initialFocusItemId;
 
   @override
   State<SimpleNoteChecklistEditor> createState() =>
@@ -2206,11 +2658,25 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   final Map<String, FocusNode> _focusNodes = {};
   final Map<String, TextEditingController> _textControllers = {};
   final Map<String, String> _linkUrls = {};
+  String? _completionItemId;
+
+  @override
+  void initState() {
+    super.initState();
+    _completionItemId = widget.initialFocusItemId;
+  }
 
   @override
   void didUpdateWidget(covariant SimpleNoteChecklistEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialFocusItemId != widget.initialFocusItemId &&
+        widget.initialFocusItemId != null) {
+      _completionItemId = widget.initialFocusItemId;
+    }
     final activeIds = widget.items.map((item) => item.id).toSet();
+    if (_completionItemId != null && !activeIds.contains(_completionItemId)) {
+      _completionItemId = null;
+    }
     for (final item in widget.items) {
       final controller = _textControllers[item.id];
       final link = noteChecklistLinkFromText(item.text);
@@ -2238,7 +2704,11 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
       if (!activeIds.contains(id)) _textControllers.remove(id)?.dispose();
     }
     for (final id in _focusNodes.keys.toList()) {
-      if (!activeIds.contains(id)) _focusNodes.remove(id)?.dispose();
+      if (!activeIds.contains(id)) {
+        _focusNodes.remove(id)
+          ?..removeListener(_notifyFocusChanged)
+          ..dispose();
+      }
     }
     _linkUrls.removeWhere((id, _) => !activeIds.contains(id));
   }
@@ -2246,6 +2716,7 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   @override
   void dispose() {
     for (final focusNode in _focusNodes.values) {
+      focusNode.removeListener(_notifyFocusChanged);
       focusNode.dispose();
     }
     for (final controller in _textControllers.values) {
@@ -2257,6 +2728,7 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   @override
   Widget build(BuildContext context) {
     return Column(
+      key: widget.editorKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (widget.items.isNotEmpty)
@@ -2275,7 +2747,10 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
             ),
             itemBuilder: (context, index) {
               final item = widget.items[index];
-              final focusNode = _focusNodes.putIfAbsent(item.id, FocusNode.new);
+              final focusNode = _focusNodes.putIfAbsent(
+                item.id,
+                _createFocusNode,
+              );
               final controller = _textControllers.putIfAbsent(
                 item.id,
                 () => TextEditingController(
@@ -2285,6 +2760,8 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
               final parsedLink = noteChecklistLinkFromText(item.text);
               if (parsedLink != null) _linkUrls[item.id] = parsedLink.url;
               final itemLinkUrl = _linkUrls[item.id];
+              final isCompletionItem =
+                  widget.onDone != null && _completionItemId == item.id;
               return Padding(
                 key: ValueKey('checklist-editor-${item.id}'),
                 padding: const EdgeInsets.symmetric(vertical: 2),
@@ -2324,8 +2801,10 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                         key: ValueKey('checklist-text-${item.id}'),
                         controller: controller,
                         focusNode: focusNode,
+                        onTap: widget.onFieldFocused,
                         autofocus:
-                            widget.items.length == 1 && item.text.isEmpty,
+                            item.id == widget.initialFocusItemId ||
+                            (widget.items.length == 1 && item.text.isEmpty),
                         maxLength: 120,
                         textCapitalization: TextCapitalization.sentences,
                         inputFormatters: const [
@@ -2356,9 +2835,7 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                         ),
                         onChanged: (text) =>
                             _updateLabel(index, item, text, itemLinkUrl),
-                        onFieldSubmitted: (text) {
-                          if (text.trim().isNotEmpty) _addItem(index + 1);
-                        },
+                        onFieldSubmitted: (_) => _submitItem(index, controller),
                       ),
                     ),
                     IconButton(
@@ -2379,12 +2856,20 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                       ),
                     ),
                     IconButton(
-                      key: ValueKey('delete-inline-checklist-${item.id}'),
-                      tooltip: 'Eliminar subtarea',
-                      onPressed: () => _remove(index),
+                      key: isCompletionItem
+                          ? const ValueKey('finish-inline-checklist-button')
+                          : ValueKey('delete-inline-checklist-${item.id}'),
+                      tooltip: isCompletionItem
+                          ? 'Concluir edición'
+                          : 'Eliminar subtarea',
+                      onPressed: isCompletionItem
+                          ? widget.onDone
+                          : () => _remove(index),
                       visualDensity: VisualDensity.compact,
                       icon: Icon(
-                        Icons.close_rounded,
+                        isCompletionItem
+                            ? Icons.check_rounded
+                            : Icons.close_rounded,
                         color: widget.foregroundColor,
                         size: 22,
                       ),
@@ -2394,22 +2879,50 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
               );
             },
           ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: const ValueKey('add-checklist-item'),
-            onPressed: () => _addItem(widget.items.length),
-            style: TextButton.styleFrom(
-              foregroundColor: widget.foregroundColor.withValues(alpha: 0.72),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton.icon(
+                key: const ValueKey('add-checklist-item'),
+                onPressed: () => _addItem(widget.items.length),
+                style: TextButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  foregroundColor: widget.foregroundColor.withValues(
+                    alpha: 0.72,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                ),
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Elemento de la lista'),
+              ),
             ),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Elemento de la lista'),
-          ),
+            if (widget.onDone != null && _completionItemId == null) ...[
+              IconButton(
+                key: const ValueKey('finish-inline-checklist-button'),
+                tooltip: 'Concluir edición',
+                onPressed: widget.onDone,
+                icon: Icon(Icons.check_rounded, color: widget.foregroundColor),
+              ),
+            ],
+          ],
         ),
       ],
     );
   }
+
+  void _notifyFocusChanged() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onFocusChanged?.call(
+        _focusNodes.values.any((node) => node.hasFocus),
+      );
+    });
+  }
+
+  FocusNode _createFocusNode() => FocusNode()..addListener(_notifyFocusChanged);
 
   void _replace(int index, NoteChecklistItem item) {
     final updated = [...widget.items]..[index] = item;
@@ -2462,12 +2975,22 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   void _remove(int index) {
     final updated = [...widget.items]..removeAt(index);
     widget.onChanged(updated);
+    widget.onMutationCommitted?.call();
+  }
+
+  void _submitItem(int index, TextEditingController controller) {
+    if (controller.text.trim().isEmpty) {
+      widget.onSubmitted?.call();
+      return;
+    }
+    _addItem(index + 1);
   }
 
   void _addItem(int index) {
     final item = NoteChecklistItem(id: const Uuid().v4(), text: '');
-    final focusNode = _focusNodes.putIfAbsent(item.id, FocusNode.new);
+    final focusNode = _focusNodes.putIfAbsent(item.id, _createFocusNode);
     _textControllers.putIfAbsent(item.id, TextEditingController.new);
+    _completionItemId = widget.onDone == null ? null : item.id;
     final updated = [...widget.items]..insert(index, item);
     widget.onChanged(updated);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2485,60 +3008,6 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
   }
 }
 
-class _InlineFieldActions extends StatelessWidget {
-  const _InlineFieldActions({
-    required this.keyPrefix,
-    required this.isSaving,
-    required this.onCancel,
-    required this.onSave,
-    this.onDelete,
-    this.deleteColor,
-  });
-
-  final String keyPrefix;
-  final bool isSaving;
-  final VoidCallback onCancel;
-  final VoidCallback onSave;
-  final VoidCallback? onDelete;
-  final Color? deleteColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(
-        children: [
-          if (onDelete != null)
-            IconButton(
-              key: ValueKey('delete-inline-$keyPrefix-button'),
-              tooltip: 'Borrar contenido',
-              onPressed: isSaving ? null : onDelete,
-              icon: Icon(Icons.close_rounded, color: deleteColor),
-            ),
-          const Spacer(),
-          TextButton(
-            key: ValueKey('cancel-inline-$keyPrefix-button'),
-            onPressed: isSaving ? null : onCancel,
-            child: const Text('Cancelar'),
-          ),
-          const SizedBox(width: 6),
-          FilledButton.icon(
-            key: ValueKey('save-inline-$keyPrefix-button'),
-            onPressed: isSaving ? null : onSave,
-            icon: isSaving
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.check_rounded, size: 18),
-            label: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 NoteRichContent _richContentFromNote(Note note) => normalizeNoteRichContent(
   NoteRichContent(
     plainText: note.content,
@@ -2547,15 +3016,6 @@ NoteRichContent _richContentFromNote(Note note) => normalizeNoteRichContent(
         noteRichContentFromDocument(
           noteDocumentFromContent(plainText: note.content),
         ).deltaJson,
-  ),
-);
-
-NoteRichContent _emptyRichContent() => normalizeNoteRichContent(
-  NoteRichContent(
-    plainText: '',
-    deltaJson: noteRichContentFromDocument(
-      noteDocumentFromContent(plainText: ''),
-    ).deltaJson,
   ),
 );
 
@@ -2819,7 +3279,26 @@ class _CompactNoteBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        if (readOnly)
+        if (note.isRecurring)
+          Semantics(
+            label: 'Recordatorio recurrente',
+            image: true,
+            child: Container(
+              key: ValueKey('compact-recurring-note-${note.id}'),
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: foregroundColor.withValues(alpha: 0.14),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.repeat_rounded,
+                color: foregroundColor,
+                size: 20,
+              ),
+            ),
+          )
+        else if (readOnly)
           Semantics(
             label: note.isCompleted ? 'Nota completada' : 'Nota pendiente',
             image: true,
@@ -2854,7 +3333,7 @@ class _CompactNoteBody extends StatelessWidget {
             side: BorderSide(color: foregroundColor, width: 1.5),
             visualDensity: VisualDensity.compact,
           ),
-        SizedBox(width: readOnly ? 10 : 2),
+        SizedBox(width: readOnly || note.isRecurring ? 10 : 2),
         Expanded(
           child: subtitle == null
               ? Text(
@@ -2982,7 +3461,9 @@ class _CompactAssigneeAvatar extends StatelessWidget {
           radius: 12,
           backgroundColor: AppTheme.ink.withValues(alpha: 0.14),
           foregroundColor: AppTheme.ink,
-          foregroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+          foregroundImage: hasPhoto
+              ? _avatarImageProvider(context, photoUrl, 24)
+              : null,
           onForegroundImageError: hasPhoto ? (_, _) {} : null,
           child: hasPhoto
               ? null
@@ -3063,7 +3544,9 @@ class _AuthorAvatar extends StatelessWidget {
       key: ValueKey('author-avatar-${note.id}'),
       radius: 12,
       backgroundColor: foregroundColor.withValues(alpha: 0.14),
-      foregroundImage: hasPhoto ? NetworkImage(normalizedPhotoUrl) : null,
+      foregroundImage: hasPhoto
+          ? _avatarImageProvider(context, normalizedPhotoUrl, 24)
+          : null,
       onForegroundImageError: hasPhoto ? (_, _) {} : null,
       child: Text(
         note.authorName.characters.first.toUpperCase(),
@@ -3120,7 +3603,9 @@ class _AssigneeIndicator extends StatelessWidget {
                     radius: 16,
                     backgroundColor: AppTheme.ink.withValues(alpha: 0.14),
                     foregroundColor: AppTheme.ink,
-                    foregroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+                    foregroundImage: hasPhoto
+                        ? _avatarImageProvider(context, photoUrl, 32)
+                        : null,
                     onForegroundImageError: hasPhoto ? (_, _) {} : null,
                     child: Text(
                       initial,

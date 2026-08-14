@@ -30,27 +30,81 @@ enum NoteCategory {
   ideas,
 }
 
+enum ReminderRecurrenceFrequency { daily, weekly, monthly }
+
+class ReminderRecurrence extends Equatable {
+  const ReminderRecurrence({
+    required this.frequency,
+    required this.interval,
+    required this.timeZoneOffsetMinutes,
+    this.timeZoneId,
+    this.dayOfMonth,
+  });
+
+  factory ReminderRecurrence.fromJson(Map<String, dynamic> json) =>
+      ReminderRecurrence(
+        frequency: ReminderRecurrenceFrequency.values.firstWhere(
+          (frequency) => frequency.name == json['frequency'],
+          orElse: () => ReminderRecurrenceFrequency.daily,
+        ),
+        interval: ((json['interval'] as num?)?.toInt() ?? 1)
+            .clamp(1, 99)
+            .toInt(),
+        timeZoneOffsetMinutes:
+            ((json['timeZoneOffsetMinutes'] as num?)?.toInt() ?? 0)
+                .clamp(-840, 840)
+                .toInt(),
+        timeZoneId: (json['timeZoneId'] as String?)?.trim().isNotEmpty == true
+            ? (json['timeZoneId'] as String).trim()
+            : null,
+        dayOfMonth: (json['dayOfMonth'] as num?)?.toInt().clamp(1, 31).toInt(),
+      );
+
+  final ReminderRecurrenceFrequency frequency;
+  final int interval;
+  final int timeZoneOffsetMinutes;
+  final String? timeZoneId;
+  final int? dayOfMonth;
+
+  Map<String, dynamic> toJson() => {
+    'frequency': frequency.name,
+    'interval': interval,
+    'timeZoneOffsetMinutes': timeZoneOffsetMinutes,
+    if (timeZoneId != null) 'timeZoneId': timeZoneId,
+    'dayOfMonth': dayOfMonth,
+  };
+
+  @override
+  List<Object?> get props => [
+    frequency,
+    interval,
+    timeZoneOffsetMinutes,
+    timeZoneId,
+    dayOfMonth,
+  ];
+}
+
 const supportedNoteReactionEmojis = [
   '👍',
   '❤️',
   '😂',
   '😮',
   '😢',
-  '🎉',
-  '👏',
-  '🙌',
   '😍',
   '🤔',
-  '🔥',
-  '👀',
   '🤯',
-  '💯',
-  '🚀',
   '😡',
   '🐶',
   '🐱',
   '🐵',
-  '🐼',
+  '🐷',
+  '🎉',
+  '👏',
+  '🙌',
+  '🔥',
+  '👀',
+  '💯',
+  '🚀',
   '🍕',
   '🍔',
   '✈️',
@@ -185,6 +239,11 @@ List<NoteAttachment> _attachmentsFromJson(Map<String, dynamic> json) {
       : const [];
 }
 
+DateTime? _localDateTimeFromJson(Object? value) {
+  final parsed = DateTime.tryParse(value as String? ?? '');
+  return parsed?.toLocal();
+}
+
 List<NoteChecklistItem> normalizeNoteChecklist(
   Iterable<NoteChecklistItem> items, {
   bool trimText = false,
@@ -238,11 +297,16 @@ class Note extends Equatable {
     this.attachments = const [],
     NoteAttachment? attachment,
     this.reminderAt,
+    this.reminderRecurrence,
     this.contentDelta,
     this.revision = 0,
   }) : _legacyAttachment = attachment;
 
   factory Note.fromJson(Map<String, dynamic> json) {
+    final rawRecurrence = json['reminderRecurrence'];
+    final reminderRecurrence = rawRecurrence is Map
+        ? ReminderRecurrence.fromJson(Map<String, dynamic>.from(rawRecurrence))
+        : null;
     return Note(
       id: json['id'] as String,
       boardId: json['boardId'] as String,
@@ -257,7 +321,9 @@ class Note extends Equatable {
       assigneeUid: json['assigneeUid'] as String?,
       customAssigneeName: json['customAssigneeName'] as String?,
       attachments: _attachmentsFromJson(json),
-      isCompleted: json['isCompleted'] as bool? ?? false,
+      isCompleted: reminderRecurrence == null
+          ? json['isCompleted'] as bool? ?? false
+          : false,
       isPinned: json['isPinned'] as bool? ?? false,
       sortOrder: (json['sortOrder'] as num?)?.toInt() ?? 0,
       category: NoteCategory.values.firstWhere(
@@ -280,7 +346,8 @@ class Note extends Equatable {
           .toList(),
       positionX: (json['positionX'] as num?)?.toDouble() ?? 0,
       positionY: (json['positionY'] as num?)?.toDouble() ?? 0,
-      reminderAt: DateTime.tryParse(json['reminderAt'] as String? ?? ''),
+      reminderAt: _localDateTimeFromJson(json['reminderAt']),
+      reminderRecurrence: reminderRecurrence,
       revision: (json['revision'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
@@ -313,6 +380,8 @@ class Note extends Equatable {
   final double positionX;
   final double positionY;
   final DateTime? reminderAt;
+  final ReminderRecurrence? reminderRecurrence;
+  bool get isRecurring => reminderAt != null && reminderRecurrence != null;
   final int revision;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -337,6 +406,8 @@ class Note extends Equatable {
     'positionX': positionX,
     'positionY': positionY,
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    if (reminderRecurrence != null)
+      'reminderRecurrence': reminderRecurrence!.toJson(),
     'revision': revision,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
@@ -363,7 +434,9 @@ class Note extends Equatable {
     assigneeUid: assigneeUid,
     customAssigneeName: customAssigneeName,
     attachments: attachments ?? photoAttachments,
-    isCompleted: isCompleted ?? this.isCompleted,
+    isCompleted: reminderRecurrence == null
+        ? isCompleted ?? this.isCompleted
+        : false,
     isPinned: isPinned ?? this.isPinned,
     sortOrder: sortOrder ?? this.sortOrder,
     category: category ?? this.category,
@@ -372,6 +445,7 @@ class Note extends Equatable {
     positionX: positionX,
     positionY: positionY,
     reminderAt: reminderAt,
+    reminderRecurrence: reminderRecurrence,
     revision: revision ?? this.revision,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -398,6 +472,7 @@ class Note extends Equatable {
     positionX,
     positionY,
     reminderAt,
+    reminderRecurrence,
     revision,
     createdAt,
     updatedAt,
@@ -417,6 +492,7 @@ class NoteDraft extends Equatable {
     this.attachments = const [],
     NoteAttachment? attachment,
     this.reminderAt,
+    this.reminderRecurrence,
     this.contentDelta,
     this.clientNoteId,
     this.clientMutationId,
@@ -450,10 +526,17 @@ class NoteDraft extends Equatable {
           ),
         )
         .toList(),
-    reminderAt: DateTime.tryParse(json['reminderAt'] as String? ?? ''),
+    reminderAt: _localDateTimeFromJson(json['reminderAt']),
+    reminderRecurrence: json['reminderRecurrence'] is Map
+        ? ReminderRecurrence.fromJson(
+            Map<String, dynamic>.from(json['reminderRecurrence'] as Map),
+          )
+        : null,
     clientNoteId: json['clientNoteId'] as String?,
     clientMutationId: json['clientMutationId'] as String?,
-    isCompleted: json['isCompleted'] as bool? ?? false,
+    isCompleted: json['reminderRecurrence'] is Map
+        ? false
+        : json['isCompleted'] as bool? ?? false,
     isPinned: json['isPinned'] as bool? ?? false,
     sortOrder: (json['sortOrder'] as num?)?.toInt(),
     positionX: (json['positionX'] as num?)?.toDouble() ?? 0,
@@ -478,6 +561,7 @@ class NoteDraft extends Equatable {
   final NoteCategory category;
   final List<NoteChecklistItem> checklist;
   final DateTime? reminderAt;
+  final ReminderRecurrence? reminderRecurrence;
   final String? clientNoteId;
   final String? clientMutationId;
   final bool isCompleted;
@@ -501,6 +585,7 @@ class NoteDraft extends Equatable {
     category: category,
     checklist: checklist,
     reminderAt: reminderAt,
+    reminderRecurrence: reminderRecurrence,
     clientNoteId: clientNoteId,
     clientMutationId: clientMutationId,
     isCompleted: isCompleted,
@@ -522,6 +607,8 @@ class NoteDraft extends Equatable {
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
     if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    if (reminderRecurrence != null)
+      'reminderRecurrence': reminderRecurrence!.toJson(),
     if (clientNoteId != null) 'clientNoteId': clientNoteId,
     if (clientMutationId != null) 'clientMutationId': clientMutationId,
     'isCompleted': isCompleted,
@@ -544,6 +631,7 @@ class NoteDraft extends Equatable {
     category,
     checklist,
     reminderAt,
+    reminderRecurrence,
     clientNoteId,
     clientMutationId,
     isCompleted,

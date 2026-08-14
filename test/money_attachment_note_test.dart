@@ -355,12 +355,34 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 500)),
+      );
       await tester.pumpAndSettle();
 
       expect(
         find.byKey(const ValueKey('mosaic-photo-image-photo-1')),
         findsOneWidget,
       );
+      final mosaicPhoto = tester.widget<Image>(
+        find.byKey(const ValueKey('mosaic-photo-image-photo-1')),
+      );
+      expect(mosaicPhoto.image, isA<ResizeImage>());
+      final resizedPhoto = mosaicPhoto.image as ResizeImage;
+      expect(resizedPhoto.imageProvider, isA<MemoryImage>());
+      expect(resizedPhoto.width, inInclusiveRange(1, 1024));
+      final originalPhysicalSize = tester.view.physicalSize;
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.view.physicalSize = Size(
+        originalPhysicalSize.width,
+        originalPhysicalSize.height + 1,
+      );
+      await tester.pump();
+      final rebuiltPhoto = tester.widget<Image>(
+        find.byKey(const ValueKey('mosaic-photo-image-photo-1')),
+      );
+      expect(rebuiltPhoto.image, same(mosaicPhoto.image));
       expect(
         find.byKey(const ValueKey('mosaic-photo-count-note-photo-mosaic')),
         findsOneWidget,

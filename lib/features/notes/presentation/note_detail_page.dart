@@ -15,6 +15,12 @@ import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 
+int _detailBackgroundCacheWidth(BuildContext context) =>
+    (MediaQuery.sizeOf(context).width.clamp(1.0, 720.0) *
+            MediaQuery.devicePixelRatioOf(context))
+        .ceil()
+        .clamp(1, 1024);
+
 Route<void> buildNoteDetailRoute({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -354,12 +360,17 @@ class NoteDetailPage extends StatelessWidget {
   }
 
   Future<void> _editReminder(BuildContext context, Note note) async {
-    final reminder = await showReminderPicker(
+    final schedule = await showReminderSchedulePicker(
       context,
       currentReminder: note.reminderAt,
+      currentRecurrence: note.reminderRecurrence,
     );
-    if (reminder == null || !context.mounted) return;
-    await context.read<NotesCubit>().updateNoteReminder(note, reminder);
+    if (schedule == null || !context.mounted) return;
+    await context.read<NotesCubit>().updateNoteReminder(
+      note,
+      schedule.reminderAt,
+      recurrence: schedule.recurrence,
+    );
   }
 
   Future<void> _removeReminder(BuildContext context, Note note) async {
@@ -508,7 +519,12 @@ class _DetailBody extends StatelessWidget {
                               image: backgroundAsset == null
                                   ? null
                                   : DecorationImage(
-                                      image: AssetImage(backgroundAsset),
+                                      image: ResizeImage(
+                                        AssetImage(backgroundAsset),
+                                        width: _detailBackgroundCacheWidth(
+                                          context,
+                                        ),
+                                      ),
                                       fit: BoxFit.cover,
                                       colorFilter: ColorFilter.mode(
                                         Colors.black.withValues(alpha: 0.18),
@@ -606,7 +622,13 @@ class _DetailBody extends StatelessWidget {
                       title: 'Recordatorio',
                       value: note.reminderAt == null
                           ? 'Agregar recordatorio'
-                          : _formatReminder(note.reminderAt!),
+                          : note.reminderRecurrence == null
+                          ? _formatReminder(note.reminderAt!)
+                          : reminderRecurrenceLabel(
+                              note.reminderRecurrence!,
+                              note.reminderAt!,
+                              includeTime: true,
+                            ),
                       valueMuted: note.reminderAt == null,
                       trailing: note.reminderAt == null
                           ? null
@@ -890,30 +912,45 @@ class _EditableNoteHeaderState extends State<_EditableNoteHeader> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Semantics(
-              button: true,
-              label: widget.note.isCompleted
-                  ? 'Marcar como pendiente'
-                  : 'Marcar como completada',
-              child: IconButton(
-                key: const ValueKey('detail-complete-toggle'),
-                tooltip: widget.note.isCompleted
+            if (widget.note.isRecurring)
+              Semantics(
+                label: 'Recordatorio recurrente activo',
+                image: true,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.repeat_rounded,
+                    key: const ValueKey('detail-recurring-indicator'),
+                    color: widget.foregroundColor,
+                    size: 34,
+                  ),
+                ),
+              )
+            else
+              Semantics(
+                button: true,
+                label: widget.note.isCompleted
                     ? 'Marcar como pendiente'
                     : 'Marcar como completada',
-                onPressed: widget.isSaving ? null : widget.onToggle,
-                color: widget.foregroundColor,
-                iconSize: 34,
-                icon: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  child: Icon(
-                    widget.note.isCompleted
-                        ? Icons.check_circle_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    key: ValueKey(widget.note.isCompleted),
+                child: IconButton(
+                  key: const ValueKey('detail-complete-toggle'),
+                  tooltip: widget.note.isCompleted
+                      ? 'Marcar como pendiente'
+                      : 'Marcar como completada',
+                  onPressed: widget.isSaving ? null : widget.onToggle,
+                  color: widget.foregroundColor,
+                  iconSize: 34,
+                  icon: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: Icon(
+                      widget.note.isCompleted
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      key: ValueKey(widget.note.isCompleted),
+                    ),
                   ),
                 ),
               ),
-            ),
             const SizedBox(width: 8),
             Expanded(
               child: Padding(

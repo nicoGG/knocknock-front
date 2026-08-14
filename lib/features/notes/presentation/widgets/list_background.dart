@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as image_tools;
 import 'package:image_picker/image_picker.dart';
@@ -13,12 +13,16 @@ class ListBoardBackground extends StatelessWidget {
     required this.appearance,
     required this.child,
     this.useThemeBackground = false,
+    this.topFadeScrollProgress,
+    this.topFadeInset = 0,
     super.key,
   });
 
   final ListAppearance appearance;
   final Widget child;
   final bool useThemeBackground;
+  final ValueListenable<double>? topFadeScrollProgress;
+  final double topFadeInset;
 
   @override
   Widget build(BuildContext context) {
@@ -27,36 +31,143 @@ class ListBoardBackground extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        AnimatedSwitcher(
-          duration: reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 650),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) =>
-              _BlurredBackgroundTransition(animation: animation, child: child),
-          layoutBuilder: (currentChild, previousChildren) => Stack(
-            fit: StackFit.expand,
-            children: [...previousChildren, ?currentChild],
-          ),
-          child: useThemeBackground
-              ? _ThemeBackgroundLayer(
-                  key: ValueKey((
-                    Theme.of(context).colorScheme.primary,
-                    isDark,
-                  )),
-                  isDark: isDark,
-                )
-              : _BackgroundLayer(
-                  key: ValueKey((appearance, isDark)),
-                  appearance: appearance,
-                  isDark: isDark,
-                ),
+        _buildBackgroundSwitcher(
+          context,
+          appearance: appearance,
+          useThemeBackground: useThemeBackground,
+          isDark: isDark,
+          reduceMotion: reduceMotion,
         ),
         child,
+        if (topFadeScrollProgress case final progress?)
+          Positioned.fill(
+            child: _BoardBackgroundTopFade(
+              appearance: appearance,
+              useThemeBackground: useThemeBackground,
+              isDark: isDark,
+              reduceMotion: reduceMotion,
+              topInset: topFadeInset,
+              scrollProgress: progress,
+            ),
+          ),
       ],
     );
   }
+}
+
+Widget _buildBackgroundSwitcher(
+  BuildContext context, {
+  required ListAppearance appearance,
+  required bool useThemeBackground,
+  required bool isDark,
+  required bool reduceMotion,
+}) => AnimatedSwitcher(
+  duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 650),
+  switchInCurve: Curves.easeOutCubic,
+  switchOutCurve: Curves.easeInCubic,
+  transitionBuilder: (child, animation) =>
+      _BlurredBackgroundTransition(animation: animation, child: child),
+  layoutBuilder: (currentChild, previousChildren) => Stack(
+    fit: StackFit.expand,
+    children: [...previousChildren, ?currentChild],
+  ),
+  child: useThemeBackground
+      ? _ThemeBackgroundLayer(
+          key: ValueKey((Theme.of(context).colorScheme.primary, isDark)),
+          isDark: isDark,
+        )
+      : _BackgroundLayer(
+          key: ValueKey((appearance, isDark)),
+          appearance: appearance,
+          isDark: isDark,
+        ),
+);
+
+class _BoardBackgroundTopFade extends StatelessWidget {
+  const _BoardBackgroundTopFade({
+    required this.appearance,
+    required this.useThemeBackground,
+    required this.isDark,
+    required this.reduceMotion,
+    required this.topInset,
+    required this.scrollProgress,
+  });
+
+  final ListAppearance appearance;
+  final bool useThemeBackground;
+  final bool isDark;
+  final bool reduceMotion;
+  final double topInset;
+  final ValueListenable<double> scrollProgress;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: ExcludeSemantics(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final bandHeight = (topInset + 168)
+              .clamp(0.0, constraints.maxHeight)
+              .toDouble();
+          final fadeStart = bandHeight <= 0
+              ? 0.0
+              : ((topInset + 88) / bandHeight).clamp(0.0, 1.0);
+          return ValueListenableBuilder<double>(
+            valueListenable: scrollProgress,
+            child: OverflowBox(
+              alignment: Alignment.topCenter,
+              minWidth: constraints.maxWidth,
+              maxWidth: constraints.maxWidth,
+              minHeight: constraints.maxHeight,
+              maxHeight: constraints.maxHeight,
+              child: SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: _buildBackgroundSwitcher(
+                  context,
+                  appearance: appearance,
+                  useThemeBackground: useThemeBackground,
+                  isDark: isDark,
+                  reduceMotion: reduceMotion,
+                ),
+              ),
+            ),
+            builder: (context, rawProgress, background) {
+              final progress = Curves.easeOutCubic.transform(
+                rawProgress.clamp(0.0, 1.0),
+              );
+              return Align(
+                alignment: Alignment.topCenter,
+                child: ClipRect(
+                  key: const ValueKey('appbar-content-fade'),
+                  child: SizedBox(
+                    width: constraints.maxWidth,
+                    height: bandHeight,
+                    child: Offstage(
+                      offstage: progress <= 0,
+                      child: ShaderMask(
+                        blendMode: BlendMode.dstIn,
+                        shaderCallback: (bounds) => LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: [0, fadeStart, 1],
+                          colors: [
+                            Colors.white.withValues(alpha: progress),
+                            Colors.white.withValues(alpha: progress),
+                            Colors.transparent,
+                          ],
+                        ).createShader(bounds),
+                        child: background,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    ),
+  );
 }
 
 class _ThemeBackgroundLayer extends StatelessWidget {
@@ -104,16 +215,19 @@ class _BlurredBackgroundTransition extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: animation,
-      child: AnimatedBuilder(
-        animation: animation,
-        child: child,
-        builder: (context, child) {
-          final progress = animation.value.clamp(0.0, 1.0).toDouble();
-          final blur = _maximumBlur * (1 - progress);
-          final scale = 1 + ((_maximumScale - 1) * (1 - progress));
-          return Transform.scale(
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final progress = animation.value.clamp(0.0, 1.0).toDouble();
+        if (animation.status == AnimationStatus.completed && progress >= 1) {
+          return child!;
+        }
+        final blur = _maximumBlur * (1 - progress);
+        final scale = 1 + ((_maximumScale - 1) * (1 - progress));
+        return Opacity(
+          opacity: progress,
+          child: Transform.scale(
             scale: scale,
             child: ImageFiltered(
               key: const ValueKey('background-transition-blur'),
@@ -125,9 +239,9 @@ class _BlurredBackgroundTransition extends StatelessWidget {
               ),
               child: child,
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -144,11 +258,27 @@ class _BackgroundLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final useBackdropBlur =
+        Theme.of(context).platform != TargetPlatform.android;
+    Widget background = RepaintBoundary(
+      child: _BackgroundVisual(appearance: appearance),
+    );
+    if (appearance.backgroundBlur > 0 && !useBackdropBlur) {
+      background = ImageFiltered(
+        key: const ValueKey('board-background-blur'),
+        imageFilter: ui.ImageFilter.blur(
+          sigmaX: appearance.backgroundBlur,
+          sigmaY: appearance.backgroundBlur,
+          tileMode: TileMode.clamp,
+        ),
+        child: background,
+      );
+    }
     return Stack(
       fit: StackFit.expand,
       children: [
-        _BackgroundVisual(appearance: appearance),
-        if (appearance.backgroundBlur > 0)
+        background,
+        if (appearance.backgroundBlur > 0 && useBackdropBlur)
           ClipRect(
             child: BackdropFilter(
               key: const ValueKey('board-background-blur'),
@@ -171,29 +301,78 @@ class _BackgroundLayer extends StatelessWidget {
   }
 }
 
-class _BackgroundVisual extends StatelessWidget {
+class _BackgroundVisual extends StatefulWidget {
   const _BackgroundVisual({required this.appearance});
 
   final ListAppearance appearance;
 
   @override
+  State<_BackgroundVisual> createState() => _BackgroundVisualState();
+}
+
+class _BackgroundVisualState extends State<_BackgroundVisual> {
+  MemoryImage? _customBackground;
+  bool _invalidCustomBackground = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _decodeCustomBackground();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BackgroundVisual oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.appearance.customBackgroundImage !=
+            widget.appearance.customBackgroundImage ||
+        oldWidget.appearance.backgroundPreset !=
+            widget.appearance.backgroundPreset) {
+      _decodeCustomBackground();
+    }
+  }
+
+  void _decodeCustomBackground() {
+    _customBackground = null;
+    _invalidCustomBackground = false;
+    final appearance = widget.appearance;
+    if (appearance.backgroundPreset != ListBackgroundPreset.custom ||
+        !appearance.hasCustomBackground) {
+      return;
+    }
+    try {
+      _customBackground = MemoryImage(
+        base64Decode(appearance.customBackgroundImage!),
+      );
+    } on FormatException {
+      _invalidCustomBackground = true;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final appearance = widget.appearance;
     if (appearance.backgroundPreset == ListBackgroundPreset.custom &&
-        appearance.hasCustomBackground) {
-      try {
-        return SizedBox.expand(
-          child: Image.memory(
-            base64Decode(appearance.customBackgroundImage!),
-            key: const ValueKey('custom-board-background'),
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, _, _) =>
-                _gradientBackground(context, ListBackgroundPreset.paper),
+        appearance.hasCustomBackground &&
+        !_invalidCustomBackground &&
+        _customBackground != null) {
+      final mediaQuery = MediaQuery.of(context);
+      final cacheWidth = (mediaQuery.size.width * mediaQuery.devicePixelRatio)
+          .round();
+      return SizedBox.expand(
+        child: Image(
+          image: ResizeImage.resizeIfNeeded(
+            cacheWidth,
+            null,
+            _customBackground!,
           ),
-        );
-      } on FormatException {
-        return _gradientBackground(context, ListBackgroundPreset.paper);
-      }
+          key: const ValueKey('custom-board-background'),
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, _, _) =>
+              _gradientBackground(context, ListBackgroundPreset.paper),
+        ),
+      );
     }
     return _gradientBackground(context, appearance.backgroundPreset);
   }

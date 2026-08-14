@@ -677,7 +677,11 @@ class NotesCubit extends Cubit<NotesState> {
             'attachments': draft.photoAttachments
                 .map((entry) => entry.toJson())
                 .toList(),
-          'reminderAt': draft.reminderAt?.toIso8601String(),
+          if (draft.reminderAt != note.reminderAt ||
+              draft.reminderRecurrence != note.reminderRecurrence) ...{
+            'reminderAt': draft.reminderAt?.toIso8601String(),
+            'reminderRecurrence': draft.reminderRecurrence?.toJson(),
+          },
         }),
       );
     } catch (error) {
@@ -705,8 +709,14 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void> updateNoteCategory(Note note, NoteCategory category) =>
       _updateNoteFields(note, {'category': category.name});
 
-  Future<void> updateNoteReminder(Note note, DateTime? reminderAt) =>
-      _updateNoteFields(note, {'reminderAt': reminderAt?.toIso8601String()});
+  Future<void> updateNoteReminder(
+    Note note,
+    DateTime? reminderAt, {
+    ReminderRecurrence? recurrence,
+  }) => _updateNoteFields(note, {
+    'reminderAt': reminderAt?.toIso8601String(),
+    'reminderRecurrence': recurrence?.toJson(),
+  });
 
   Future<void> updateNoteAssignee(
     Note note, {
@@ -825,6 +835,7 @@ class NotesCubit extends Cubit<NotesState> {
   }
 
   Future<void> toggleNote(Note note) async {
+    if (note.isRecurring) return;
     final optimistic = note.copyWith(isCompleted: !note.isCompleted);
     _upsert(optimistic);
     try {

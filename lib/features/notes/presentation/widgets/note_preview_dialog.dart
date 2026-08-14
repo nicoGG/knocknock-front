@@ -19,6 +19,7 @@ typedef NotePreviewCardBuilder =
     Widget Function(
       BuildContext context,
       VoidCallback editAssignee,
+      VoidCallback? editAttachment,
       ValueNotifier<PostItInlineEditTarget> editTarget,
       Future<bool> Function(NoteDraft draft) saveInline,
     );
@@ -27,6 +28,15 @@ typedef NotePreviewAssigneesProvider = List<ListCollaborator> Function();
 typedef NoteQuickSaveCallback =
     Future<void> Function(Note note, NoteDraft draft);
 typedef NotePreviewDeleteCallback = Future<void> Function(Note note);
+
+int _previewImageCacheWidth(
+  BuildContext context,
+  double logicalWidth, {
+  int maximum = 1024,
+}) => (logicalWidth * MediaQuery.devicePixelRatioOf(context)).ceil().clamp(
+  1,
+  maximum,
+);
 
 Future<bool> showNotePreviewDialog({
   required BuildContext context,
@@ -64,22 +74,25 @@ Future<NoteDraft?> showCreateNoteDialog({
   required String defaultAuthorName,
   required bool showAuthorField,
   required List<ListCollaborator> assignees,
+  Note? initialNote,
 }) {
   final disableAnimations = MediaQuery.disableAnimationsOf(context);
   final now = DateTime.now();
-  final emptyNote = Note(
-    id: 'new-note',
-    boardId: '',
-    title: '',
-    content: '',
-    color: NoteColor.none,
-    authorName: defaultAuthorName,
-    isCompleted: false,
-    positionX: 0,
-    positionY: 0,
-    createdAt: now,
-    updatedAt: now,
-  );
+  final emptyNote =
+      initialNote ??
+      Note(
+        id: 'new-note',
+        boardId: '',
+        title: '',
+        content: '',
+        color: NoteColor.none,
+        authorName: defaultAuthorName,
+        isCompleted: false,
+        positionX: 0,
+        positionY: 0,
+        createdAt: now,
+        updatedAt: now,
+      );
   return showGeneralDialog<NoteDraft>(
     context: context,
     barrierDismissible: true,
@@ -210,12 +223,11 @@ class _NotePreviewDialog extends StatefulWidget {
 }
 
 class _NotePreviewDialogState extends State<_NotePreviewDialog> {
+  static const _historyLimit = 5;
   final _inlineEditTarget = ValueNotifier(PostItInlineEditTarget.none);
   final _undoHistory = <NoteDraft>[];
   final _redoHistory = <NoteDraft>[];
   bool _isSaving = false;
-
-  void _openNote() => Navigator.of(context).pop(true);
 
   Future<bool> _saveInlineDraft(NoteDraft draft) =>
       _persistDraft(widget.noteProvider(), draft);
@@ -238,8 +250,10 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     try {
       await widget.onSave(note, draft);
       if (recordHistory && mounted) {
-        _undoHistory.add(previousDraft);
-        _redoHistory.clear();
+        setState(() {
+          _addHistoryEntry(_undoHistory, previousDraft);
+          _redoHistory.clear();
+        });
       }
       return true;
     } on Object {
@@ -268,7 +282,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     if (!saved || !mounted) return;
     setState(() {
       _undoHistory.removeLast();
-      _redoHistory.add(currentDraft);
+      _addHistoryEntry(_redoHistory, currentDraft);
     });
   }
 
@@ -281,8 +295,13 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     if (!saved || !mounted) return;
     setState(() {
       _redoHistory.removeLast();
-      _undoHistory.add(currentDraft);
+      _addHistoryEntry(_undoHistory, currentDraft);
     });
+  }
+
+  void _addHistoryEntry(List<NoteDraft> history, NoteDraft draft) {
+    history.add(draft);
+    if (history.length > _historyLimit) history.removeAt(0);
   }
 
   Future<void> _confirmDelete() async {
@@ -362,8 +381,10 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
       final action = await showModalBottomSheet<_PreviewReminderAction>(
         context: context,
         showDragHandle: true,
-        builder: (sheetContext) =>
-            _PreviewReminderActionsSheet(reminderAt: initialNote.reminderAt!),
+        builder: (sheetContext) => _PreviewReminderActionsSheet(
+          reminderAt: initialNote.reminderAt!,
+          recurrence: initialNote.reminderRecurrence,
+        ),
       );
       if (!mounted || action == null) return;
       if (action == _PreviewReminderAction.remove) {
@@ -374,15 +395,21 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     }
 
     if (!mounted) return;
-    final reminder = await showReminderPicker(
+    final schedule = await showReminderSchedulePicker(
       context,
       currentReminder: initialNote.reminderAt,
+      currentRecurrence: initialNote.reminderRecurrence,
     );
-    if (!mounted || reminder == null) return;
+    if (!mounted || schedule == null) return;
     final note = widget.noteProvider();
     await _persistDraft(
       note,
-      _draftFromNote(note, reminderAt: reminder, replaceReminder: true),
+      _draftFromNote(
+        note,
+        reminderAt: schedule.reminderAt,
+        reminderRecurrence: schedule.recurrence,
+        replaceReminder: true,
+      ),
     );
   }
 
@@ -415,6 +442,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
   }
 
   Future<void> _editAttachment() async {
+    if (_isSaving) return;
     final note = widget.noteProvider();
     if (note.photoAttachments.isNotEmpty) {
       final action = await showModalBottomSheet<_PhotoAction>(
@@ -476,6 +504,9 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
         40;
     final dialogHeight = math.min(680.0, math.max(300.0, availableHeight));
     final dialogWidth = math.min(480.0, mediaQuery.size.width - 32);
+    final note = widget.noteProvider();
+    final cardColor = NoteCategoryStyle.baseColor(note.category);
+    final foregroundColor = NoteCategoryStyle.foregroundColor(note.category);
     final background = BackdropFilter(
       key: const ValueKey('note-preview-background-blur'),
       enabled: useBackdropBlur,
@@ -501,21 +532,33 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                   height: dialogHeight,
                   child: Column(
                     children: [
-                      _PreviewHeader(
-                        isEditing: false,
-                        isSaving: _isSaving,
-                        onClose: () => Navigator.of(context).pop(),
-                      ),
-                      const SizedBox(height: 10),
                       Expanded(
-                        child: RepaintBoundary(
-                          key: const ValueKey('note-preview-card'),
-                          child: widget.cardBuilder(
-                            context,
-                            _editAssignee,
-                            _inlineEditTarget,
-                            _saveInlineDraft,
-                          ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Positioned.fill(
+                              child: RepaintBoundary(
+                                key: const ValueKey('note-preview-card'),
+                                child: widget.cardBuilder(
+                                  context,
+                                  _editAssignee,
+                                  _isSaving ? null : _editAttachment,
+                                  _inlineEditTarget,
+                                  _saveInlineDraft,
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 0,
+                              right: 10,
+                              child: _FloatingPreviewCloseButton(
+                                isSaving: _isSaving,
+                                color: cardColor,
+                                foregroundColor: foregroundColor,
+                                onClose: () => Navigator.of(context).pop(),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -531,7 +574,6 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                         onReminder: _editReminder,
                         onAttachment: _editAttachment,
                         onDelete: _confirmDelete,
-                        onOpenDetail: _openNote,
                       ),
                     ],
                   ),
@@ -568,11 +610,19 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
               begin: const Offset(0, 0.018),
               end: Offset.zero,
             ).animate(entrance),
-            child: ScaleTransition(
-              key: const ValueKey('note-preview-scale-transition'),
-              scale: Tween<double>(begin: 0.975, end: 1).animate(entrance),
-              child: content,
-            ),
+            child: useBackdropBlur
+                ? ScaleTransition(
+                    key: const ValueKey('note-preview-scale-transition'),
+                    scale: Tween<double>(
+                      begin: 0.975,
+                      end: 1,
+                    ).animate(entrance),
+                    child: content,
+                  )
+                : KeyedSubtree(
+                    key: const ValueKey('note-preview-scale-transition'),
+                    child: content,
+                  ),
           ),
         ),
       ],
@@ -657,6 +707,50 @@ class _PreviewHeader extends StatelessWidget {
   }
 }
 
+class _FloatingPreviewCloseButton extends StatelessWidget {
+  const _FloatingPreviewCloseButton({
+    required this.isSaving,
+    required this.color,
+    required this.foregroundColor,
+    required this.onClose,
+  });
+
+  final bool isSaving;
+  final Color color;
+  final Color foregroundColor;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Cerrar',
+      child: Material(
+        color: color,
+        elevation: 3,
+        shadowColor: Colors.black.withValues(alpha: 0.28),
+        shape: CircleBorder(
+          side: BorderSide(color: foregroundColor.withValues(alpha: 0.2)),
+        ),
+        child: InkWell(
+          key: const ValueKey('close-note-preview-button'),
+          onTap: isSaving ? null : onClose,
+          customBorder: const CircleBorder(),
+          child: SizedBox.square(
+            dimension: 30,
+            child: Icon(
+              Icons.close_rounded,
+              color: isSaving
+                  ? foregroundColor.withValues(alpha: 0.38)
+                  : foregroundColor,
+              size: 18,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _QuickNoteEditor extends StatefulWidget {
   const _QuickNoteEditor({
     required this.note,
@@ -694,6 +788,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   late String? _customAssigneeName;
   late List<NoteAttachment> _attachments;
   late DateTime? _reminderAt;
+  late ReminderRecurrence? _reminderRecurrence;
   late bool _descriptionExpanded;
 
   @override
@@ -723,6 +818,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     _customAssigneeName = note.customAssigneeName;
     _attachments = [...note.photoAttachments];
     _reminderAt = note.reminderAt;
+    _reminderRecurrence = note.reminderRecurrence;
     _descriptionExpanded = note.content.trim().isNotEmpty;
   }
 
@@ -805,7 +901,13 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
             image: backgroundAsset == null
                 ? null
                 : DecorationImage(
-                    image: AssetImage(backgroundAsset),
+                    image: ResizeImage(
+                      AssetImage(backgroundAsset),
+                      width: _previewImageCacheWidth(
+                        context,
+                        MediaQuery.sizeOf(context).width,
+                      ),
+                    ),
                     fit: BoxFit.cover,
                     colorFilter: ColorFilter.mode(
                       Colors.black.withValues(alpha: 0.22),
@@ -1066,6 +1168,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         color: _color,
                         category: _category,
                         reminderAt: _reminderAt,
+                        reminderRecurrence: _reminderRecurrence,
                         assignee: _selectedAssignee,
                         attachmentCount: _attachments.length,
                         foregroundColor: foregroundColor,
@@ -1225,22 +1328,31 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
       final action = await showModalBottomSheet<_PreviewReminderAction>(
         context: context,
         showDragHandle: true,
-        builder: (sheetContext) =>
-            _PreviewReminderActionsSheet(reminderAt: reminder),
+        builder: (sheetContext) => _PreviewReminderActionsSheet(
+          reminderAt: reminder,
+          recurrence: _reminderRecurrence,
+        ),
       );
       if (!mounted || action == null) return;
       if (action == _PreviewReminderAction.remove) {
-        setState(() => _reminderAt = null);
+        setState(() {
+          _reminderAt = null;
+          _reminderRecurrence = null;
+        });
         return;
       }
     }
     if (!mounted) return;
-    final reminder = await showReminderPicker(
+    final schedule = await showReminderSchedulePicker(
       context,
       currentReminder: _reminderAt,
+      currentRecurrence: _reminderRecurrence,
     );
-    if (!mounted || reminder == null) return;
-    setState(() => _reminderAt = reminder);
+    if (!mounted || schedule == null) return;
+    setState(() {
+      _reminderAt = schedule.reminderAt;
+      _reminderRecurrence = schedule.recurrence;
+    });
   }
 
   Future<void> _pickAssignee() async {
@@ -1320,6 +1432,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
         customAssigneeName: _customAssigneeName,
         attachments: _attachments,
         reminderAt: _reminderAt,
+        reminderRecurrence: _reminderRecurrence,
       ),
     );
   }
@@ -1330,6 +1443,7 @@ class _QuickEditorTools extends StatelessWidget {
     required this.color,
     required this.category,
     required this.reminderAt,
+    required this.reminderRecurrence,
     required this.assignee,
     required this.attachmentCount,
     required this.foregroundColor,
@@ -1345,6 +1459,7 @@ class _QuickEditorTools extends StatelessWidget {
   final NoteColor color;
   final NoteCategory category;
   final DateTime? reminderAt;
+  final ReminderRecurrence? reminderRecurrence;
   final ListCollaborator? assignee;
   final int attachmentCount;
   final Color foregroundColor;
@@ -1415,8 +1530,12 @@ class _QuickEditorTools extends StatelessWidget {
                 key: const ValueKey('quick-editor-reminder-action'),
                 tooltip: reminderAt == null
                     ? 'Agregar recordatorio'
-                    : 'Cambiar recordatorio',
-                icon: reminderAt == null
+                    : reminderRecurrence == null
+                    ? 'Cambiar recordatorio'
+                    : 'Cambiar recordatorio recurrente',
+                icon: reminderRecurrence != null
+                    ? Icons.repeat_rounded
+                    : reminderAt == null
                     ? Icons.notifications_none_rounded
                     : Icons.notifications_active_rounded,
                 dimension: actionExtent,
@@ -1562,6 +1681,7 @@ NoteDraft _draftFromNote(
   List<NoteAttachment>? attachments,
   bool replaceAttachments = false,
   DateTime? reminderAt,
+  ReminderRecurrence? reminderRecurrence,
   bool replaceReminder = false,
 }) => NoteDraft(
   title: note.title,
@@ -1579,6 +1699,9 @@ NoteDraft _draftFromNote(
       ? attachments ?? const []
       : note.photoAttachments,
   reminderAt: replaceReminder ? reminderAt : note.reminderAt,
+  reminderRecurrence: replaceReminder
+      ? reminderRecurrence
+      : note.reminderRecurrence,
 );
 
 class _PreviewEditingDock extends StatelessWidget {
@@ -1594,7 +1717,6 @@ class _PreviewEditingDock extends StatelessWidget {
     required this.onReminder,
     required this.onAttachment,
     required this.onDelete,
-    required this.onOpenDetail,
   });
 
   final Note note;
@@ -1608,7 +1730,6 @@ class _PreviewEditingDock extends StatelessWidget {
   final VoidCallback onReminder;
   final VoidCallback onAttachment;
   final VoidCallback onDelete;
-  final VoidCallback onOpenDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -1701,8 +1822,12 @@ class _PreviewEditingDock extends StatelessWidget {
                                   ),
                                   tooltip: note.reminderAt == null
                                       ? 'Agregar recordatorio'
-                                      : 'Cambiar recordatorio',
-                                  icon: note.reminderAt == null
+                                      : note.reminderRecurrence == null
+                                      ? 'Cambiar recordatorio'
+                                      : 'Cambiar recordatorio recurrente',
+                                  icon: note.reminderRecurrence != null
+                                      ? Icons.repeat_rounded
+                                      : note.reminderAt == null
                                       ? Icons.notifications_none_rounded
                                       : Icons.notifications_active_rounded,
                                   selected: note.reminderAt != null,
@@ -1714,10 +1839,10 @@ class _PreviewEditingDock extends StatelessWidget {
                                     'preview-attachment-action',
                                   ),
                                   tooltip: note.photoAttachments.isEmpty
-                                      ? 'Agregar fotos o PDF'
+                                      ? 'Adjuntar foto o PDF'
                                       : 'Administrar adjuntos '
                                             '(${note.photoAttachments.length}/2)',
-                                  icon: Icons.add_photo_alternate_outlined,
+                                  icon: Icons.attach_file_rounded,
                                   selected: note.photoAttachments.isNotEmpty,
                                   onPressed: isSaving ? null : onAttachment,
                                 ),
@@ -1728,18 +1853,13 @@ class _PreviewEditingDock extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 2),
-                    _PreviewDockAction(
-                      key: const ValueKey('preview-undo-action'),
-                      tooltip: 'Deshacer',
-                      icon: Icons.undo_rounded,
-                      onPressed: isSaving || !canUndo ? null : onUndo,
-                    ),
-                    const SizedBox(width: 2),
-                    _PreviewDockAction(
-                      key: const ValueKey('preview-redo-action'),
-                      tooltip: 'Rehacer',
-                      icon: Icons.redo_rounded,
-                      onPressed: isSaving || !canRedo ? null : onRedo,
+                    _PreviewHistoryAction(
+                      key: const ValueKey('preview-history-action'),
+                      isSaving: isSaving,
+                      canUndo: canUndo,
+                      canRedo: canRedo,
+                      onUndo: onUndo,
+                      onRedo: onRedo,
                     ),
                     const SizedBox(width: 2),
                     _PreviewDockAction(
@@ -1749,17 +1869,90 @@ class _PreviewEditingDock extends StatelessWidget {
                       destructive: true,
                       onPressed: isSaving ? null : onDelete,
                     ),
-                    const SizedBox(width: 2),
-                    _PreviewDockAction(
-                      key: const ValueKey('open-note-from-preview-button'),
-                      tooltip: 'Abrir detalle completo',
-                      icon: Icons.open_in_full_rounded,
-                      onPressed: isSaving ? null : onOpenDetail,
-                    ),
                   ],
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _PreviewHistoryCommand { undo, redo }
+
+class _PreviewHistoryAction extends StatelessWidget {
+  const _PreviewHistoryAction({
+    required this.isSaving,
+    required this.canUndo,
+    required this.canRedo,
+    required this.onUndo,
+    required this.onRedo,
+    super.key,
+  });
+
+  final bool isSaving;
+  final bool canUndo;
+  final bool canRedo;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox.square(
+      dimension: 44,
+      child: PopupMenuButton<_PreviewHistoryCommand>(
+        tooltip: 'Deshacer o rehacer',
+        enabled: !isSaving && (canUndo || canRedo),
+        position: PopupMenuPosition.under,
+        constraints: const BoxConstraints(minWidth: 164, maxWidth: 184),
+        menuPadding: const EdgeInsets.symmetric(vertical: 4),
+        color: colorScheme.surfaceContainerHigh,
+        elevation: 8,
+        onSelected: (command) {
+          switch (command) {
+            case _PreviewHistoryCommand.undo:
+              onUndo();
+            case _PreviewHistoryCommand.redo:
+              onRedo();
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            key: const ValueKey('preview-undo-action'),
+            value: _PreviewHistoryCommand.undo,
+            enabled: canUndo,
+            height: 42,
+            child: const Row(
+              children: [
+                Icon(Icons.undo_rounded, size: 20),
+                SizedBox(width: 12),
+                Text('Deshacer'),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('preview-redo-action'),
+            value: _PreviewHistoryCommand.redo,
+            enabled: canRedo,
+            height: 42,
+            child: const Row(
+              children: [
+                Icon(Icons.redo_rounded, size: 20),
+                SizedBox(width: 12),
+                Text('Rehacer'),
+              ],
+            ),
+          ),
+        ],
+        icon: const Icon(Icons.history_rounded, size: 21),
+        style: IconButton.styleFrom(
+          minimumSize: const Size.square(44),
+          foregroundColor: colorScheme.onSurface,
+          disabledForegroundColor: colorScheme.onSurface.withValues(
+            alpha: 0.32,
           ),
         ),
       ),
@@ -2014,8 +2207,15 @@ class _PreviewCategoryPickerSheet extends StatelessWidget {
                           image: NoteCategoryStyle.assetPath(category) == null
                               ? null
                               : DecorationImage(
-                                  image: AssetImage(
-                                    NoteCategoryStyle.assetPath(category)!,
+                                  image: ResizeImage(
+                                    AssetImage(
+                                      NoteCategoryStyle.assetPath(category)!,
+                                    ),
+                                    width: _previewImageCacheWidth(
+                                      context,
+                                      58,
+                                      maximum: 256,
+                                    ),
                                   ),
                                   fit: BoxFit.cover,
                                   colorFilter: ColorFilter.mode(
@@ -2260,9 +2460,13 @@ class _PhotoActionsSheet extends StatelessWidget {
 enum _PreviewReminderAction { change, remove }
 
 class _PreviewReminderActionsSheet extends StatelessWidget {
-  const _PreviewReminderActionsSheet({required this.reminderAt});
+  const _PreviewReminderActionsSheet({
+    required this.reminderAt,
+    required this.recurrence,
+  });
 
   final DateTime reminderAt;
+  final ReminderRecurrence? recurrence;
 
   @override
   Widget build(BuildContext context) {
@@ -2281,7 +2485,13 @@ class _PreviewReminderActionsSheet extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${MaterialLocalizations.of(context).formatMediumDate(reminderAt)} · ${TimeOfDay.fromDateTime(reminderAt).format(context)}',
+              recurrence == null
+                  ? '${MaterialLocalizations.of(context).formatMediumDate(reminderAt)} · ${TimeOfDay.fromDateTime(reminderAt).format(context)}'
+                  : reminderRecurrenceLabel(
+                      recurrence!,
+                      reminderAt,
+                      includeTime: true,
+                    ),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),

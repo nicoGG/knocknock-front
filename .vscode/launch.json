@@ -22,6 +22,28 @@
         "--dart-define=API_BASE_URL=https://knocknock-backend-production.up.railway.app/api",
         "--dart-define=SOCKET_BASE_URL=https://knocknock-backend-production.up.railway.app"
       ]
+    },
+    {
+      "name": "NockNock - Local (Release)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "flutterMode": "release",
+      "toolArgs": [
+        "--dart-define=API_BASE_URL=http://localhost:4000/api",
+        "--dart-define=SOCKET_BASE_URL=http://localhost:4000"
+      ]
+    },
+    {
+      "name": "NockNock - URL Prod (Release)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "flutterMode": "release",
+      "toolArgs": [
+        "--dart-define=API_BASE_URL=https://knocknock-backend-production.up.railway.app/api",
+        "--dart-define=SOCKET_BASE_URL=https://knocknock-backend-production.up.railway.app"
+      ]
     }
   ]
 }

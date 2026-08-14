@@ -27,6 +27,9 @@ class BoardViewModeController extends ChangeNotifier {
   NoteFilter filterFor(String listId) =>
       _preferencesByList[listId]?.filter ?? NoteFilter.all;
 
+  bool completedSectionExpandedFor(String listId) =>
+      _preferencesByList[listId]?.completedSectionExpanded ?? true;
+
   Future<void> load() async {
     try {
       final preferences = await _preferencesLoader();
@@ -60,6 +63,16 @@ class BoardViewModeController extends ChangeNotifier {
     return _schedulePersist();
   }
 
+  Future<void> setCompletedSectionExpanded(String listId, bool value) {
+    final current = _preferencesFor(listId);
+    if (current.completedSectionExpanded == value) return Future.value();
+    _preferencesByList[listId] = current.copyWith(
+      completedSectionExpanded: value,
+    );
+    notifyListeners();
+    return _schedulePersist();
+  }
+
   Future<void> forgetList(String listId) {
     if (_preferencesByList.remove(listId) == null) return Future.value();
     notifyListeners();
@@ -68,7 +81,11 @@ class BoardViewModeController extends ChangeNotifier {
 
   _BoardListPreferences _preferencesFor(String listId) =>
       _preferencesByList[listId] ??
-      _BoardListPreferences(viewMode: _legacyViewMode, filter: NoteFilter.all);
+      _BoardListPreferences(
+        viewMode: _legacyViewMode,
+        filter: NoteFilter.all,
+        completedSectionExpanded: true,
+      );
 
   Future<void> _schedulePersist() {
     _writeQueue = _writeQueue.then((_) async {
@@ -105,7 +122,11 @@ class BoardViewModeController extends ChangeNotifier {
 }
 
 class _BoardListPreferences {
-  const _BoardListPreferences({required this.viewMode, required this.filter});
+  const _BoardListPreferences({
+    required this.viewMode,
+    required this.filter,
+    required this.completedSectionExpanded,
+  });
 
   factory _BoardListPreferences.fromJson(Map<String, dynamic> json) =>
       _BoardListPreferences(
@@ -118,21 +139,28 @@ class _BoardListPreferences {
           'completed' => NoteFilter.completed,
           _ => NoteFilter.all,
         },
+        completedSectionExpanded:
+            json['completedSectionExpanded'] as bool? ?? true,
       );
 
   final BoardViewMode viewMode;
   final NoteFilter filter;
+  final bool completedSectionExpanded;
 
   _BoardListPreferences copyWith({
     BoardViewMode? viewMode,
     NoteFilter? filter,
+    bool? completedSectionExpanded,
   }) => _BoardListPreferences(
     viewMode: viewMode ?? this.viewMode,
     filter: filter ?? this.filter,
+    completedSectionExpanded:
+        completedSectionExpanded ?? this.completedSectionExpanded,
   );
 
-  Map<String, String> toJson() => {
+  Map<String, Object> toJson() => {
     'viewMode': viewMode.name,
     'filter': filter.name,
+    'completedSectionExpanded': completedSectionExpanded,
   };
 }

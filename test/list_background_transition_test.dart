@@ -50,8 +50,7 @@ void main() {
     final transitionBlur = find.byKey(
       const ValueKey('background-transition-blur'),
     );
-    expect(transitionBlur, findsOneWidget);
-    expect(tester.widget<ImageFiltered>(transitionBlur).enabled, isFalse);
+    expect(transitionBlur, findsNothing);
 
     await tester.pumpWidget(
       board(
@@ -79,7 +78,6 @@ void main() {
     expect(find.byKey(const ValueKey('preset-background-paper')), findsNothing);
     expect(find.byKey(const ValueKey('preset-background-lavender')), findsOne);
     expect(find.byKey(const ValueKey('board-content')), findsOne);
-    expect(transitionBlur, findsOneWidget);
-    expect(tester.widget<ImageFiltered>(transitionBlur).enabled, isFalse);
+    expect(transitionBlur, findsNothing);
   });
 }

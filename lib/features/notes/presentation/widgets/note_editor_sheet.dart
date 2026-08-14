@@ -67,6 +67,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   late bool _usesCustomAssignee;
   late List<NoteAttachment> _attachments;
   DateTime? _reminderAt;
+  ReminderRecurrence? _reminderRecurrence;
 
   @override
   void initState() {
@@ -103,6 +104,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _usesCustomAssignee = note?.customAssigneeName?.trim().isNotEmpty == true;
     _attachments = [...?note?.photoAttachments];
     _reminderAt = note?.reminderAt;
+    _reminderRecurrence = note?.reminderRecurrence;
   }
 
   @override
@@ -404,6 +406,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                 const SizedBox(height: 18),
                 _GlassReminderButton(
                   reminderAt: _reminderAt,
+                  recurrence: _reminderRecurrence,
                   onPressed: _selectReminder,
                 ),
                 const SizedBox(height: 12),
@@ -477,12 +480,16 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   }
 
   Future<void> _selectReminder() async {
-    final reminder = await showReminderPicker(
+    final schedule = await showReminderSchedulePicker(
       context,
       currentReminder: _reminderAt,
+      currentRecurrence: _reminderRecurrence,
     );
-    if (reminder == null || !mounted) return;
-    setState(() => _reminderAt = reminder);
+    if (schedule == null || !mounted) return;
+    setState(() {
+      _reminderAt = schedule.reminderAt;
+      _reminderRecurrence = schedule.recurrence;
+    });
   }
 
   void _submit() {
@@ -517,6 +524,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
             : null,
         attachments: _attachments,
         reminderAt: _reminderAt,
+        reminderRecurrence: _reminderRecurrence,
       ),
     );
   }
@@ -728,10 +736,12 @@ class _GlassNoteEditorSurface extends StatelessWidget {
 class _GlassReminderButton extends StatelessWidget {
   const _GlassReminderButton({
     required this.reminderAt,
+    required this.recurrence,
     required this.onPressed,
   });
 
   final DateTime? reminderAt;
+  final ReminderRecurrence? recurrence;
   final VoidCallback onPressed;
 
   @override
@@ -741,7 +751,9 @@ class _GlassReminderButton extends StatelessWidget {
     final borderRadius = BorderRadius.circular(20);
     final title = reminderAt == null
         ? 'Agregar recordatorio'
-        : DateFormat("EEE d MMM · HH:mm", 'es').format(reminderAt!);
+        : recurrence == null
+        ? DateFormat("EEE d MMM · HH:mm", 'es').format(reminderAt!)
+        : reminderRecurrenceLabel(recurrence!, reminderAt!, includeTime: true);
 
     return Semantics(
       button: true,

@@ -154,6 +154,69 @@ class _GlassNewNoteSurface extends StatelessWidget {
     final softTint = backgroundColor.withValues(
       alpha: enabled ? (isDark ? 0.44 : 0.5) : 0.24,
     );
+    final useBackdropBlur =
+        Theme.of(context).platform != TargetPlatform.android;
+    final surface = Material(
+      color: Colors.transparent,
+      child: Stack(
+        children: [
+          SizedBox(
+            height: minHeight,
+            child: Ink(
+              key: ValueKey('$keyPrefix-glass-surface'),
+              decoration: BoxDecoration(
+                borderRadius: borderRadius,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.alphaBlend(
+                      Colors.white.withValues(alpha: isDark ? 0.1 : 0.2),
+                      strongTint,
+                    ),
+                    softTint,
+                  ],
+                ),
+              ),
+              child: InkWell(
+                onTap: onPressed,
+                enableFeedback: false,
+                borderRadius: borderRadius,
+                child: Padding(
+                  padding: padding,
+                  child: IconTheme(
+                    data: IconThemeData(color: contentColor),
+                    child: DefaultTextStyle.merge(
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: contentColor,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      child: child,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: Colors.white.withValues(
+                      alpha: enabled
+                          ? (isDark ? 0.28 : 0.46)
+                          : (isDark ? 0.14 : 0.24),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -175,72 +238,16 @@ class _GlassNewNoteSurface extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: borderRadius,
-        child: BackdropFilter(
-          key: ValueKey('$keyPrefix-glass-blur'),
-          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Material(
-            color: Colors.transparent,
-            child: Stack(
-              children: [
-                SizedBox(
-                  height: minHeight,
-                  child: Ink(
-                    key: ValueKey('$keyPrefix-glass-surface'),
-                    decoration: BoxDecoration(
-                      borderRadius: borderRadius,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Color.alphaBlend(
-                            Colors.white.withValues(alpha: isDark ? 0.1 : 0.2),
-                            strongTint,
-                          ),
-                          softTint,
-                        ],
-                      ),
-                    ),
-                    child: InkWell(
-                      onTap: onPressed,
-                      enableFeedback: false,
-                      borderRadius: borderRadius,
-                      child: Padding(
-                        padding: padding,
-                        child: IconTheme(
-                          data: IconThemeData(color: contentColor),
-                          child: DefaultTextStyle.merge(
-                            style: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(
-                                  color: contentColor,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                            child: child,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: borderRadius,
-                        border: Border.all(
-                          color: Colors.white.withValues(
-                            alpha: enabled
-                                ? (isDark ? 0.28 : 0.46)
-                                : (isDark ? 0.14 : 0.24),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: useBackdropBlur
+            ? BackdropFilter(
+                key: ValueKey('$keyPrefix-glass-blur'),
+                filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: surface,
+              )
+            : KeyedSubtree(
+                key: ValueKey('$keyPrefix-glass-blur'),
+                child: surface,
+              ),
       ),
     );
   }

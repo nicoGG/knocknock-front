@@ -463,6 +463,8 @@ class NoteRichTextEditor extends StatefulWidget {
     this.editorKey,
     this.foregroundColor,
     this.backgroundColor,
+    this.focusNode,
+    this.onFocusChanged,
     this.linkMetadataLoader = loadNoteLinkMetadata,
     super.key,
   });
@@ -476,6 +478,8 @@ class NoteRichTextEditor extends StatefulWidget {
   final Key? editorKey;
   final Color? foregroundColor;
   final Color? backgroundColor;
+  final FocusNode? focusNode;
+  final ValueChanged<bool>? onFocusChanged;
   final NoteLinkMetadataLoader linkMetadataLoader;
 
   @override
@@ -484,7 +488,8 @@ class NoteRichTextEditor extends StatefulWidget {
 
 class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
   late final QuillController _controller;
-  final FocusNode _focusNode = FocusNode(debugLabel: 'note-detail-editor');
+  late final FocusNode _focusNode;
+  late final bool _ownsFocusNode;
   final ScrollController _scrollController = ScrollController();
   late int _characterCount;
   late final Set<String> _hiddenLinkPreviews;
@@ -495,6 +500,10 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
   @override
   void initState() {
     super.initState();
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode =
+        widget.focusNode ?? FocusNode(debugLabel: 'note-detail-editor');
+    _focusNode.addListener(_handleFocusChanged);
     final initialContent = normalizeNoteRichContent(
       NoteRichContent(
         plainText: widget.initialPlainText,
@@ -524,10 +533,14 @@ class _NoteRichTextEditorState extends State<NoteRichTextEditor> {
     _controller
       ..removeListener(_handleDocumentChanged)
       ..dispose();
-    _focusNode.dispose();
+    _focusNode.removeListener(_handleFocusChanged);
+    if (_ownsFocusNode) _focusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
+  void _handleFocusChanged() =>
+      widget.onFocusChanged?.call(_focusNode.hasFocus);
 
   void _handleDocumentChanged() {
     if (_isCapitalizingInitialLetter || _isApplyingLinkEdit) return;

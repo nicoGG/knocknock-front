@@ -19,6 +19,10 @@ void main() {
       of: find.byType(PostItCard),
       matching: find.byType(AnimatedScale),
     );
+    expect(
+      find.byKey(const ValueKey('note-raster-boundary-note-1-grid')),
+      findsNothing,
+    );
     expect(tester.widget<AnimatedScale>(cardScale).scale, 1);
 
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);

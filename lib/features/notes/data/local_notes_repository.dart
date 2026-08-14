@@ -238,6 +238,7 @@ class LocalNotesRepository
       positionX: 0,
       positionY: 0,
       reminderAt: draft.reminderAt,
+      reminderRecurrence: draft.reminderRecurrence,
       createdAt: now,
       updatedAt: now,
     );
@@ -269,6 +270,15 @@ class LocalNotesRepository
     if (index == -1) throw const NotesPersistenceFailure();
 
     final existing = _notes![index];
+    final reminderRecurrence = changes.containsKey('reminderRecurrence')
+        ? changes['reminderRecurrence'] is Map
+              ? ReminderRecurrence.fromJson(
+                  Map<String, dynamic>.from(
+                    changes['reminderRecurrence'] as Map,
+                  ),
+                )
+              : null
+        : existing.reminderRecurrence;
     final note = Note(
       id: existing.id,
       boardId: existing.boardId,
@@ -323,7 +333,9 @@ class LocalNotesRepository
                   ]
                 : const []
           : existing.photoAttachments,
-      isCompleted: changes['isCompleted'] as bool? ?? existing.isCompleted,
+      isCompleted: reminderRecurrence == null
+          ? changes['isCompleted'] as bool? ?? existing.isCompleted
+          : false,
       isPinned: changes['isPinned'] as bool? ?? existing.isPinned,
       sortOrder: (changes['sortOrder'] as num?)?.toInt() ?? existing.sortOrder,
       positionX:
@@ -333,6 +345,7 @@ class LocalNotesRepository
       reminderAt: changes.containsKey('reminderAt')
           ? DateTime.tryParse(changes['reminderAt'] as String? ?? '')
           : existing.reminderAt,
+      reminderRecurrence: reminderRecurrence,
       createdAt: existing.createdAt,
       updatedAt: DateTime.now(),
     );

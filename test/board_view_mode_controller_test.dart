@@ -9,19 +9,22 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('persists view and status filter independently for each list', () async {
+  test('persists view, status filter and completed section per list', () async {
     final controller = BoardViewModeController();
     await controller.load();
     expect(controller.viewModeFor('home'), BoardViewMode.grid);
     expect(controller.filterFor('home'), NoteFilter.all);
+    expect(controller.completedSectionExpandedFor('home'), isTrue);
     expect(controller.viewModeFor('work'), BoardViewMode.grid);
     expect(controller.filterFor('work'), NoteFilter.all);
 
     await controller.setViewMode('home', BoardViewMode.list);
     await controller.setFilter('home', NoteFilter.pending);
     await controller.setFilter('work', NoteFilter.completed);
+    await controller.setCompletedSectionExpanded('home', false);
     expect(controller.viewModeFor('home'), BoardViewMode.list);
     expect(controller.filterFor('home'), NoteFilter.pending);
+    expect(controller.completedSectionExpandedFor('home'), isFalse);
     expect(controller.viewModeFor('work'), BoardViewMode.grid);
     expect(controller.filterFor('work'), NoteFilter.completed);
     controller.dispose();
@@ -30,6 +33,7 @@ void main() {
     await reopenedController.load();
     expect(reopenedController.viewModeFor('home'), BoardViewMode.list);
     expect(reopenedController.filterFor('home'), NoteFilter.pending);
+    expect(reopenedController.completedSectionExpandedFor('home'), isFalse);
     expect(reopenedController.viewModeFor('work'), BoardViewMode.grid);
     expect(reopenedController.filterFor('work'), NoteFilter.completed);
     reopenedController.dispose();
