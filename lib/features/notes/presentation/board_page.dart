@@ -29,6 +29,7 @@ import 'package:nocknock/features/notes/presentation/note_detail_page.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/list_protection_guard.dart';
 import 'package:nocknock/features/notes/presentation/sync_conflicts_sheet.dart';
+import 'package:nocknock/features/notes/presentation/trash_page.dart';
 import 'package:nocknock/features/notes/presentation/widgets/board_loading_state.dart';
 import 'package:nocknock/features/notes/presentation/widgets/collapsing_new_note_fab.dart';
 import 'package:nocknock/features/notes/presentation/widgets/list_background.dart';
@@ -119,6 +120,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   final Set<String> _automaticUnlockAttemptedListIds = {};
   final ListShortcutsController _listShortcutsController =
       ListShortcutsController();
+  Timer? _drawerScopeRefreshTimer;
+  String? _precachedDrawerPhotoUrl;
+  bool _didPrecacheDrawerLogo = false;
 
   @override
   void initState() {
@@ -180,6 +184,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _precacheDrawerImages();
     if (MediaQuery.disableAnimationsOf(context)) {
       _entranceController.value = 1;
       _contentTransitionController.value = 1;
@@ -194,6 +199,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     _entranceController.dispose();
     _contentTransitionController.dispose();
     _filterOrderController.dispose();
+    _drawerScopeRefreshTimer?.cancel();
     _listShortcutsController
       ..removeListener(_refreshShortcuts)
       ..dispose();
@@ -207,6 +213,50 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
 
   void _update(VoidCallback update) {
     if (mounted) setState(update);
+  }
+
+  void _handleDrawerChanged(bool isOpened) {
+    _drawerScopeRefreshTimer?.cancel();
+    if (!isOpened) return;
+    _drawerScopeRefreshTimer = Timer(const Duration(milliseconds: 360), () {
+      if (!mounted) return;
+      unawaited(context.read<NotesCubit>().refreshScopeNotesIfStale());
+    });
+  }
+
+  void _precacheDrawerImages() {
+    if (!_didPrecacheDrawerLogo) {
+      _didPrecacheDrawerLogo = true;
+      unawaited(
+        precacheImage(
+          const AssetImage('assets/branding/nocknock-logo.png'),
+          context,
+        ).catchError((_) {}),
+      );
+    }
+
+    final photoUrl = context
+        .read<AuthRepository>()
+        .currentUser
+        ?.photoUrl
+        ?.trim();
+    if (photoUrl == null ||
+        photoUrl.isEmpty ||
+        photoUrl == _precachedDrawerPhotoUrl) {
+      return;
+    }
+    _precachedDrawerPhotoUrl = photoUrl;
+    unawaited(
+      precacheImage(
+        NetworkImage(photoUrl),
+        context,
+        onError: (_, _) {
+          if (_precachedDrawerPhotoUrl == photoUrl) {
+            _precachedDrawerPhotoUrl = null;
+          }
+        },
+      ),
+    );
   }
 
   @override
@@ -298,11 +348,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
-          onDrawerChanged: (isOpened) {
-            if (isOpened) {
-              unawaited(context.read<NotesCubit>().loadScopeNotes());
-            }
-          },
+          onDrawerChanged: _handleDrawerChanged,
           appBar: _AppBar(
             isConnected: state.isRealtimeConnected,
             isConnecting: state.isRealtimeConnecting,
@@ -332,6 +378,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             onCreateList: _createList,
             onOpenProfile: _openProfile,
             onOpenSettings: _openSettings,
+            onOpenTrash: _openTrash,
             favoriteListIds: _listShortcutsController.favorites,
             recentListIds: _listShortcutsController.recents,
             onToggleFavorite: _listShortcutsController.toggleFavorite,

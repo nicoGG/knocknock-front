@@ -229,6 +229,13 @@ abstract interface class NoteAttachmentsRepository {
   Future<NoteAttachment> fetchAttachment(String noteId, String attachmentId);
 }
 
+/// Optional capability for notes kept temporarily after deletion.
+abstract interface class TrashNotesRepository {
+  Future<List<Note>> fetchTrash();
+
+  Future<Note> restoreNote(String id);
+}
+
 class CollaborationRequiresSignInFailure implements Exception {
   const CollaborationRequiresSignInFailure();
 }

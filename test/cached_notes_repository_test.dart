@@ -227,6 +227,38 @@ void main() {
     repository.dispose();
   });
 
+  test(
+    'shows an offline deletion in trash and cancels it on restore',
+    () async {
+      final preferences = await SharedPreferences.getInstance();
+      final store = InMemoryOfflineMutationStore();
+      final remote = _FakeRemoteRepository(
+        lists: [_list()],
+        notes: [_note(title: 'Recuperable')],
+      );
+      final repository = CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+        mutationStore: store,
+      );
+      await repository.fetchLists();
+      await repository.fetchNotes('list-1');
+      remote.isOffline = true;
+
+      await repository.deleteNote('note-1');
+      final trash = await repository.fetchTrash();
+
+      expect(trash.single.title, 'Recuperable');
+      expect(trash.single.deletedAt, isNotNull);
+      final restored = await repository.restoreNote('note-1');
+      expect(restored.deletedAt, isNull);
+      expect((await repository.offlineSyncSummary()).pendingCount, 0);
+      expect(remote.notes, hasLength(1));
+      repository.dispose();
+    },
+  );
+
   test('keeps only the latest offline board order', () async {
     final preferences = await SharedPreferences.getInstance();
     final remote = _FakeRemoteRepository(
@@ -466,7 +498,8 @@ class _FakeRemoteRepository
     implements
         NotesRepository,
         AggregateBoardAppearancesRepository,
-        NoteAttachmentsRepository {
+        NoteAttachmentsRepository,
+        TrashNotesRepository {
   _FakeRemoteRepository({
     required this.lists,
     required this.notes,
@@ -487,6 +520,7 @@ class _FakeRemoteRepository
   bool isOffline = false;
   int attachmentFetchCount = 0;
   final Map<String, NoteAttachment> _attachmentPayloads = {};
+  final List<Note> trashedNotes = [];
 
   @override
   Stream<NotesRealtimeEvent> get realtimeEvents => const Stream.empty();
@@ -496,6 +530,34 @@ class _FakeRemoteRepository
 
   @override
   Future<List<Note>> fetchNotes(String boardId) async => notes;
+
+  @override
+  Future<List<Note>> fetchTrash() async {
+    _throwIfOffline('/notes/trash');
+    return trashedNotes;
+  }
+
+  @override
+  Future<void> deleteNote(
+    String id, {
+    int? expectedRevision,
+    String? clientMutationId,
+  }) async {
+    _throwIfOffline('/notes/$id');
+    final note = notes.singleWhere((item) => item.id == id);
+    notes.removeWhere((item) => item.id == id);
+    trashedNotes.add(note.copyWith(deletedAt: DateTime.now()));
+  }
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    _throwIfOffline('/notes/$id/restore');
+    final note = trashedNotes.singleWhere((item) => item.id == id);
+    trashedNotes.removeWhere((item) => item.id == id);
+    final restored = note.copyWith(clearDeletedAt: true);
+    notes.add(restored);
+    return restored;
+  }
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {

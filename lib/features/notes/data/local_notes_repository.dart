@@ -18,6 +18,7 @@ class LocalNotesRepository
         LocalNotesDataReader,
         AggregateBoardAppearancesRepository,
         NoteAttachmentsRepository,
+        TrashNotesRepository,
         NotesSearchRepository {
   LocalNotesRepository({
     PreferencesLoader? preferencesLoader,
@@ -179,24 +180,33 @@ class LocalNotesRepository
   @override
   Future<List<Note>> fetchNotes(String boardId) async {
     await _ensureLoaded();
-    final notes = _notes!.where((note) => note.boardId == boardId).toList()
-      ..sort(compareNotes);
+    final notes =
+        _notes!
+            .where((note) => note.boardId == boardId && note.deletedAt == null)
+            .toList()
+          ..sort(compareNotes);
     return List.unmodifiable(notes);
   }
 
   @override
   Future<List<Note>> fetchPinnedNotes() async {
     await _ensureLoaded();
-    final notes = _notes!.where((note) => note.isPinned).toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final notes =
+        _notes!
+            .where((note) => note.deletedAt == null && note.isPinned)
+            .toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return List.unmodifiable(notes);
   }
 
   @override
   Future<List<Note>> fetchReminderNotes() async {
     await _ensureLoaded();
-    final notes = _notes!.where((note) => note.reminderAt != null).toList()
-      ..sort(_compareReminderNotes);
+    final notes =
+        _notes!
+            .where((note) => note.deletedAt == null && note.reminderAt != null)
+            .toList()
+          ..sort(_compareReminderNotes);
     return List.unmodifiable(notes);
   }
 
@@ -206,7 +216,9 @@ class LocalNotesRepository
     final listsById = {for (final list in _lists!) list.id: list};
     final results =
         _notes!
-            .where((note) => noteMatchesQuery(note, query))
+            .where(
+              (note) => note.deletedAt == null && noteMatchesQuery(note, query),
+            )
             .map(
               (note) =>
                   NoteSearchResult(note: note, list: listsById[note.boardId]!),
@@ -266,7 +278,9 @@ class LocalNotesRepository
   @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     await _ensureLoaded();
-    final index = _notes!.indexWhere((note) => note.id == id);
+    final index = _notes!.indexWhere(
+      (note) => note.id == id && note.deletedAt == null,
+    );
     if (index == -1) throw const NotesPersistenceFailure();
 
     final existing = _notes![index];
@@ -360,7 +374,9 @@ class LocalNotesRepository
     if (!supportedNoteReactionEmojis.contains(emoji)) {
       throw const NotesPersistenceFailure();
     }
-    final index = _notes!.indexWhere((note) => note.id == id);
+    final index = _notes!.indexWhere(
+      (note) => note.id == id && note.deletedAt == null,
+    );
     if (index == -1) throw const NotesPersistenceFailure();
 
     final existing = _notes![index];
@@ -407,7 +423,7 @@ class LocalNotesRepository
   ) async {
     await _ensureLoaded();
     final boardNotes = _notes!
-        .where((note) => note.boardId == boardId)
+        .where((note) => note.boardId == boardId && note.deletedAt == null)
         .toList();
     final existingIds = boardNotes.map((note) => note.id).toSet();
     if (orderedIds.length != boardNotes.length ||
@@ -439,10 +455,38 @@ class LocalNotesRepository
     String? clientMutationId,
   }) async {
     await _ensureLoaded();
-    final index = _notes!.indexWhere((note) => note.id == id);
+    final index = _notes!.indexWhere(
+      (note) => note.id == id && note.deletedAt == null,
+    );
     if (index == -1) throw const NotesPersistenceFailure();
-    _notes!.removeAt(index);
+    _notes![index] = _notes![index].copyWith(deletedAt: DateTime.now());
     await _persist();
+  }
+
+  @override
+  Future<List<Note>> fetchTrash() async {
+    await _ensureLoaded();
+    await _purgeExpiredTrash();
+    final notes = _notes!.where((note) => note.deletedAt != null).toList()
+      ..sort((a, b) => b.deletedAt!.compareTo(a.deletedAt!));
+    return List.unmodifiable(notes);
+  }
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    await _ensureLoaded();
+    await _purgeExpiredTrash();
+    final index = _notes!.indexWhere(
+      (note) => note.id == id && note.deletedAt != null,
+    );
+    if (index == -1) throw const NotesPersistenceFailure();
+    final restored = _notes![index].copyWith(
+      clearDeletedAt: true,
+      updatedAt: DateTime.now(),
+    );
+    _notes![index] = restored;
+    await _persist();
+    return restored;
   }
 
   @override
@@ -453,7 +497,7 @@ class LocalNotesRepository
     await _ensureLoaded();
     return LocalNotesSnapshot(
       lists: List.unmodifiable(_lists!),
-      notes: List.unmodifiable(_notes!),
+      notes: List.unmodifiable(_notes!.where((note) => note.deletedAt == null)),
     );
   }
 
@@ -526,6 +570,15 @@ class LocalNotesRepository
       _aggregateBoardAppearances = const AggregateBoardAppearances();
       await _persist();
     }
+  }
+
+  Future<void> _purgeExpiredTrash() async {
+    final cutoff = DateTime.now().subtract(const Duration(days: 7));
+    final previousLength = _notes!.length;
+    _notes!.removeWhere(
+      (note) => note.deletedAt != null && !note.deletedAt!.isAfter(cutoff),
+    );
+    if (_notes!.length != previousLength) await _persist();
   }
 
   Future<void> _persist() async {

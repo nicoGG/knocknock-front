@@ -510,6 +510,35 @@ void main() {
     expect(persisted, isNot(contains('Comprar pan')));
     repository.dispose();
   });
+
+  test('decrypts trashed notes and restores the encrypted record', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    remote.rawNote = remote.rawNote.copyWith(
+      deletedAt: DateTime.utc(2026, 8, 14),
+    );
+
+    final trashed = (await repository.fetchTrash()).single;
+    expect(trashed.title, 'Comprar pan');
+    expect(trashed.deletedAt, DateTime.utc(2026, 8, 14));
+
+    final restored = await repository.restoreNote(trashed.id);
+    expect(restored.title, 'Comprar pan');
+    expect(restored.deletedAt, isNull);
+    expect(remote.rawNote.title, startsWith(e2eeCiphertextPrefix));
+    repository.dispose();
+  });
 }
 
 class _FakeE2eeRemote extends Fake
@@ -517,7 +546,8 @@ class _FakeE2eeRemote extends Fake
         NotesRepository,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
-        NoteAttachmentsRepository {
+        NoteAttachmentsRepository,
+        TrashNotesRepository {
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';
@@ -591,6 +621,22 @@ class _FakeE2eeRemote extends Fake
   Future<List<Note>> fetchNotes(String boardId) async {
     fetchNotesCalls++;
     return [rawNote];
+  }
+
+  @override
+  Future<List<Note>> fetchTrash() async =>
+      rawNote.deletedAt == null ? const [] : [rawNote];
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    if (rawNote.id != id || rawNote.deletedAt == null) {
+      throw const NotesPersistenceFailure();
+    }
+    rawNote = rawNote.copyWith(
+      clearDeletedAt: true,
+      revision: rawNote.revision + 1,
+    );
+    return rawNote;
   }
 
   @override

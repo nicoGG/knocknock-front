@@ -19,6 +19,7 @@ class ApiNotesRepository
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         NoteAttachmentsRepository,
+        TrashNotesRepository,
         PaginatedNotesRepository {
   ApiNotesRepository({
     required String apiBaseUrl,
@@ -385,6 +386,22 @@ class ApiNotesRepository
     return (response.data ?? const [])
         .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+  }
+
+  @override
+  Future<List<Note>> fetchTrash() async {
+    final response = await _dio.get<List<dynamic>>('/notes/trash');
+    return (response.data ?? const [])
+        .map((item) => Note.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/notes/$id/restore',
+    );
+    return Note.fromJson(response.data!);
   }
 
   @override

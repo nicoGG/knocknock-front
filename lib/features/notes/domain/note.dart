@@ -303,6 +303,7 @@ class Note extends Equatable {
     this.reminderRecurrence,
     this.contentDelta,
     this.revision = 0,
+    this.deletedAt,
   }) : _legacyAttachment = attachment;
 
   factory Note.fromJson(Map<String, dynamic> json) {
@@ -352,6 +353,7 @@ class Note extends Equatable {
       reminderAt: _localDateTimeFromJson(json['reminderAt']),
       reminderRecurrence: reminderRecurrence,
       revision: (json['revision'] as num?)?.toInt() ?? 0,
+      deletedAt: _localDateTimeFromJson(json['deletedAt']),
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
@@ -386,6 +388,7 @@ class Note extends Equatable {
   final ReminderRecurrence? reminderRecurrence;
   bool get isRecurring => reminderAt != null && reminderRecurrence != null;
   final int revision;
+  final DateTime? deletedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -412,6 +415,7 @@ class Note extends Equatable {
     if (reminderRecurrence != null)
       'reminderRecurrence': reminderRecurrence!.toJson(),
     'revision': revision,
+    if (deletedAt != null) 'deletedAt': reminderDateTimeToJson(deletedAt!),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };
@@ -426,6 +430,8 @@ class Note extends Equatable {
     List<NoteAttachment>? attachments,
     DateTime? updatedAt,
     int? revision,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) => Note(
     id: id,
     boardId: boardId,
@@ -450,6 +456,7 @@ class Note extends Equatable {
     reminderAt: reminderAt,
     reminderRecurrence: reminderRecurrence,
     revision: revision ?? this.revision,
+    deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -477,6 +484,7 @@ class Note extends Equatable {
     reminderAt,
     reminderRecurrence,
     revision,
+    deletedAt,
     createdAt,
     updatedAt,
   ];

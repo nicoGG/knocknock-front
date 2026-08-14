@@ -99,6 +99,32 @@ void main() {
     reopenedRepository.dispose();
   });
 
+  test('keeps deleted guest notes in trash and restores them', () async {
+    final repository = LocalNotesRepository();
+    final note = await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Recuperar esta nota',
+        content: '',
+        color: NoteColor.yellow,
+        authorName: 'Invitado',
+      ),
+    );
+
+    await repository.deleteNote(note.id);
+
+    expect(await repository.fetchNotes('home'), isEmpty);
+    final trash = await repository.fetchTrash();
+    expect(trash, hasLength(1));
+    expect(trash.single.deletedAt, isNotNull);
+
+    final restored = await repository.restoreNote(note.id);
+    expect(restored.deletedAt, isNull);
+    expect(await repository.fetchTrash(), isEmpty);
+    expect(await repository.fetchNotes('home'), [restored]);
+    repository.dispose();
+  });
+
   test('renames a guest list and deletes it with its notes', () async {
     final repository = LocalNotesRepository();
     final list = await repository.createList('Trabajo');

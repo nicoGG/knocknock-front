@@ -272,6 +272,10 @@ class _NotesGridState extends State<_NotesGrid> {
   final Set<String> _collapsedCompletedChecklistNoteIds = {};
   final Set<String> _builtNoteIds = {};
   final Map<_GridNoteHeightCacheKey, double> _heightCache = {};
+  String? _activeDragGroup;
+  String? _activeDraggedNoteId;
+  List<String>? _originalDragOrder;
+  List<String>? _previewDragOrder;
 
   List<Note> get notes => widget.notes;
   bool get groupCompleted => widget.groupCompleted;
@@ -301,6 +305,76 @@ class _NotesGridState extends State<_NotesGrid> {
         _collapsedCompletedChecklistNoteIds.add(noteId);
       }
     });
+  }
+
+  void _startGridDrag(
+    String groupKey,
+    List<Note> groupNotes,
+    String draggedNoteId,
+  ) {
+    final order = groupNotes.map((note) => note.id).toList();
+    setState(() {
+      _activeDragGroup = groupKey;
+      _activeDraggedNoteId = draggedNoteId;
+      _originalDragOrder = order;
+      _previewDragOrder = [...order];
+    });
+  }
+
+  void _previewGridReorder(
+    String groupKey,
+    String draggedNoteId,
+    String targetNoteId,
+  ) {
+    if (_activeDragGroup != groupKey || _activeDraggedNoteId != draggedNoteId) {
+      return;
+    }
+    final currentOrder = _previewDragOrder;
+    if (currentOrder == null) return;
+    final oldIndex = currentOrder.indexOf(draggedNoteId);
+    final targetIndex = currentOrder.indexOf(targetNoteId);
+    if (oldIndex == -1 || targetIndex == -1 || oldIndex == targetIndex) return;
+
+    final reordered = [...currentOrder];
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(targetIndex, moved);
+    setState(() => _previewDragOrder = reordered);
+  }
+
+  void _finishGridDrag(
+    String groupKey,
+    String draggedNoteId, {
+    required bool accepted,
+  }) {
+    if (_activeDragGroup != groupKey || _activeDraggedNoteId != draggedNoteId) {
+      return;
+    }
+    final originalOrder = _originalDragOrder;
+    final previewOrder = _previewDragOrder;
+    final orderChanged =
+        originalOrder != null &&
+        previewOrder != null &&
+        !listEquals(originalOrder, previewOrder);
+    setState(() {
+      _activeDragGroup = null;
+      _activeDraggedNoteId = null;
+      _originalDragOrder = null;
+      _previewDragOrder = null;
+    });
+    if (accepted && orderChanged) onReorder(previewOrder);
+  }
+
+  List<Note> _previewedGridNotes(String groupKey, List<Note> groupNotes) {
+    final previewOrder = _previewDragOrder;
+    if (_activeDragGroup != groupKey || previewOrder == null) {
+      return groupNotes;
+    }
+    final notesById = {for (final note in groupNotes) note.id: note};
+    if (previewOrder.length != groupNotes.length ||
+        previewOrder.any((id) => !notesById.containsKey(id))) {
+      return groupNotes;
+    }
+    return [for (final id in previewOrder) notesById[id]!];
   }
 
   @override
@@ -387,73 +461,74 @@ class _NotesGridState extends State<_NotesGrid> {
     required bool animateEntrances,
     required String keySuffix,
   }) {
-    return SliverMasonryGrid.count(
+    final arrangedNotes = _previewedGridNotes(keySuffix, notes);
+    final groupNoteIds = notes.map((note) => note.id).toSet();
+    final noteIndexes = <Key, int>{
+      for (var index = 0; index < arrangedNotes.length; index++)
+        ValueKey('grid-note-size-${arrangedNotes[index].id}'): index,
+    };
+    return SliverMasonryGrid(
       key: ValueKey('masonry-grid-columns$keySuffix'),
-      crossAxisCount: columnCount,
+      gridDelegate: SliverSimpleGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columnCount,
+      ),
       mainAxisSpacing: verticalSpacing,
       crossAxisSpacing: spacing,
-      childCount: notes.length,
-      itemBuilder: (context, index) {
-        final note = notes[index];
-        final isFirstBuild = _builtNoteIds.add(note.id);
-        final completedChecklistExpanded = !_collapsedCompletedChecklistNoteIds
-            .contains(note.id);
-        final height = _gridNoteHeight(
-          context,
-          note,
-          columnWidth: columnWidth,
-          isCompact: isCompact,
-          completedChecklistExpanded: completedChecklistExpanded,
-        );
-        return AnimatedContainer(
-          key: ValueKey('grid-note-size-${note.id}'),
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          curve: Curves.easeInOutCubic,
-          height: height,
-          child: OverflowBox(
-            alignment: Alignment.topCenter,
-            minHeight: height,
-            maxHeight: height,
-            child: _NoteEntrance(
-              key: ValueKey('note-entrance-${note.id}'),
-              index: index,
-              motionId: note.id,
-              enabled: animateEntrances && isFirstBuild,
-              child: _DraggableGridNote(
-                key: ValueKey('reorder-grid-${note.id}'),
-                note: note,
-                onDrop: (draggedId) {
-                  final reordered = [...notes];
-                  final oldIndex = reordered.indexWhere(
-                    (note) => note.id == draggedId,
-                  );
-                  final targetIndex = reordered.indexWhere(
-                    (entry) => entry.id == note.id,
-                  );
-                  if (oldIndex == -1 ||
-                      targetIndex == -1 ||
-                      oldIndex == targetIndex) {
-                    return;
-                  }
-                  final moved = reordered.removeAt(oldIndex);
-                  reordered.insert(targetIndex, moved);
-                  onReorder(reordered.map((note) => note.id).toList());
-                },
-                child: buildCard(
-                  note,
-                  PostItCardLayout.grid,
-                  completedChecklistExpanded:
-                      !_collapsedCompletedChecklistNoteIds.contains(note.id),
-                  onCompletedChecklistExpansionChanged: (expanded) =>
-                      _setCompletedChecklistExpanded(note.id, expanded),
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final note = arrangedNotes[index];
+          final isFirstBuild = _builtNoteIds.add(note.id);
+          final completedChecklistExpanded =
+              !_collapsedCompletedChecklistNoteIds.contains(note.id);
+          final height = _gridNoteHeight(
+            context,
+            note,
+            columnWidth: columnWidth,
+            isCompact: isCompact,
+            completedChecklistExpanded: completedChecklistExpanded,
+          );
+          return AnimatedContainer(
+            key: ValueKey('grid-note-size-${note.id}'),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            curve: Curves.easeInOutCubic,
+            height: height,
+            child: OverflowBox(
+              alignment: Alignment.topCenter,
+              minHeight: height,
+              maxHeight: height,
+              child: _NoteEntrance(
+                key: ValueKey('note-entrance-${note.id}'),
+                index: index,
+                motionId: note.id,
+                enabled: animateEntrances && isFirstBuild,
+                child: _DraggableGridNote(
+                  key: ValueKey('reorder-grid-${note.id}'),
+                  note: note,
+                  canAccept: (draggedId) => groupNoteIds.contains(draggedId),
+                  onHover: (draggedId) =>
+                      _previewGridReorder(keySuffix, draggedId, note.id),
+                  onDragStarted: () =>
+                      _startGridDrag(keySuffix, notes, note.id),
+                  onDragEnded: (accepted) =>
+                      _finishGridDrag(keySuffix, note.id, accepted: accepted),
+                  child: buildCard(
+                    note,
+                    PostItCardLayout.grid,
+                    completedChecklistExpanded:
+                        !_collapsedCompletedChecklistNoteIds.contains(note.id),
+                    onCompletedChecklistExpansionChanged: (expanded) =>
+                        _setCompletedChecklistExpanded(note.id, expanded),
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+        childCount: arrangedNotes.length,
+        findChildIndexCallback: (key) => noteIndexes[key],
+      ),
     );
   }
 
@@ -633,13 +708,19 @@ class _NotesGridState extends State<_NotesGrid> {
 class _DraggableGridNote extends StatefulWidget {
   const _DraggableGridNote({
     required this.note,
-    required this.onDrop,
+    required this.canAccept,
+    required this.onHover,
+    required this.onDragStarted,
+    required this.onDragEnded,
     required this.child,
     super.key,
   });
 
   final Note note;
-  final ValueChanged<String> onDrop;
+  final bool Function(String draggedNoteId) canAccept;
+  final ValueChanged<String> onHover;
+  final VoidCallback onDragStarted;
+  final ValueChanged<bool> onDragEnded;
   final Widget child;
 
   @override
@@ -653,16 +734,17 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
   Widget build(BuildContext context) {
     return DragTarget<String>(
       onWillAcceptWithDetails: (details) {
-        final accepted = details.data != widget.note.id;
+        final accepted =
+            details.data != widget.note.id && widget.canAccept(details.data);
         if (_isTargeted != accepted) setState(() => _isTargeted = accepted);
+        if (accepted) widget.onHover(details.data);
         return accepted;
       },
       onLeave: (_) {
         if (_isTargeted) setState(() => _isTargeted = false);
       },
       onAcceptWithDetails: (details) {
-        setState(() => _isTargeted = false);
-        widget.onDrop(details.data);
+        if (_isTargeted) setState(() => _isTargeted = false);
       },
       builder: (context, candidateData, rejectedData) => AnimatedScale(
         scale: _isTargeted ? 1.025 : 1,
@@ -675,8 +757,13 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
             child: LongPressDraggable<String>(
               data: widget.note.id,
               delay: const Duration(milliseconds: 500),
-              onDragStarted: HapticFeedback.mediumImpact,
+              onDragStarted: () {
+                HapticFeedback.mediumImpact();
+                widget.onDragStarted();
+              },
+              onDragEnd: (details) => widget.onDragEnded(details.wasAccepted),
               feedback: Material(
+                key: ValueKey('grid-drag-feedback-${widget.note.id}'),
                 color: Colors.transparent,
                 elevation: 10,
                 borderRadius: BorderRadius.circular(12),
@@ -686,7 +773,14 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
                   child: widget.child,
                 ),
               ),
-              childWhenDragging: Opacity(opacity: 0.2, child: widget.child),
+              // Keep the source card rendered while Flutter transfers the
+              // drag avatar back to the sliver. A translucent replacement can
+              // remain attached to a recycled masonry child after a drop,
+              // which looks like the note disappeared until the view rebuilds.
+              childWhenDragging: KeyedSubtree(
+                key: ValueKey('grid-drag-source-${widget.note.id}'),
+                child: widget.child,
+              ),
               child: widget.child,
             ),
           ),

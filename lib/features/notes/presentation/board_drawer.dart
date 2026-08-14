@@ -19,6 +19,7 @@ class _AppDrawer extends StatelessWidget {
     required this.onCreateList,
     required this.onOpenProfile,
     required this.onOpenSettings,
+    required this.onOpenTrash,
     required this.favoriteListIds,
     required this.recentListIds,
     required this.onToggleFavorite,
@@ -42,6 +43,7 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onCreateList;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenSettings;
+  final VoidCallback onOpenTrash;
   final Set<String> favoriteListIds;
   final List<String> recentListIds;
   final Future<bool> Function(String) onToggleFavorite;
@@ -53,6 +55,9 @@ class _AppDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final blurSigma = defaultTargetPlatform == TargetPlatform.android
+        ? 18.0
+        : 24.0;
     final drawerWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
       272.0,
       336.0,
@@ -69,7 +74,7 @@ class _AppDrawer extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: BackdropFilter(
         key: const ValueKey('app-drawer-glass-blur'),
-        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        filter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
         child: DecoratedBox(
           key: const ValueKey('app-drawer-glass-surface'),
           decoration: BoxDecoration(
@@ -259,6 +264,7 @@ class _AppDrawer extends StatelessWidget {
                         child: Scrollbar(
                           child: ListView.builder(
                             padding: const EdgeInsets.fromLTRB(10, 2, 10, 112),
+                            itemExtent: 60,
                             itemCount: lists.length,
                             itemBuilder: (context, index) {
                               final list = lists[index];
@@ -330,7 +336,11 @@ class _AppDrawer extends StatelessWidget {
                         ),
                       ),
                       _DrawerFloatingSettingsButton(
-                        onTap: () {
+                        onOpenTrash: () {
+                          Navigator.pop(context);
+                          onOpenTrash();
+                        },
+                        onOpenSettings: () {
                           Navigator.pop(context);
                           onOpenSettings();
                         },
@@ -348,9 +358,13 @@ class _AppDrawer extends StatelessWidget {
 }
 
 class _DrawerFloatingSettingsButton extends StatelessWidget {
-  const _DrawerFloatingSettingsButton({required this.onTap});
+  const _DrawerFloatingSettingsButton({
+    required this.onOpenTrash,
+    required this.onOpenSettings,
+  });
 
-  final VoidCallback onTap;
+  final VoidCallback onOpenTrash;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -391,11 +405,19 @@ class _DrawerFloatingSettingsButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               _DrawerDestinationTile(
+                key: const ValueKey('trash-menu-button'),
+                icon: Icons.delete_outline_rounded,
+                label: 'Papelera',
+                trailing: Icons.chevron_right_rounded,
+                onTap: onOpenTrash,
+              ),
+              const SizedBox(height: 6),
+              _DrawerDestinationTile(
                 key: const ValueKey('settings-menu-button'),
                 icon: Icons.settings_outlined,
                 label: 'Configuración',
                 trailing: Icons.chevron_right_rounded,
-                onTap: onTap,
+                onTap: onOpenSettings,
               ),
               const SizedBox(height: 10),
               const _AppVersionLabel(),
@@ -848,17 +870,12 @@ class _ReorderListsSheetState extends State<_ReorderListsSheet> {
   }
 }
 
-class _AppVersionLabel extends StatefulWidget {
+class _AppVersionLabel extends StatelessWidget {
   const _AppVersionLabel();
 
-  @override
-  State<_AppVersionLabel> createState() => _AppVersionLabelState();
-}
+  static final Future<String> _version = _loadVersion();
 
-class _AppVersionLabelState extends State<_AppVersionLabel> {
-  late final Future<String> _version = _loadVersion();
-
-  Future<String> _loadVersion() async {
+  static Future<String> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
       final buildSuffix = info.buildNumber.isEmpty
@@ -900,6 +917,7 @@ class _DrawerProfileSummary extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderRadius = BorderRadius.circular(22);
+    final useNestedBlur = defaultTargetPlatform != TargetPlatform.android;
 
     return StreamBuilder<AppUser?>(
       stream: repository.authStateChanges,
@@ -924,6 +942,7 @@ class _DrawerProfileSummary extends StatelessWidget {
             borderRadius: borderRadius,
             child: BackdropFilter(
               key: const ValueKey('drawer-profile-glass-blur'),
+              enabled: useNestedBlur,
               filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
               child: Material(
                 color: Colors.transparent,
@@ -1173,10 +1192,7 @@ class _DrawerDestinationTile extends StatelessWidget {
                 height: 54,
                 child: Row(
                   children: [
-                    AnimatedContainer(
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
+                    Container(
                       width: 3,
                       height: selected ? 26 : 0,
                       decoration: BoxDecoration(
@@ -1246,10 +1262,6 @@ class _DrawerScopeShortcutButton extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final foreground = selected ? colorScheme.primary : colorScheme.onSurface;
     final borderRadius = BorderRadius.circular(17);
-    final animationDuration = MediaQuery.disableAnimationsOf(context)
-        ? Duration.zero
-        : const Duration(milliseconds: 180);
-
     return Semantics(
       label: label,
       button: true,
@@ -1259,8 +1271,7 @@ class _DrawerScopeShortcutButton extends StatelessWidget {
       child: Tooltip(
         message: label,
         excludeFromSemantics: true,
-        child: AnimatedContainer(
-          duration: animationDuration,
+        child: Container(
           height: 54,
           decoration: BoxDecoration(
             borderRadius: borderRadius,
@@ -1347,8 +1358,7 @@ class _DrawerScopeShortcutButton extends StatelessWidget {
                       ),
                       Positioned(
                         bottom: 6,
-                        child: AnimatedContainer(
-                          duration: animationDuration,
+                        child: Container(
                           width: selected ? 18 : 0,
                           height: 3,
                           decoration: BoxDecoration(

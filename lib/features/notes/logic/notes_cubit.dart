@@ -20,10 +20,14 @@ class NotesCubit extends Cubit<NotesState> {
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
   int _loadGeneration = 0;
   static const _notesPageSize = 40;
+  static const _scopeNotesCacheLifetime = Duration(minutes: 5);
+  DateTime? _scopeNotesRefreshedAt;
+  Future<void>? _scopeNotesRefresh;
 
   Future<void> load() async {
     unawaited(_refreshOfflineSyncSummary());
     final generation = ++_loadGeneration;
+    _scopeNotesRefreshedAt = null;
     emit(
       state.copyWith(
         status: NotesStatus.loading,
@@ -224,6 +228,71 @@ class NotesCubit extends Cubit<NotesState> {
       loadPinnedNotes(),
       loadReminderNotes(),
     ]);
+    _scopeNotesRefreshedAt = DateTime.now();
+  }
+
+  Future<void> refreshScopeNotesIfStale({
+    Duration maxAge = _scopeNotesCacheLifetime,
+  }) async {
+    final refreshedAt = _scopeNotesRefreshedAt;
+    if (refreshedAt != null &&
+        DateTime.now().difference(refreshedAt) < maxAge) {
+      return;
+    }
+    if (state.isLoadingAssigned ||
+        state.isLoadingPinned ||
+        state.isLoadingReminderNotes) {
+      return;
+    }
+    final activeRefresh = _scopeNotesRefresh;
+    if (activeRefresh != null) return activeRefresh;
+
+    final refresh = _refreshScopeNotesSilently();
+    _scopeNotesRefresh = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (identical(_scopeNotesRefresh, refresh)) {
+        _scopeNotesRefresh = null;
+      }
+    }
+  }
+
+  Future<void> _refreshScopeNotesSilently() async {
+    final repository = _repository;
+    try {
+      final results = await Future.wait<List<Note>>([
+        repository is AssignedNotesRepository
+            ? (repository as AssignedNotesRepository).fetchAssignedNotes()
+            : Future<List<Note>>.value(state.assignedNotes),
+        repository.fetchPinnedNotes(),
+        repository.fetchReminderNotes(),
+      ]);
+      if (isClosed) return;
+
+      final assignedNotes = List<Note>.of(results[0])
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final pinnedNotes = List<Note>.of(results[1])
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final reminderNotes = List<Note>.of(results[2])
+        ..sort(_compareReminderNotes);
+      _scopeNotesRefreshedAt = DateTime.now();
+
+      if (listEquals(assignedNotes, state.assignedNotes) &&
+          listEquals(pinnedNotes, state.pinnedNotes) &&
+          listEquals(reminderNotes, state.reminderNotes)) {
+        return;
+      }
+      emit(
+        state.copyWith(
+          assignedNotes: assignedNotes,
+          pinnedNotes: pinnedNotes,
+          reminderNotes: reminderNotes,
+        ),
+      );
+    } catch (_) {
+      // Cached scope totals remain usable when background revalidation fails.
+    }
   }
 
   Future<void> loadPinnedNotes() async {
@@ -991,6 +1060,25 @@ class NotesCubit extends Cubit<NotesState> {
       _upsert(note);
       emit(state.copyWith(message: _friendlyMessage(error)));
     }
+  }
+
+  Future<List<Note>> fetchTrash() async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) return const [];
+    return (repository as TrashNotesRepository).fetchTrash();
+  }
+
+  Future<Note> restoreNoteFromTrash(Note note) async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final restored = await (repository as TrashNotesRepository).restoreNote(
+      note.id,
+    );
+    if (restored.boardId == state.selectedListId) _upsert(restored);
+    await loadScopeNotes();
+    return restored;
   }
 
   Future<bool> clearLocalData() async {

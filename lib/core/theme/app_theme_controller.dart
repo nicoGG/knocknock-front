@@ -8,8 +8,8 @@ class AppThemeController extends ChangeNotifier {
   AppThemeController({ThemePreferencesLoader? preferencesLoader})
     : _preferencesLoader = preferencesLoader ?? SharedPreferences.getInstance;
 
-  static const _themeModeStorageKey = 'nocknock.theme_mode.v1';
-  static const _colorThemeStorageKey = 'nocknock.color_theme.v1';
+  static const themeModeStorageKey = 'nocknock.theme_mode.v1';
+  static const colorThemeStorageKey = 'nocknock.color_theme.v1';
 
   final ThemePreferencesLoader _preferencesLoader;
   ThemeMode _themeMode = ThemeMode.system;
@@ -22,10 +22,10 @@ class AppThemeController extends ChangeNotifier {
     try {
       final preferences = await _preferencesLoader();
       _themeMode = _themeModeFromStorage(
-        preferences.getString(_themeModeStorageKey),
+        preferences.getString(themeModeStorageKey),
       );
       _colorTheme = _colorThemeFromStorage(
-        preferences.getString(_colorThemeStorageKey),
+        preferences.getString(colorThemeStorageKey),
       );
       notifyListeners();
     } catch (_) {
@@ -39,7 +39,7 @@ class AppThemeController extends ChangeNotifier {
     notifyListeners();
     try {
       final preferences = await _preferencesLoader();
-      await preferences.setString(_themeModeStorageKey, value.name);
+      await preferences.setString(themeModeStorageKey, value.name);
     } catch (_) {
       // Keep the selected mode for this session even if it cannot be persisted.
     }
@@ -51,7 +51,7 @@ class AppThemeController extends ChangeNotifier {
     notifyListeners();
     try {
       final preferences = await _preferencesLoader();
-      await preferences.setString(_colorThemeStorageKey, value.name);
+      await preferences.setString(colorThemeStorageKey, value.name);
     } catch (_) {
       // Keep the selected palette for this session if persistence fails.
     }

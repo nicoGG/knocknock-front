@@ -17,6 +17,7 @@ class AuthAwareNotesRepository
         OfflineSyncRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
+        TrashNotesRepository,
         PaginatedNotesRepository {
   AuthAwareNotesRepository({
     required AuthRepository authRepository,
@@ -172,6 +173,20 @@ class AuthAwareNotesRepository
   @override
   Future<List<Note>> fetchReminderNotes() =>
       _whenReady((repository) => repository.fetchReminderNotes());
+
+  @override
+  Future<List<Note>> fetchTrash() => _whenReady((repository) {
+    if (repository is! TrashNotesRepository) return Future.value(const []);
+    return (repository as TrashNotesRepository).fetchTrash();
+  });
+
+  @override
+  Future<Note> restoreNote(String id) => _whenReady((repository) {
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as TrashNotesRepository).restoreNote(id);
+  });
 
   @override
   Future<List<NoteSearchResult>> searchNotes(String query) =>

@@ -26,6 +26,7 @@ class CachedNotesRepository
         AssignedNotesRepository,
         OfflineSyncRepository,
         NoteAttachmentsRepository,
+        TrashNotesRepository,
         PaginatedNotesRepository {
   factory CachedNotesRepository({
     required NotesRepository repository,
@@ -314,6 +315,78 @@ class CachedNotesRepository
       _replaceKnownPinnedNotes(cache, notes);
       _replaceKnownReminderNotes(cache, notes);
     });
+    return notes;
+  }
+
+  @override
+  Future<List<Note>> fetchTrash() async {
+    final repository = _repository;
+    final pending = await _pendingTrashNotes();
+    if (repository is! TrashNotesRepository) return pending;
+    try {
+      final remote = await (repository as TrashNotesRepository).fetchTrash();
+      final merged = <String, Note>{
+        for (final note in pending) note.id: note,
+        for (final note in remote) note.id: note,
+      }.values.toList()..sort((a, b) => b.deletedAt!.compareTo(a.deletedAt!));
+      return merged;
+    } catch (error) {
+      if (pending.isEmpty || !_isRetryable(error)) rethrow;
+      return pending;
+    }
+  }
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    final userId = _userIdProvider();
+    if (userId != null && userId.isNotEmpty) {
+      final pending = (await _mutationStore.listForUser(userId))
+          .where(
+            (mutation) =>
+                mutation.kind == StoredMutationKind.delete &&
+                mutation.entityId == id &&
+                mutation.localNoteJson != null,
+          )
+          .firstOrNull;
+      if (pending != null) {
+        final restored = Note.fromJson(
+          Map<String, dynamic>.from(jsonDecode(pending.localNoteJson!) as Map),
+        ).copyWith(clearDeletedAt: true);
+        await _mutationStore.remove(pending.id);
+        await _updateCache(userId, (cache) => _upsertNote(cache, restored));
+        await _emitSyncState();
+        return restored;
+      }
+    }
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final restored = await (repository as TrashNotesRepository).restoreNote(id);
+    await _updateCache(
+      _userIdProvider(),
+      (cache) => _upsertNote(cache, restored),
+    );
+    return restored;
+  }
+
+  Future<List<Note>> _pendingTrashNotes() async {
+    final userId = _userIdProvider();
+    if (userId == null || userId.isEmpty) return const [];
+    final mutations = await _mutationStore.listForUser(userId);
+    final notes = <Note>[];
+    for (final mutation in mutations) {
+      if (mutation.kind != StoredMutationKind.delete ||
+          mutation.localNoteJson == null) {
+        continue;
+      }
+      notes.add(
+        Note.fromJson(
+          Map<String, dynamic>.from(jsonDecode(mutation.localNoteJson!) as Map),
+        ).copyWith(deletedAt: mutation.createdAt),
+      );
+    }
+    notes.sort((a, b) => b.deletedAt!.compareTo(a.deletedAt!));
     return notes;
   }
 

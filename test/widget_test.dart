@@ -1064,15 +1064,85 @@ void main() {
 
     final first = find.byKey(const ValueKey('reorder-grid-note-1'));
     final second = find.byKey(const ValueKey('reorder-grid-note-2'));
+    final firstPosition = tester.getTopLeft(first);
+    final secondPosition = tester.getTopLeft(second);
     final gesture = await tester.startGesture(tester.getCenter(first));
     await tester.pump(const Duration(milliseconds: 550));
     await gesture.moveTo(tester.getCenter(second));
     await tester.pump(const Duration(milliseconds: 160));
+
+    expect(repository.reorderedNoteIds, isNull);
+    expect((tester.getTopLeft(second) - firstPosition).distance, lessThan(4));
+    expect(tester.getTopLeft(first), secondPosition);
+    final dragSource = find.byKey(const ValueKey('grid-drag-source-note-1'));
+    expect(dragSource, findsOneWidget);
+    expect(
+      find.descendant(
+        of: dragSource,
+        matching: find.byKey(const ValueKey('note-surface-note-1')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('grid-drag-feedback-note-1')),
+      findsOneWidget,
+    );
+
     await gesture.up();
     await tester.pumpAndSettle();
 
     expect(repository.reorderedNoteIds, ['note-2', 'note-1', 'note-3']);
+    expect(find.byKey(const ValueKey('grid-drag-source-note-1')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('grid-drag-feedback-note-1')),
+      findsNothing,
+    );
+    for (var index = 1; index <= 3; index++) {
+      expect(find.byKey(ValueKey('note-surface-note-$index')), findsOneWidget);
+    }
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+  });
+
+  testWidgets('canceling a mosaic drag restores the visible card order', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FakeNotesRepository(noteCount: 3);
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final first = find.byKey(const ValueKey('reorder-grid-note-1'));
+    final second = find.byKey(const ValueKey('reorder-grid-note-2'));
+    final firstPosition = tester.getTopLeft(first);
+    final secondPosition = tester.getTopLeft(second);
+    final gesture = await tester.startGesture(tester.getCenter(first));
+    await tester.pump(const Duration(milliseconds: 550));
+    await gesture.moveTo(tester.getCenter(second));
+    await tester.pump(const Duration(milliseconds: 160));
+
+    expect((tester.getTopLeft(second) - firstPosition).distance, lessThan(4));
+    expect(tester.getTopLeft(first), secondPosition);
+
+    await gesture.moveTo(const Offset(8, 8));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(repository.reorderedNoteIds, isNull);
+    expect(tester.getTopLeft(first), firstPosition);
+    expect(tester.getTopLeft(second), secondPosition);
+    for (var index = 1; index <= 3; index++) {
+      expect(find.byKey(ValueKey('note-surface-note-$index')), findsOneWidget);
+    }
   });
 
   testWidgets('long press drag reorders notes in list mode', (tester) async {
@@ -4621,6 +4691,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('settings-menu-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('trash-menu-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('app-version-label')), findsOneWidget);
     expect(find.textContaining('Versión'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('settings-menu-button')));
@@ -4875,9 +4946,9 @@ void main() {
       find.descendant(of: reminderShortcut, matching: find.text('1')),
       findsOneWidget,
     );
-    expect(repository.fetchAssignedNotesCount, 2);
-    expect(repository.fetchPinnedNotesCount, 2);
-    expect(repository.fetchReminderNotesCount, 2);
+    expect(repository.fetchAssignedNotesCount, 1);
+    expect(repository.fetchPinnedNotesCount, 1);
+    expect(repository.fetchReminderNotesCount, 1);
     expect(tester.takeException(), isNull);
   });
 

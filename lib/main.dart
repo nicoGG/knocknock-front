@@ -18,6 +18,7 @@ import 'package:nocknock/features/notes/data/offline_mutation_store.dart';
 import 'package:nocknock/firebase_options.dart';
 import 'package:nocknock/features/notifications/logic/notifications_controller.dart';
 import 'package:nocknock/features/notifications/logic/encrypted_notification_content.dart';
+import 'package:nocknock/features/notifications/logic/reminder_notification_action.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 @pragma('vm:entry-point')
@@ -26,6 +27,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final localNotifications = FlutterLocalNotificationsPlugin();
   await localNotifications.initialize(
     settings: nockNockNotificationInitializationSettings,
+    onDidReceiveBackgroundNotificationResponse:
+        nockNockNotificationResponseBackground,
   );
   await localNotifications
       .resolvePlatformSpecificImplementation<

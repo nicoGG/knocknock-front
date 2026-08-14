@@ -23,6 +23,7 @@ class E2eeNotesRepository
         OfflineSyncRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
+        TrashNotesRepository,
         PaginatedNotesRepository {
   E2eeNotesRepository({
     required NotesRepository repository,
@@ -395,6 +396,29 @@ class E2eeNotesRepository
       }
     }
     return clearNotes;
+  }
+
+  @override
+  Future<List<Note>> fetchTrash() async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) return const [];
+    if (_rawLists.isEmpty) await fetchLists();
+    final rawNotes = await (repository as TrashNotesRepository).fetchTrash();
+    return _decryptAggregateNotes(rawNotes);
+  }
+
+  @override
+  Future<Note> restoreNote(String id) async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final raw = await (repository as TrashNotesRepository).restoreNote(id);
+    final key = await _requireListKey(raw.boardId);
+    _noteBoards[raw.id] = raw.boardId;
+    final note = await _decryptNote(raw, key);
+    _searchIndex.upsert(note);
+    return note;
   }
 
   @override
@@ -1230,6 +1254,7 @@ class E2eeNotesRepository
     reminderAt: note.reminderAt,
     reminderRecurrence: note.reminderRecurrence,
     revision: note.revision,
+    deletedAt: note.deletedAt,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   );

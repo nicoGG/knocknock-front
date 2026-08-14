@@ -12,6 +12,7 @@ import 'package:nocknock/features/auth/data/auth_repository.dart';
 import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/notifications/domain/app_notification.dart';
 import 'package:nocknock/features/notifications/logic/encrypted_notification_content.dart';
+import 'package:nocknock/features/notifications/logic/reminder_notification_action.dart';
 import 'package:nocknock/core/telemetry/app_telemetry.dart';
 import 'package:nocknock/core/telemetry/telemetry_dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -79,9 +80,15 @@ class NotificationsController extends ChangeNotifier
       await _localNotifications.initialize(
         settings: nockNockNotificationInitializationSettings,
         onDidReceiveNotificationResponse: (response) {
+          if (response.actionId == completeRecurringReminderActionId) {
+            unawaited(handleRecurringReminderNotificationAction(response));
+            return;
+          }
           final payload = response.payload;
           if (payload != null) _handleTapPayload(payload);
         },
+        onDidReceiveBackgroundNotificationResponse:
+            nockNockNotificationResponseBackground,
       );
       _localNotificationsAvailable = true;
       await _localNotifications
@@ -125,10 +132,14 @@ class NotificationsController extends ChangeNotifier
     if (_localNotificationsAvailable) {
       final launchDetails = await _localNotifications
           .getNotificationAppLaunchDetails();
-      final localPayload = launchDetails?.notificationResponse?.payload;
+      final launchResponse = launchDetails?.notificationResponse;
       if (launchDetails?.didNotificationLaunchApp == true &&
-          localPayload != null) {
-        _handleTapPayload(localPayload);
+          launchResponse != null) {
+        if (launchResponse.actionId == completeRecurringReminderActionId) {
+          await handleRecurringReminderNotificationAction(launchResponse);
+        } else if (launchResponse.payload case final localPayload?) {
+          _handleTapPayload(localPayload);
+        }
       }
     }
     if (_firebaseMessagingAvailable) {

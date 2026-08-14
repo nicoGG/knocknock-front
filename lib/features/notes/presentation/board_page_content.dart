@@ -903,6 +903,13 @@ extension _BoardPageContent on _BoardPageState {
     );
   }
 
+  void _openTrash() {
+    final cubit = context.read<NotesCubit>();
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => TrashPage(cubit: cubit)));
+  }
+
   void _restoreBoardPreferences([String? listId]) {
     if (!mounted) return;
     final activeListId =

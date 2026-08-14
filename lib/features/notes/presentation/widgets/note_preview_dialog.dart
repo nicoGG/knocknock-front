@@ -852,6 +852,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hidePhotoPreviewForKeyboard =
+        widget.isCreating && MediaQuery.viewInsetsOf(context).bottom > 0;
     final cardColor = _category == NoteCategory.general
         ? NotePalette.color(_color)
         : NoteCategoryStyle.baseColor(_category);
@@ -1143,7 +1145,8 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                           ),
                         ),
                       ),
-                      if (_attachments.isNotEmpty) ...[
+                      if (_attachments.isNotEmpty &&
+                          !hidePhotoPreviewForKeyboard) ...[
                         const SizedBox(height: 10),
                         _QuickPhotoStrip(
                           attachments: _attachments,
