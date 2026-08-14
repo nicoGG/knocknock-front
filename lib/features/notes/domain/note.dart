@@ -244,6 +244,9 @@ DateTime? _localDateTimeFromJson(Object? value) {
   return parsed?.toLocal();
 }
 
+String reminderDateTimeToJson(DateTime value) =>
+    value.toUtc().toIso8601String();
+
 List<NoteChecklistItem> normalizeNoteChecklist(
   Iterable<NoteChecklistItem> items, {
   bool trimText = false,
@@ -405,7 +408,7 @@ class Note extends Equatable {
     'reactions': reactions.map((reaction) => reaction.toJson()).toList(),
     'positionX': positionX,
     'positionY': positionY,
-    if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    if (reminderAt != null) 'reminderAt': reminderDateTimeToJson(reminderAt!),
     if (reminderRecurrence != null)
       'reminderRecurrence': reminderRecurrence!.toJson(),
     'revision': revision,
@@ -606,7 +609,7 @@ class NoteDraft extends Equatable {
     'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
-    if (reminderAt != null) 'reminderAt': reminderAt!.toIso8601String(),
+    if (reminderAt != null) 'reminderAt': reminderDateTimeToJson(reminderAt!),
     if (reminderRecurrence != null)
       'reminderRecurrence': reminderRecurrence!.toJson(),
     if (clientNoteId != null) 'clientNoteId': clientNoteId,

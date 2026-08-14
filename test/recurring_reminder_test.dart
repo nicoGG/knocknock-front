@@ -27,6 +27,26 @@ void main() {
     );
   });
 
+  test('serializes reminder times as explicit UTC instants', () {
+    final reminderAt = DateTime(2026, 9, 5, 18, 37);
+    final expected = reminderAt.toUtc().toIso8601String();
+    final note = _recurringNote(reminderAt: reminderAt);
+    final draft = NoteDraft(
+      title: note.title,
+      content: note.content,
+      color: note.color,
+      authorName: note.authorName,
+      reminderAt: reminderAt,
+      reminderRecurrence: note.reminderRecurrence,
+    );
+
+    expect(note.toJson()['reminderAt'], expected);
+    expect(draft.toJson()['reminderAt'], expected);
+    expect(expected, endsWith('Z'));
+    expect(Note.fromJson(note.toJson()).reminderAt, reminderAt);
+    expect(NoteDraft.fromJson(draft.toJson()).reminderAt, reminderAt);
+  });
+
   testWidgets('creates a personalized monthly recurrence', (tester) async {
     final now = DateTime(2026, 1, 31, 9, 45);
     ReminderScheduleSelection? selected;
@@ -165,7 +185,7 @@ void main() {
   });
 }
 
-Note _recurringNote({bool isCompleted = false}) => Note(
+Note _recurringNote({bool isCompleted = false, DateTime? reminderAt}) => Note(
   id: 'recurring-note',
   boardId: 'home',
   title: 'Pagar tarjeta',
@@ -175,7 +195,7 @@ Note _recurringNote({bool isCompleted = false}) => Note(
   isCompleted: isCompleted,
   positionX: 0,
   positionY: 0,
-  reminderAt: DateTime(2026, 9, 5, 8),
+  reminderAt: reminderAt ?? DateTime(2026, 9, 5, 8),
   reminderRecurrence: const ReminderRecurrence(
     frequency: ReminderRecurrenceFrequency.monthly,
     interval: 1,

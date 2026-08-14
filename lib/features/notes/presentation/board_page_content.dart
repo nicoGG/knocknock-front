@@ -331,6 +331,13 @@ extension _BoardPageContent on _BoardPageState {
         .toList();
   }
 
+  int _pendingScopeCount(Iterable<Note> notes) => {
+    for (final note in notes)
+      if (!note.isCompleted &&
+          widget.listProtectionController.canAccess(note.boardId))
+        note.id,
+  }.length;
+
   Future<void> _openGlobalSearch() async {
     _playBoardTapSound();
     final cubit = context.read<NotesCubit>();

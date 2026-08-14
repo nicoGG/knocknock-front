@@ -501,7 +501,7 @@ class ApiNotesRepository
                 'positionX': note.positionX,
                 'positionY': note.positionY,
                 if (note.reminderAt != null)
-                  'reminderAt': note.reminderAt!.toIso8601String(),
+                  'reminderAt': reminderDateTimeToJson(note.reminderAt!),
                 if (note.reminderRecurrence != null)
                   'reminderRecurrence': note.reminderRecurrence!.toJson(),
                 'reactions': note.reactions

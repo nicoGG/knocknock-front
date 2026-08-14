@@ -1843,7 +1843,6 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
   bool _editingDescription = false;
   bool _editingChecklist = false;
   bool _isSaving = false;
-  bool _descriptionHadFocus = false;
   bool _checklistHadFocus = false;
   String? _checklistInitialFocusItemId;
 
@@ -1925,19 +1924,22 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       _editingChecklist = false;
       _content = _richContentFromNote(widget.note);
       _descriptionRevision += 1;
-      _descriptionHadFocus = false;
     });
   }
 
   void _handleDescriptionFocusChanged() {
-    if (_descriptionFocusNode.hasFocus) {
-      _descriptionHadFocus = true;
-      _revealEditor(_descriptionEditorKey);
-      return;
-    }
-    if (_editingDescription && _descriptionHadFocus) {
-      unawaited(_saveDescription());
-    }
+    if (_descriptionFocusNode.hasFocus) _revealEditor(_descriptionEditorKey);
+  }
+
+  void _handleBodyPointerDown(PointerDownEvent event) {
+    if (!_editingDescription || _isSaving) return;
+    final editorContext = _descriptionEditorKey.currentContext;
+    final renderObject = editorContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+    final localPosition = renderObject.globalToLocal(event.position);
+    final bounds = Offset.zero & renderObject.size;
+    if (bounds.contains(localPosition)) return;
+    unawaited(_saveDescription());
   }
 
   void _revealEditor(GlobalKey key) {
@@ -2173,7 +2175,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     final fieldFill = foregroundColor.computeLuminance() > 0.5
         ? Colors.black.withValues(alpha: 0.16)
         : Colors.white.withValues(alpha: 0.3);
-    return Column(
+    final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
@@ -2342,7 +2344,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
         ],
         Expanded(
           child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.manual,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -2619,6 +2621,19 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                 ),
         ),
       ],
+    );
+    return PopScope(
+      canPop: !_editingDescription,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _editingDescription && !_isSaving) {
+          unawaited(_saveDescription());
+        }
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _handleBodyPointerDown,
+        child: body,
+      ),
     );
   }
 }

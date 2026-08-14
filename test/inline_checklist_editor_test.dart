@@ -358,7 +358,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('description saves automatically when it loses focus', (
+  testWidgets('description stays open on focus changes and saves outside', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(430, 900);
@@ -441,7 +441,18 @@ void main() {
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pumpAndSettle();
 
+    expect(savedDraft, isNull);
+    expect(editorFinder, findsOneWidget);
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('inline-description-subtasks-divider-description-note'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
     expect(savedDraft?.content, editedContent);
+    expect(editorFinder, findsNothing);
     expect(
       find.byKey(const ValueKey('save-inline-description-button')),
       findsNothing,

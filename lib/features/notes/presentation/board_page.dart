@@ -298,6 +298,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
           extendBodyBehindAppBar: true,
+          onDrawerChanged: (isOpened) {
+            if (isOpened) {
+              unawaited(context.read<NotesCubit>().loadScopeNotes());
+            }
+          },
           appBar: _AppBar(
             isConnected: state.isRealtimeConnected,
             isConnecting: state.isRealtimeConnecting,
@@ -330,15 +335,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             favoriteListIds: _listShortcutsController.favorites,
             recentListIds: _listShortcutsController.recents,
             onToggleFavorite: _listShortcutsController.toggleFavorite,
-            assignedCount: _assignedToCurrentUser(
-              state.assignedNotes,
-            ).where((note) => !note.isCompleted).length,
-            pinnedCount: state.pinnedNotes
-                .where((note) => !note.isCompleted)
-                .length,
-            reminderCount: state.reminderNotes
-                .where((note) => !note.isCompleted)
-                .length,
+            assignedCount: _pendingScopeCount(
+              _assignedToCurrentUser(state.assignedNotes),
+            ),
+            pinnedCount: _pendingScopeCount(state.pinnedNotes),
+            reminderCount: _pendingScopeCount(state.reminderNotes),
           ),
           floatingActionButton:
               isCompact &&

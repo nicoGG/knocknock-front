@@ -270,6 +270,7 @@ class _NotesGridState extends State<_NotesGrid> {
   static const _maximumCachedHeights = 256;
 
   final Set<String> _collapsedCompletedChecklistNoteIds = {};
+  final Set<String> _builtNoteIds = {};
   final Map<_GridNoteHeightCacheKey, double> _heightCache = {};
 
   List<Note> get notes => widget.notes;
@@ -394,6 +395,7 @@ class _NotesGridState extends State<_NotesGrid> {
       childCount: notes.length,
       itemBuilder: (context, index) {
         final note = notes[index];
+        final isFirstBuild = _builtNoteIds.add(note.id);
         final completedChecklistExpanded = !_collapsedCompletedChecklistNoteIds
             .contains(note.id);
         final height = _gridNoteHeight(
@@ -418,7 +420,7 @@ class _NotesGridState extends State<_NotesGrid> {
               key: ValueKey('note-entrance-${note.id}'),
               index: index,
               motionId: note.id,
-              enabled: animateEntrances,
+              enabled: animateEntrances && isFirstBuild,
               child: _DraggableGridNote(
                 key: ValueKey('reorder-grid-${note.id}'),
                 note: note,
@@ -694,7 +696,7 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
   }
 }
 
-class _NotesList extends StatelessWidget {
+class _NotesList extends StatefulWidget {
   const _NotesList({
     required this.notes,
     required this.groupCompleted,
@@ -719,6 +721,25 @@ class _NotesList extends StatelessWidget {
   final NoteCardBuilder buildCard;
   final NoteReorderCallback onReorder;
   final ValueChanged<bool> onCompletedSectionExpansionChanged;
+
+  @override
+  State<_NotesList> createState() => _NotesListState();
+}
+
+class _NotesListState extends State<_NotesList> {
+  final Set<String> _builtNoteIds = {};
+
+  List<Note> get notes => widget.notes;
+  bool get groupCompleted => widget.groupCompleted;
+  bool get completedSectionExpanded => widget.completedSectionExpanded;
+  bool get animateEntrances => widget.animateEntrances;
+  PostItCardLayout get layout => widget.layout;
+  double get itemHeight => widget.itemHeight;
+  double get maxWidth => widget.maxWidth;
+  NoteCardBuilder get buildCard => widget.buildCard;
+  NoteReorderCallback get onReorder => widget.onReorder;
+  ValueChanged<bool> get onCompletedSectionExpansionChanged =>
+      widget.onCompletedSectionExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -787,6 +808,7 @@ class _NotesList extends StatelessWidget {
 
   Widget _buildItem(BuildContext context, List<Note> notes, int index) {
     final note = notes[index];
+    final isFirstBuild = _builtNoteIds.add(note.id);
     return ReorderableDelayedDragStartListener(
       key: ValueKey('reorder-list-${note.id}'),
       index: index,
@@ -796,7 +818,7 @@ class _NotesList extends StatelessWidget {
         child: _NoteEntrance(
           index: index,
           motionId: note.id,
-          enabled: animateEntrances,
+          enabled: animateEntrances && isFirstBuild,
           child: Padding(
             padding: EdgeInsets.only(
               bottom: layout == PostItCardLayout.compact ? 3 : 8,

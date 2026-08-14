@@ -100,7 +100,7 @@ class NotesCubit extends Cubit<NotesState> {
               aggregateBoardAppearances ?? state.aggregateBoardAppearances,
         ),
       );
-      await loadAssignedNotes();
+      await loadScopeNotes();
     } catch (error) {
       if (generation != _loadGeneration || isClosed) return;
       if (didShowCache) {
@@ -202,9 +202,9 @@ class NotesCubit extends Cubit<NotesState> {
     }
     emit(state.copyWith(isLoadingAssigned: true));
     try {
-      final assignedNotes =
-          await (repository as AssignedNotesRepository).fetchAssignedNotes()
-            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final assignedNotes = List<Note>.of(
+        await (repository as AssignedNotesRepository).fetchAssignedNotes(),
+      )..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       emit(
         state.copyWith(assignedNotes: assignedNotes, isLoadingAssigned: false),
       );
@@ -218,11 +218,19 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<void> loadScopeNotes() async {
+    await Future.wait([
+      loadAssignedNotes(),
+      loadPinnedNotes(),
+      loadReminderNotes(),
+    ]);
+  }
+
   Future<void> loadPinnedNotes() async {
     if (state.isLoadingPinned) return;
     emit(state.copyWith(isLoadingPinned: true));
     try {
-      final pinnedNotes = await _repository.fetchPinnedNotes()
+      final pinnedNotes = List<Note>.of(await _repository.fetchPinnedNotes())
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       emit(state.copyWith(pinnedNotes: pinnedNotes, isLoadingPinned: false));
     } catch (error) {
@@ -287,8 +295,9 @@ class NotesCubit extends Cubit<NotesState> {
     if (state.isLoadingReminderNotes) return;
     emit(state.copyWith(isLoadingReminderNotes: true));
     try {
-      final reminderNotes = await _repository.fetchReminderNotes()
-        ..sort(_compareReminderNotes);
+      final reminderNotes = List<Note>.of(
+        await _repository.fetchReminderNotes(),
+      )..sort(_compareReminderNotes);
       emit(
         state.copyWith(
           reminderNotes: reminderNotes,
@@ -710,7 +719,9 @@ class NotesCubit extends Cubit<NotesState> {
                 .toList(),
           if (draft.reminderAt != note.reminderAt ||
               draft.reminderRecurrence != note.reminderRecurrence) ...{
-            'reminderAt': draft.reminderAt?.toIso8601String(),
+            'reminderAt': draft.reminderAt == null
+                ? null
+                : reminderDateTimeToJson(draft.reminderAt!),
             'reminderRecurrence': draft.reminderRecurrence?.toJson(),
           },
         }),
@@ -745,7 +756,9 @@ class NotesCubit extends Cubit<NotesState> {
     DateTime? reminderAt, {
     ReminderRecurrence? recurrence,
   }) => _updateNoteFields(note, {
-    'reminderAt': reminderAt?.toIso8601String(),
+    'reminderAt': reminderAt == null
+        ? null
+        : reminderDateTimeToJson(reminderAt),
     'reminderRecurrence': recurrence?.toJson(),
   });
 
@@ -1065,8 +1078,10 @@ class NotesCubit extends Cubit<NotesState> {
     switch (event) {
       case NoteChanged(:final note):
         if (note.boardId == state.selectedListId ||
+            note.assigneeUid != null ||
             note.isPinned ||
             note.reminderAt != null ||
+            state.assignedNotes.any((item) => item.id == note.id) ||
             state.pinnedNotes.any((item) => item.id == note.id) ||
             state.reminderNotes.any((item) => item.id == note.id)) {
           _upsert(note);
@@ -1201,13 +1216,16 @@ class NotesCubit extends Cubit<NotesState> {
     final assignedIndex = assignedNotes.indexWhere(
       (item) => item.id == note.id,
     );
-    if (assignedIndex != -1) {
-      if (note.assigneeUid == assignedNotes[assignedIndex].assigneeUid) {
-        assignedNotes[assignedIndex] = note;
+    if (note.assigneeUid != null) {
+      if (assignedIndex == -1) {
+        assignedNotes.insert(0, note);
       } else {
-        assignedNotes.removeAt(assignedIndex);
+        assignedNotes[assignedIndex] = note;
       }
+    } else if (assignedIndex != -1) {
+      assignedNotes.removeAt(assignedIndex);
     }
+    assignedNotes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
     final pinnedNotes = [...state.pinnedNotes];
     final pinnedIndex = pinnedNotes.indexWhere((item) => item.id == note.id);

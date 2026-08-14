@@ -895,7 +895,9 @@ void main() {
     );
     expect(find.byTooltip('Título grande'), findsOneWidget);
     expect(find.byTooltip('Negrita'), findsOneWidget);
-    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.tap(
+      find.byKey(const ValueKey('inline-description-subtasks-divider-note-1')),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(assigneeAvatar);
@@ -1336,7 +1338,11 @@ void main() {
         const TextSelection.collapsed(offset: updatedContent.length),
       );
       await tester.pump();
-      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.tap(
+        find.byKey(
+          const ValueKey('inline-description-subtasks-divider-note-1'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(
@@ -1430,6 +1436,99 @@ void main() {
   );
 
   testWidgets(
+    'keeps description editing active through formatting gestures and saves on exit',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeNotesRepository();
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('note-note-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('inline-description-hit-target-note-1')),
+      );
+      await tester.pumpAndSettle();
+
+      final editor = find.byKey(const ValueKey('quick-edit-content-editor'));
+      final formatStrip = find.descendant(
+        of: find.byKey(const ValueKey('quick-edit-content-field')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is SingleChildScrollView &&
+              widget.scrollDirection == Axis.horizontal,
+        ),
+      );
+      expect(editor, findsOneWidget);
+      expect(formatStrip, findsOneWidget);
+
+      await tester.drag(formatStrip, const Offset(-140, 0));
+      await tester.pumpAndSettle();
+      expect(editor, findsOneWidget);
+      expect(repository.lastChanges, isNull);
+
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      expect(editor, findsOneWidget);
+      expect(repository.lastChanges, isNull);
+
+      final quillEditor = tester.widget<QuillEditor>(editor);
+      const savedOutside = 'La selección y el formato siguen activos';
+      quillEditor.controller.replaceText(
+        0,
+        quillEditor.controller.document.length - 1,
+        savedOutside,
+        const TextSelection.collapsed(offset: savedOutside.length),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(
+          const ValueKey('inline-description-subtasks-divider-note-1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(editor, findsNothing);
+      expect(repository.lastChanges, containsPair('content', savedOutside));
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('inline-description-hit-target-note-1')),
+      );
+      await tester.pumpAndSettle();
+      final reopenedEditor = find.byKey(
+        const ValueKey('quick-edit-content-editor'),
+      );
+      final reopenedQuill = tester.widget<QuillEditor>(reopenedEditor);
+      const savedBack = 'La descripción se guarda al volver atrás';
+      reopenedQuill.controller.replaceText(
+        0,
+        reopenedQuill.controller.document.length - 1,
+        savedBack,
+        const TextSelection.collapsed(offset: savedBack.length),
+      );
+      await tester.pump();
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(reopenedEditor, findsNothing);
+      expect(repository.lastChanges, containsPair('content', savedBack));
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'edits each card zone in place and keeps description above subtasks',
     (tester) async {
       tester.view.physicalSize = const Size(430, 900);
@@ -1476,7 +1575,7 @@ void main() {
       expect(tester.element(previewCard), same(previewElement));
       expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
 
-      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.tap(divider);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('add-inline-subtask-button')));
       await tester.pumpAndSettle();
@@ -3825,6 +3924,62 @@ void main() {
     },
   );
 
+  testWidgets(
+    'completed notes do not replay entrances or shift after being recycled',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(
+            noteCount: 40,
+            completedNoteCount: 40,
+          ),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('view-mode-list')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('completed-section-header')), findsOne);
+      expect(
+        find.byKey(const ValueKey('note-entrance-motion-note-1')),
+        findsNothing,
+      );
+
+      final boardScroll = find.byKey(
+        const ValueKey('masonry-grid-scroll-view'),
+      );
+      final scrollable = find
+          .descendant(of: boardScroll, matching: find.byType(Scrollable))
+          .first;
+      final position = tester.state<ScrollableState>(scrollable).position;
+      expect(position.maxScrollExtent, greaterThan(1000));
+
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-note-1')), findsNothing);
+
+      position.jumpTo(0);
+      await tester.pump();
+      expect(position.pixels, 0);
+      expect(find.byKey(const ValueKey('note-note-1')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('note-entrance-motion-note-1')),
+        findsNothing,
+      );
+
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(position.pixels, 0);
+      expect(find.byKey(const ValueKey('note-note-1')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('a completed pending task animates before leaving the list', (
     tester,
   ) async {
@@ -4688,47 +4843,41 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final boardContext = tester.element(
+      find.byKey(const ValueKey('board-scroll-view')),
+    );
+    final initialState = boardContext.read<NotesCubit>().state;
+    expect(initialState.assignedNotes, hasLength(2));
+    expect(initialState.pinnedNotes, hasLength(2));
+    expect(initialState.reminderNotes, hasLength(2));
+    expect(repository.fetchAssignedNotesCount, 1);
+    expect(repository.fetchPinnedNotesCount, 1);
+    expect(repository.fetchReminderNotesCount, 1);
+
     await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
     await tester.pumpAndSettle();
-    var assignedShortcut = find.byKey(
+    final assignedShortcut = find.byKey(
       const ValueKey('assigned-to-me-menu-button'),
+    );
+    final pinnedShortcut = find.byKey(const ValueKey('pinned-menu-button'));
+    final reminderShortcut = find.byKey(
+      const ValueKey('with-reminder-menu-button'),
     );
     expect(
       find.descendant(of: assignedShortcut, matching: find.text('1')),
       findsOneWidget,
     );
-
-    await tester.tap(find.byKey(const ValueKey('pinned-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
-    await tester.pumpAndSettle();
-    var pinnedShortcut = find.byKey(const ValueKey('pinned-menu-button'));
     expect(
       find.descendant(of: pinnedShortcut, matching: find.text('1')),
       findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('with-reminder-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
-    await tester.pumpAndSettle();
-    final reminderShortcut = find.byKey(
-      const ValueKey('with-reminder-menu-button'),
     );
     expect(
       find.descendant(of: reminderShortcut, matching: find.text('1')),
       findsOneWidget,
     );
-    assignedShortcut = find.byKey(const ValueKey('assigned-to-me-menu-button'));
-    pinnedShortcut = find.byKey(const ValueKey('pinned-menu-button'));
-    expect(
-      find.descendant(of: assignedShortcut, matching: find.text('1')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: pinnedShortcut, matching: find.text('1')),
-      findsOneWidget,
-    );
+    expect(repository.fetchAssignedNotesCount, 2);
+    expect(repository.fetchPinnedNotesCount, 2);
+    expect(repository.fetchReminderNotesCount, 2);
     expect(tester.takeException(), isNull);
   });
 
@@ -5780,6 +5929,7 @@ class _FakeNotesRepository
     this.withRemindersAcrossLists = false,
     this.withAssignedAcrossLists = false,
     this.initialContent = 'Para la reunión de mañana',
+    this.completedNoteCount = 0,
     String? initialContentDelta,
     NoteCategory category = NoteCategory.general,
     List<NoteChecklistItem> checklist = const [],
@@ -5800,7 +5950,7 @@ class _FakeNotesRepository
          authorName: 'Nico',
          assigneeUid:
              initialAssigneeUid ?? (withInvitedPeople ? 'person-ana' : null),
-         isCompleted: initiallyCompleted,
+         isCompleted: initiallyCompleted || completedNoteCount > 0,
          isPinned: withPinnedAcrossLists,
          positionX: 0,
          positionY: 0,
@@ -5869,6 +6019,7 @@ class _FakeNotesRepository
   final bool withRemindersAcrossLists;
   final bool withAssignedAcrossLists;
   final String initialContent;
+  final int completedNoteCount;
   final _realtimeController = StreamController<NotesRealtimeEvent>.broadcast();
 
   Note _note;
@@ -5886,6 +6037,9 @@ class _FakeNotesRepository
   ListAppearance? lastAggregateAppearance;
   AggregateBoardAppearances aggregateBoardAppearances =
       const AggregateBoardAppearances();
+  int fetchAssignedNotesCount = 0;
+  int fetchPinnedNotesCount = 0;
+  int fetchReminderNotesCount = 0;
 
   @override
   bool get isLocalDataActive => true;
@@ -6023,7 +6177,7 @@ class _FakeNotesRepository
         content: _note.content,
         color: NoteColor.values[index % NoteColor.values.length],
         authorName: _note.authorName,
-        isCompleted: false,
+        isCompleted: index < completedNoteCount,
         sortOrder: index,
         positionX: 0,
         positionY: index.toDouble(),
@@ -6048,6 +6202,7 @@ class _FakeNotesRepository
 
   @override
   Future<List<Note>> fetchPinnedNotes() async {
+    fetchPinnedNotesCount += 1;
     if (!withPinnedAcrossLists || didClearLocalData) return const [];
     return [
       _note,
@@ -6070,6 +6225,7 @@ class _FakeNotesRepository
 
   @override
   Future<List<Note>> fetchAssignedNotes() async {
+    fetchAssignedNotesCount += 1;
     if (didClearLocalData) return const [];
     return [
       if (_note.assigneeUid != null) _note,
@@ -6093,6 +6249,7 @@ class _FakeNotesRepository
 
   @override
   Future<List<Note>> fetchReminderNotes() async {
+    fetchReminderNotesCount += 1;
     if (didClearLocalData) return const [];
     return [
       if (_note.reminderAt != null) _note,
