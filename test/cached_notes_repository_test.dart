@@ -259,6 +259,36 @@ void main() {
     },
   );
 
+  test(
+    'permanently deletes cached trash through the remote repository',
+    () async {
+      final preferences = await SharedPreferences.getInstance();
+      final remote = _FakeRemoteRepository(lists: [_list()], notes: []);
+      remote.trashedNotes.addAll([
+        _note(
+          id: 'note-1',
+          title: 'Primera',
+        ).copyWith(deletedAt: DateTime.utc(2026, 8, 14)),
+        _note(
+          id: 'note-2',
+          title: 'Segunda',
+        ).copyWith(deletedAt: DateTime.utc(2026, 8, 15)),
+      ]);
+      final repository = CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+        mutationStore: InMemoryOfflineMutationStore(),
+      );
+
+      await repository.permanentlyDeleteNote('note-1');
+      expect(remote.trashedNotes.single.id, 'note-2');
+      expect(await repository.emptyTrash(), 1);
+      expect(remote.trashedNotes, isEmpty);
+      repository.dispose();
+    },
+  );
+
   test('keeps only the latest offline board order', () async {
     final preferences = await SharedPreferences.getInstance();
     final remote = _FakeRemoteRepository(
@@ -557,6 +587,24 @@ class _FakeRemoteRepository
     final restored = note.copyWith(clearDeletedAt: true);
     notes.add(restored);
     return restored;
+  }
+
+  @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    _throwIfOffline('/notes/trash/$id');
+    final previousLength = trashedNotes.length;
+    trashedNotes.removeWhere((item) => item.id == id);
+    if (trashedNotes.length == previousLength) {
+      throw const NotesPersistenceFailure();
+    }
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    _throwIfOffline('/notes/trash');
+    final deletedCount = trashedNotes.length;
+    trashedNotes.clear();
+    return deletedCount;
   }
 
   @override

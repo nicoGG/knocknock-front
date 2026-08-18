@@ -125,6 +125,40 @@ void main() {
     repository.dispose();
   });
 
+  test(
+    'permanently deletes one trashed note and can empty the trash',
+    () async {
+      final repository = LocalNotesRepository();
+      final first = await repository.createNote(
+        'home',
+        const NoteDraft(
+          title: 'Primera',
+          content: '',
+          color: NoteColor.yellow,
+          authorName: 'Invitado',
+        ),
+      );
+      final second = await repository.createNote(
+        'home',
+        const NoteDraft(
+          title: 'Segunda',
+          content: '',
+          color: NoteColor.blue,
+          authorName: 'Invitado',
+        ),
+      );
+      await repository.deleteNote(first.id);
+      await repository.deleteNote(second.id);
+
+      await repository.permanentlyDeleteNote(first.id);
+      expect((await repository.fetchTrash()).single.id, second.id);
+
+      expect(await repository.emptyTrash(), 1);
+      expect(await repository.fetchTrash(), isEmpty);
+      repository.dispose();
+    },
+  );
+
   test('renames a guest list and deletes it with its notes', () async {
     final repository = LocalNotesRepository();
     final list = await repository.createList('Trabajo');

@@ -539,6 +539,33 @@ void main() {
     expect(remote.rawNote.title, startsWith(e2eeCiphertextPrefix));
     repository.dispose();
   });
+
+  test('delegates permanent trash deletion without decrypting again', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final repository = E2eeNotesRepository(
+      repository: CachedNotesRepository(
+        repository: remote,
+        preferences: preferences,
+        userIdProvider: () => 'user-1',
+      ),
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+
+    await repository.fetchLists();
+    remote.rawNote = remote.rawNote.copyWith(
+      deletedAt: DateTime.utc(2026, 8, 14),
+    );
+    await repository.fetchTrash();
+    await repository.permanentlyDeleteNote('note-1');
+    expect(remote.permanentlyDeletedIds, ['note-1']);
+    expect(await repository.emptyTrash(), 0);
+    expect(remote.emptyTrashCallCount, 1);
+    expect(await repository.searchNotes('comprar'), isEmpty);
+    repository.dispose();
+  });
 }
 
 class _FakeE2eeRemote extends Fake
@@ -561,6 +588,9 @@ class _FakeE2eeRemote extends Fake
   int fetchNotesCalls = 0;
   String? initialCustomAssigneeName;
   NoteAttachment? attachmentPayload;
+  final permanentlyDeletedIds = <String>[];
+  int emptyTrashCallCount = 0;
+  bool isPermanentlyDeleted = false;
 
   late NoteList rawList = NoteList(
     id: 'home-user-1',
@@ -620,12 +650,14 @@ class _FakeE2eeRemote extends Fake
   @override
   Future<List<Note>> fetchNotes(String boardId) async {
     fetchNotesCalls++;
-    return [rawNote];
+    return !isPermanentlyDeleted && rawNote.deletedAt == null
+        ? [rawNote]
+        : const [];
   }
 
   @override
   Future<List<Note>> fetchTrash() async =>
-      rawNote.deletedAt == null ? const [] : [rawNote];
+      isPermanentlyDeleted || rawNote.deletedAt == null ? const [] : [rawNote];
 
   @override
   Future<Note> restoreNote(String id) async {
@@ -637,6 +669,20 @@ class _FakeE2eeRemote extends Fake
       revision: rawNote.revision + 1,
     );
     return rawNote;
+  }
+
+  @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    permanentlyDeletedIds.add(id);
+    isPermanentlyDeleted = true;
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    emptyTrashCallCount++;
+    if (isPermanentlyDeleted || rawNote.deletedAt == null) return 0;
+    isPermanentlyDeleted = true;
+    return 1;
   }
 
   @override

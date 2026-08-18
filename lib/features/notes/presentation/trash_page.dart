@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_error_message.dart';
+import 'package:nocknock/features/notes/presentation/note_palette.dart';
 
 class TrashPage extends StatefulWidget {
   const TrashPage({required this.cubit, super.key});
@@ -15,13 +16,19 @@ class TrashPage extends StatefulWidget {
 class _TrashPageState extends State<TrashPage> {
   late Future<List<Note>> _trashFuture = widget.cubit.fetchTrash();
   final Set<String> _restoringIds = {};
+  final Set<String> _deletingIds = {};
+  bool _isEmptying = false;
 
   void _reload() {
     setState(() => _trashFuture = widget.cubit.fetchTrash());
   }
 
   Future<void> _restore(Note note) async {
-    if (_restoringIds.contains(note.id)) return;
+    if (_restoringIds.contains(note.id) ||
+        _deletingIds.contains(note.id) ||
+        _isEmptying) {
+      return;
+    }
     setState(() => _restoringIds.add(note.id));
     try {
       final restored = await widget.cubit.restoreNoteFromTrash(note);
@@ -42,6 +49,139 @@ class _TrashPageState extends State<TrashPage> {
       ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
     }
   }
+
+  Future<void> _deletePermanently(Note note) async {
+    if (_restoringIds.contains(note.id) ||
+        _deletingIds.contains(note.id) ||
+        _isEmptying) {
+      return;
+    }
+    final confirmed = await _confirmPermanentDelete(note);
+    if (!confirmed || !mounted) return;
+    setState(() => _deletingIds.add(note.id));
+    try {
+      await widget.cubit.permanentlyDeleteNoteFromTrash(note);
+      if (!mounted) return;
+      setState(() {
+        _deletingIds.remove(note.id);
+        _trashFuture = widget.cubit.fetchTrash();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nota eliminada definitivamente.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _deletingIds.remove(note.id));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
+    }
+  }
+
+  Future<void> _emptyTrash(List<Note> notes) async {
+    if (notes.isEmpty ||
+        _isEmptying ||
+        _restoringIds.isNotEmpty ||
+        _deletingIds.isNotEmpty) {
+      return;
+    }
+    final confirmed = await _confirmEmptyTrash(notes.length);
+    if (!confirmed || !mounted) return;
+    setState(() => _isEmptying = true);
+    try {
+      final deletedCount = await widget.cubit.emptyTrash();
+      if (!mounted) return;
+      setState(() {
+        _isEmptying = false;
+        _trashFuture = widget.cubit.fetchTrash();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            deletedCount == 1
+                ? 'Se eliminó 1 nota definitivamente.'
+                : 'Se eliminaron $deletedCount notas definitivamente.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isEmptying = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
+    }
+  }
+
+  Future<bool> _confirmPermanentDelete(Note note) async {
+    final title = note.title.trim().isEmpty ? 'Nota sin título' : note.title;
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            scrollable: true,
+            icon: Icon(
+              Icons.delete_forever_rounded,
+              color: Theme.of(dialogContext).colorScheme.error,
+            ),
+            title: const Text('¿Eliminar definitivamente?'),
+            content: Text(
+              '“$title” se eliminará para siempre. Esta acción no se puede deshacer.',
+              textAlign: TextAlign.center,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                key: ValueKey('confirm-delete-note-${note.id}'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                  foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+                ),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Eliminar definitivamente'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<bool> _confirmEmptyTrash(int noteCount) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          scrollable: true,
+          icon: Icon(
+            Icons.warning_amber_rounded,
+            color: Theme.of(dialogContext).colorScheme.error,
+          ),
+          title: const Text('¿Vaciar la papelera?'),
+          content: Text(
+            noteCount == 1
+                ? 'Se eliminará 1 nota para siempre. No podrás recuperarla.'
+                : 'Se eliminarán las $noteCount notas para siempre. No podrás recuperarlas.',
+            textAlign: TextAlign.center,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm-empty-trash'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Vaciar papelera'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   String _listName(String boardId) {
     for (final list in widget.cubit.state.lists) {
@@ -81,6 +221,7 @@ class _TrashPageState extends State<TrashPage> {
           return RefreshIndicator(
             onRefresh: () async => _reload(),
             child: ListView(
+              key: const ValueKey('trash-list'),
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
               children: [
                 Container(
@@ -113,13 +254,39 @@ class _TrashPageState extends State<TrashPage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: const ValueKey('empty-trash-button'),
+                    onPressed:
+                        _isEmptying ||
+                            _restoringIds.isNotEmpty ||
+                            _deletingIds.isNotEmpty
+                        ? null
+                        : () => _emptyTrash(notes),
+                    icon: _isEmptying
+                        ? const SizedBox.square(
+                            dimension: 17,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_forever_rounded),
+                    label: const Text('Vaciar papelera'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: colorScheme.error,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 for (final note in notes) ...[
                   _TrashNoteCard(
                     note: note,
                     listName: _listName(note.boardId),
                     isRestoring: _restoringIds.contains(note.id),
+                    isDeleting: _deletingIds.contains(note.id),
+                    isDisabled: _isEmptying,
                     onRestore: () => _restore(note),
+                    onDelete: () => _deletePermanently(note),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -443,78 +610,160 @@ class _TrashNoteCard extends StatelessWidget {
     required this.note,
     required this.listName,
     required this.isRestoring,
+    required this.isDeleting,
+    required this.isDisabled,
     required this.onRestore,
+    required this.onDelete,
   });
 
   final Note note;
   final String listName;
   final bool isRestoring;
+  final bool isDeleting;
+  final bool isDisabled;
   final VoidCallback onRestore;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final noteColor = NotePalette.color(note.color);
+    final title = note.title.trim().isEmpty ? 'Nota sin título' : note.title;
+    final summary = _summary();
+    final isBusy = isRestoring || isDeleting || isDisabled;
     return Card(
       key: ValueKey('trash-note-${note.id}'),
       margin: EdgeInsets.zero,
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
         side: BorderSide(color: colorScheme.outlineVariant),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 10, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: noteColor, width: 5)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 15, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    note.title.trim().isEmpty ? 'Nota sin título' : note.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: noteColor.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(
+                      Icons.sticky_note_2_outlined,
+                      color: colorScheme.onSurface.withValues(alpha: 0.7),
                     ),
                   ),
-                  const SizedBox(height: 5),
-                  Text(
-                    listName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    _remainingLabel(note.deletedAt),
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colorScheme.error,
-                      fontWeight: FontWeight.w700,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        if (summary != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            summary,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              key: ValueKey('restore-note-${note.id}'),
-              onPressed: isRestoring ? null : onRestore,
-              icon: isRestoring
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.restore_rounded, size: 19),
-              label: const Text('Restaurar'),
-            ),
-          ],
+              const SizedBox(height: 13),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _TrashMetadataChip(
+                    icon: Icons.folder_outlined,
+                    label: listName,
+                    foregroundColor: colorScheme.onSurfaceVariant,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                  ),
+                  _TrashMetadataChip(
+                    icon: Icons.schedule_rounded,
+                    label: _remainingLabel(note.deletedAt),
+                    foregroundColor: colorScheme.onErrorContainer,
+                    backgroundColor: colorScheme.errorContainer,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  runAlignment: WrapAlignment.end,
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    TextButton.icon(
+                      key: ValueKey('delete-note-${note.id}'),
+                      onPressed: isBusy ? null : onDelete,
+                      icon: isDeleting
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.delete_forever_rounded, size: 19),
+                      label: const Text('Eliminar'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: colorScheme.error,
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      key: ValueKey('restore-note-${note.id}'),
+                      onPressed: isBusy ? null : onRestore,
+                      icon: isRestoring
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.restore_rounded, size: 19),
+                      label: const Text('Restaurar'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  String? _summary() {
+    if (note.checklist.isNotEmpty) {
+      final completed = note.checklist.where((item) => item.isCompleted).length;
+      return '$completed de ${note.checklist.length} elementos completados';
+    }
+    final content = note.content.trim();
+    return content.isEmpty ? null : content;
   }
 
   String _remainingLabel(DateTime? deletedAt) {
@@ -526,6 +775,48 @@ class _TrashNoteCard extends StatelessWidget {
     final days = (remaining.inMinutes / Duration.minutesPerDay).ceil();
     return days == 1 ? 'Se elimina en 1 día' : 'Se elimina en $days días';
   }
+}
+
+class _TrashMetadataChip extends StatelessWidget {
+  const _TrashMetadataChip({
+    required this.icon,
+    required this.label,
+    required this.foregroundColor,
+    required this.backgroundColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color foregroundColor;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(maxWidth: 260),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    decoration: BoxDecoration(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(99),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: foregroundColor),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: foregroundColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _TrashMessage extends StatelessWidget {

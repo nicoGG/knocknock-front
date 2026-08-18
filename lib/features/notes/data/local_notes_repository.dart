@@ -490,6 +490,40 @@ class LocalNotesRepository
   }
 
   @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    await _ensureLoaded();
+    await _purgeExpiredTrash();
+    final index = _notes!.indexWhere(
+      (note) => note.id == id && note.deletedAt != null,
+    );
+    if (index == -1) throw const NotesPersistenceFailure();
+    final removed = _notes!.removeAt(index);
+    try {
+      await _persist();
+    } catch (_) {
+      _notes!.insert(index, removed);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    await _ensureLoaded();
+    await _purgeExpiredTrash();
+    final previous = List<Note>.of(_notes!);
+    _notes!.removeWhere((note) => note.deletedAt != null);
+    final deletedCount = previous.length - _notes!.length;
+    if (deletedCount == 0) return 0;
+    try {
+      await _persist();
+    } catch (_) {
+      _notes = previous;
+      rethrow;
+    }
+    return deletedCount;
+  }
+
+  @override
   bool get isLocalDataActive => true;
 
   @override

@@ -1081,6 +1081,22 @@ class NotesCubit extends Cubit<NotesState> {
     return restored;
   }
 
+  Future<void> permanentlyDeleteNoteFromTrash(Note note) async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    await (repository as TrashNotesRepository).permanentlyDeleteNote(note.id);
+  }
+
+  Future<int> emptyTrash() async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as TrashNotesRepository).emptyTrash();
+  }
+
   Future<bool> clearLocalData() async {
     final repository = _repository;
     if (repository is! LocalNotesDataCleaner) return false;

@@ -370,6 +370,46 @@ class CachedNotesRepository
     return restored;
   }
 
+  @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    await _flushPendingTrashChanges(noteId: id);
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    await (repository as TrashNotesRepository).permanentlyDeleteNote(id);
+    await _updateCache(_userIdProvider(), (cache) => _removeNote(cache, id));
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    await _flushPendingTrashChanges();
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final deletedCount = await (repository as TrashNotesRepository)
+        .emptyTrash();
+    await _updateCache(_userIdProvider(), (cache) {
+      for (final notes in cache.notesByBoard.values) {
+        notes.removeWhere((note) => note.deletedAt != null);
+      }
+    });
+    return deletedCount;
+  }
+
+  Future<void> _flushPendingTrashChanges({String? noteId}) async {
+    await syncPendingChanges();
+    final userId = _userIdProvider();
+    if (userId == null || userId.isEmpty) return;
+    final hasPendingDelete = (await _mutationStore.listForUser(userId)).any(
+      (mutation) =>
+          mutation.kind == StoredMutationKind.delete &&
+          (noteId == null || mutation.entityId == noteId),
+    );
+    if (hasPendingDelete) throw const NotesPersistenceFailure();
+  }
+
   Future<List<Note>> _pendingTrashNotes() async {
     final userId = _userIdProvider();
     if (userId == null || userId.isEmpty) return const [];

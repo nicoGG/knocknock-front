@@ -234,6 +234,10 @@ abstract interface class TrashNotesRepository {
   Future<List<Note>> fetchTrash();
 
   Future<Note> restoreNote(String id);
+
+  Future<void> permanentlyDeleteNote(String id);
+
+  Future<int> emptyTrash();
 }
 
 class CollaborationRequiresSignInFailure implements Exception {

@@ -405,6 +405,17 @@ class ApiNotesRepository
   }
 
   @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    await _dio.delete<void>('/notes/trash/$id');
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    final response = await _dio.delete<Map<String, dynamic>>('/notes/trash');
+    return (response.data?['deletedCount'] as num?)?.toInt() ?? 0;
+  }
+
+  @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/notes',

@@ -141,4 +141,122 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     unawaited(cubit.close());
   });
+
+  testWidgets('warns before deleting one note or emptying the trash', (
+    tester,
+  ) async {
+    final repository = LocalNotesRepository();
+    final first = await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Borrador antiguo',
+        content: 'Contenido que todavía se puede recuperar',
+        color: NoteColor.pink,
+        authorName: 'Invitado',
+      ),
+    );
+    final second = await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Otra nota',
+        content: '',
+        color: NoteColor.blue,
+        authorName: 'Invitado',
+      ),
+    );
+    await repository.deleteNote(first.id);
+    await repository.deleteNote(second.id);
+    final cubit = NotesCubit(repository);
+    await cubit.load();
+
+    await tester.pumpWidget(MaterialApp(home: TrashPage(cubit: cubit)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.text('Contenido que todavía se puede recuperar'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('empty-trash-button')), findsOneWidget);
+    expect(find.byKey(ValueKey('restore-note-${first.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('delete-note-${first.id}')), findsOneWidget);
+
+    await tester.tap(find.byKey(ValueKey('delete-note-${first.id}')));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Eliminar definitivamente?'), findsOneWidget);
+    expect(find.textContaining('no se puede deshacer'), findsOneWidget);
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(await repository.fetchTrash(), hasLength(2));
+
+    await tester.tap(find.byKey(ValueKey('delete-note-${first.id}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('confirm-delete-note-${first.id}')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('trash-note-${first.id}')), findsNothing);
+    expect(await repository.fetchTrash(), hasLength(1));
+
+    await tester.tap(find.byKey(const ValueKey('empty-trash-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Vaciar la papelera?'), findsOneWidget);
+    expect(find.textContaining('No podrás recuperarla'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('confirm-empty-trash')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('La papelera está vacía'), findsOneWidget);
+    expect(await repository.fetchTrash(), isEmpty);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(cubit.close());
+  });
+
+  testWidgets('trash cards and warning fit narrow screens with large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = LocalNotesRepository();
+    final note = await repository.createNote(
+      'home',
+      const NoteDraft(
+        title: 'Una nota eliminada con un título bastante largo',
+        content: 'Un resumen que también puede ocupar más de una línea.',
+        color: NoteColor.orange,
+        authorName: 'Invitado',
+      ),
+    );
+    await repository.deleteNote(note.id);
+    final cubit = NotesCubit(repository);
+    await cubit.load();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: TrashPage(cubit: cubit),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.takeException(), isNull);
+    await tester.drag(
+      find.byKey(const ValueKey('trash-list')),
+      const Offset(0, -600),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('delete-note-${note.id}')));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Eliminar definitivamente?'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(cubit.close());
+  });
 }

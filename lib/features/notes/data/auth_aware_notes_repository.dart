@@ -189,6 +189,22 @@ class AuthAwareNotesRepository
   });
 
   @override
+  Future<void> permanentlyDeleteNote(String id) => _whenReady((repository) {
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as TrashNotesRepository).permanentlyDeleteNote(id);
+  });
+
+  @override
+  Future<int> emptyTrash() => _whenReady((repository) {
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as TrashNotesRepository).emptyTrash();
+  });
+
+  @override
   Future<List<NoteSearchResult>> searchNotes(String query) =>
       _whenReady((repository) {
         if (repository is! NotesSearchRepository) return Future.value(const []);

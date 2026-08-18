@@ -67,6 +67,7 @@ class E2eeNotesRepository
   final _rawLists = <String, NoteList>{};
   final _clearLists = <String, NoteList>{};
   final _noteBoards = <String, String>{};
+  final _trashNoteIds = <String>{};
   final _searchIndex = PrivateNoteSearchIndex();
   final _fullyIndexedBoardIds = <String>{};
 
@@ -404,7 +405,11 @@ class E2eeNotesRepository
     if (repository is! TrashNotesRepository) return const [];
     if (_rawLists.isEmpty) await fetchLists();
     final rawNotes = await (repository as TrashNotesRepository).fetchTrash();
-    return _decryptAggregateNotes(rawNotes);
+    final clearNotes = await _decryptAggregateNotes(rawNotes);
+    _trashNoteIds
+      ..clear()
+      ..addAll(rawNotes.map((note) => note.id));
+    return clearNotes;
   }
 
   @override
@@ -417,8 +422,37 @@ class E2eeNotesRepository
     final key = await _requireListKey(raw.boardId);
     _noteBoards[raw.id] = raw.boardId;
     final note = await _decryptNote(raw, key);
+    _trashNoteIds.remove(id);
     _searchIndex.upsert(note);
     return note;
+  }
+
+  @override
+  Future<void> permanentlyDeleteNote(String id) async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    await (repository as TrashNotesRepository).permanentlyDeleteNote(id);
+    _trashNoteIds.remove(id);
+    _noteBoards.remove(id);
+    _searchIndex.remove(id);
+  }
+
+  @override
+  Future<int> emptyTrash() async {
+    final repository = _repository;
+    if (repository is! TrashNotesRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final deletedCount = await (repository as TrashNotesRepository)
+        .emptyTrash();
+    for (final id in _trashNoteIds) {
+      _noteBoards.remove(id);
+      _searchIndex.remove(id);
+    }
+    _trashNoteIds.clear();
+    return deletedCount;
   }
 
   @override
@@ -598,6 +632,7 @@ class E2eeNotesRepository
       expectedRevision: expectedRevision,
       clientMutationId: clientMutationId,
     );
+    _trashNoteIds.add(id);
     _noteBoards.remove(id);
     _searchIndex.remove(id);
   }
