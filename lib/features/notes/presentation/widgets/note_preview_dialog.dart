@@ -10,6 +10,7 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_attachment_picker.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_pdf_viewer.dart';
 import 'package:nocknock/features/notes/presentation/widgets/post_it_card.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
@@ -1151,14 +1152,27 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         _QuickPhotoStrip(
                           attachments: _attachments,
                           foregroundColor: foregroundColor,
-                          onOpen: (attachment) => showNotePhotoViewer(
-                            context,
-                            attachments: _attachments,
-                            initialIndex: _attachments.indexWhere(
-                              (entry) => entry.id == attachment.id,
-                            ),
-                            loader: null,
-                          ),
+                          onOpen: (attachment) {
+                            if (attachment.isPdf) {
+                              showNotePdfViewer(
+                                context,
+                                attachment: attachment,
+                                loader: null,
+                              );
+                              return;
+                            }
+                            final photos = _attachments
+                                .where((entry) => entry.isImage)
+                                .toList(growable: false);
+                            showNotePhotoViewer(
+                              context,
+                              attachments: photos,
+                              initialIndex: photos.indexWhere(
+                                (entry) => entry.id == attachment.id,
+                              ),
+                              loader: null,
+                            );
+                          },
                           onRemove: (attachment) => setState(
                             () => _attachments.removeWhere(
                               (entry) => entry.id == attachment.id,
@@ -1602,11 +1616,15 @@ class _QuickPhotoStrip extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 Tooltip(
-                  message: 'Ver foto en grande',
+                  message: attachment.isPdf
+                      ? 'Abrir PDF'
+                      : 'Ver foto en grande',
                   child: Semantics(
                     button: true,
-                    image: true,
-                    label: 'Ver ${attachment.name} en grande',
+                    image: attachment.isImage,
+                    label: attachment.isPdf
+                        ? 'Abrir ${attachment.name}'
+                        : 'Ver ${attachment.name} en grande',
                     child: Material(
                       color: Colors.transparent,
                       child: InkWell(

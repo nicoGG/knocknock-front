@@ -276,6 +276,7 @@ class _NotesGridState extends State<_NotesGrid> {
   String? _activeDraggedNoteId;
   List<String>? _originalDragOrder;
   List<String>? _previewDragOrder;
+  int _masonryLayoutRevision = 0;
 
   List<Note> get notes => widget.notes;
   bool get groupCompleted => widget.groupCompleted;
@@ -290,6 +291,20 @@ class _NotesGridState extends State<_NotesGrid> {
   @override
   void didUpdateWidget(covariant _NotesGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final oldOrder = oldWidget.notes.map((note) => note.id).toList();
+    final newOrder = notes.map((note) => note.id).toList();
+    final oldIds = oldOrder.toSet();
+    final newIds = newOrder.toSet();
+    final oldSharedOrder = oldOrder.where(newIds.contains).toList();
+    final newSharedOrder = newOrder.where(oldIds.contains).toList();
+    if (!listEquals(oldSharedOrder, newSharedOrder)) {
+      // SliverMasonryGrid retains each reused child's previous main/cross-axis
+      // parent data. Recreate its render object only when existing cards truly
+      // change order so none keeps an offset from its old column. Recreating it
+      // for pagination or realtime inserts discards the column history and can
+      // correct a long scroll almost all the way back to the beginning.
+      _masonryLayoutRevision += 1;
+    }
     final collapsibleNoteIds = notes
         .where((note) => note.checklist.any((item) => item.isCompleted))
         .map((note) => note.id)
@@ -356,6 +371,7 @@ class _NotesGridState extends State<_NotesGrid> {
         previewOrder != null &&
         !listEquals(originalOrder, previewOrder);
     setState(() {
+      if (orderChanged) _masonryLayoutRevision += 1;
       _activeDragGroup = null;
       _activeDraggedNoteId = null;
       _originalDragOrder = null;
@@ -462,13 +478,16 @@ class _NotesGridState extends State<_NotesGrid> {
     required String keySuffix,
   }) {
     final arrangedNotes = _previewedGridNotes(keySuffix, notes);
+    final layoutKey = _masonryLayoutRevision == 0
+        ? 'masonry-grid-columns$keySuffix'
+        : 'masonry-grid-columns$keySuffix-layout-$_masonryLayoutRevision';
     final groupNoteIds = notes.map((note) => note.id).toSet();
     final noteIndexes = <Key, int>{
       for (var index = 0; index < arrangedNotes.length; index++)
         ValueKey('grid-note-size-${arrangedNotes[index].id}'): index,
     };
     return SliverMasonryGrid(
-      key: ValueKey('masonry-grid-columns$keySuffix'),
+      key: ValueKey(layoutKey),
       gridDelegate: SliverSimpleGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: columnCount,
       ),

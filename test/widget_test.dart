@@ -1103,6 +1103,55 @@ void main() {
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
   });
 
+  testWidgets('mosaic compacts unequal-height columns after dropping a card', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FakeNotesRepository(
+      noteCount: 3,
+      noteContents: [
+        List.filled(18, 'Contenido alto para la primera columna.').join(' '),
+        'Breve',
+        'También breve',
+      ],
+    );
+
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final second = find.byKey(const ValueKey('reorder-grid-note-2'));
+    final third = find.byKey(const ValueKey('reorder-grid-note-3'));
+    final secondInitialPosition = tester.getTopLeft(second);
+    final thirdInitialPosition = tester.getTopLeft(third);
+    expect(thirdInitialPosition.dy, greaterThan(secondInitialPosition.dy));
+
+    final gesture = await tester.startGesture(tester.getCenter(second));
+    await tester.pump(const Duration(milliseconds: 550));
+    await gesture.moveTo(tester.getCenter(third));
+    await tester.pump(const Duration(milliseconds: 160));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(repository.reorderedNoteIds, ['note-1', 'note-3', 'note-2']);
+    expect(
+      (tester.getTopLeft(third) - secondInitialPosition).distance,
+      lessThan(4),
+    );
+    expect(tester.getTopLeft(second).dy, greaterThan(secondInitialPosition.dy));
+    expect(
+      find.byKey(const ValueKey('masonry-grid-columns-layout-2')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('canceling a mosaic drag restores the visible card order', (
     tester,
   ) async {
@@ -3352,6 +3401,78 @@ void main() {
     expect(find.byType(SliverMasonryGrid), findsOneWidget);
     expect(find.byKey(const ValueKey('reorder-grid-note-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('reorder-grid-note-40')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mosaic keeps advancing during a long scroll', (tester) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final contents = List<String>.generate(
+      80,
+      (index) => index.isEven
+          ? 'Nota breve $index'
+          : List.filled(
+              (index % 5) + 4,
+              'Contenido largo de la nota $index',
+            ).join(' '),
+    );
+    final repository = _FakePaginatedNotesRepository(
+      noteCount: contents.length,
+      noteContents: contents,
+    );
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final boardScroll = find.byKey(const ValueKey('masonry-grid-scroll-view'));
+    final scrollable = find
+        .descendant(of: boardScroll, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    var previousOffset = position.pixels;
+
+    for (var gesture = 0; gesture < 4; gesture++) {
+      await tester.fling(boardScroll, const Offset(0, -520), 1400);
+      await tester.pumpAndSettle();
+      expect(
+        position.pixels,
+        greaterThan(previousOffset + 1),
+        reason: 'El mosaico no debe volver al inicio durante el scroll.',
+      );
+      previousOffset = position.pixels;
+    }
+
+    final paginationTriggerOffset = position.maxScrollExtent - 200;
+    position.jumpTo(paginationTriggerOffset);
+    await tester.pumpAndSettle();
+    expect(repository.fetchNotesPageCount, 2);
+    expect(
+      position.pixels,
+      greaterThanOrEqualTo(paginationTriggerOffset - 1),
+      reason: 'Cargar más notas no debe devolver el mosaico al inicio.',
+    );
+    previousOffset = position.pixels;
+
+    for (var gesture = 0; gesture < 6; gesture++) {
+      await tester.fling(boardScroll, const Offset(0, -520), 1400);
+      await tester.pumpAndSettle();
+      expect(
+        position.pixels,
+        greaterThan(previousOffset + 1),
+        reason: 'El mosaico no debe volver al inicio durante el scroll.',
+      );
+      previousOffset = position.pixels;
+    }
+
+    expect(previousOffset, greaterThan(3000));
+    expect(find.byKey(const ValueKey('reorder-grid-note-1')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -5994,6 +6115,7 @@ class _FakeNotesRepository
     this.withInvitedPeople = false,
     this.initiallyCompleted = false,
     this.noteCount = 1,
+    this.noteContents,
     this.collaboratorPhotoUrl,
     this.initialAssigneeUid,
     this.withPinnedAcrossLists = false,
@@ -6012,7 +6134,7 @@ class _FakeNotesRepository
          id: 'note-1',
          boardId: 'home',
          title: 'Comprar café',
-         content: initialContent,
+         content: noteContents?.firstOrNull ?? initialContent,
          contentDelta: initialContentDelta,
          color: NoteColor.yellow,
          category: category,
@@ -6084,6 +6206,7 @@ class _FakeNotesRepository
   final bool withInvitedPeople;
   final bool initiallyCompleted;
   final int noteCount;
+  final List<String>? noteContents;
   final String? collaboratorPhotoUrl;
   final String? initialAssigneeUid;
   final bool withPinnedAcrossLists;
@@ -6245,7 +6368,9 @@ class _FakeNotesRepository
         id: 'note-${index + 1}',
         boardId: _note.boardId,
         title: 'Nota ${index + 1}',
-        content: _note.content,
+        content: index < (noteContents?.length ?? 0)
+            ? noteContents![index]
+            : _note.content,
         color: NoteColor.values[index % NoteColor.values.length],
         authorName: _note.authorName,
         isCompleted: index < completedNoteCount,
@@ -6454,5 +6579,31 @@ class _FakeNotesRepository
   @override
   void dispose() {
     unawaited(_realtimeController.close());
+  }
+}
+
+class _FakePaginatedNotesRepository extends _FakeNotesRepository
+    implements PaginatedNotesRepository {
+  _FakePaginatedNotesRepository({
+    required super.noteCount,
+    required super.noteContents,
+  });
+
+  int fetchNotesPageCount = 0;
+
+  @override
+  Future<NotesPage> fetchNotesPage(
+    String boardId, {
+    String? cursor,
+    int limit = 40,
+  }) async {
+    fetchNotesPageCount += 1;
+    final notes = await super.fetchNotes(boardId);
+    final start = int.tryParse(cursor ?? '') ?? 0;
+    final end = start + limit < notes.length ? start + limit : notes.length;
+    return NotesPage(
+      items: notes.sublist(start, end),
+      nextCursor: end < notes.length ? '$end' : null,
+    );
   }
 }

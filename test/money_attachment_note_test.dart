@@ -119,6 +119,14 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('comprobante.pdf'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('open-attachment-attachment-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('pdf-attachment-viewer')), findsOneWidget);
+    expect(find.text('No pudimos abrir este PDF'), findsOneWidget);
   });
 
   testWidgets('editor restores custom responsible and attached PDF', (

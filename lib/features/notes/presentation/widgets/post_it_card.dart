@@ -11,11 +11,13 @@ import 'package:nocknock/core/input_formatters/money_text_input_formatter.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
+import 'package:nocknock/features/notes/presentation/note_attachment_download.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
 import 'package:nocknock/features/notes/presentation/note_hero.dart';
 import 'package:nocknock/features/notes/presentation/note_palette.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_checklist.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_pdf_viewer.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
@@ -1349,6 +1351,7 @@ Future<void> showNotePhotoViewer(
   required List<NoteAttachment> attachments,
   required int initialIndex,
   required NoteAttachmentLoader? loader,
+  NoteAttachmentSaver? saver,
 }) => Navigator.of(context, rootNavigator: true).push<void>(
   PageRouteBuilder<void>(
     opaque: true,
@@ -1357,6 +1360,7 @@ Future<void> showNotePhotoViewer(
       attachments: attachments,
       initialIndex: initialIndex,
       loader: loader,
+      saver: saver,
     ),
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       if (MediaQuery.disableAnimationsOf(context)) return child;
@@ -1370,11 +1374,13 @@ class _FullscreenPhotoViewer extends StatefulWidget {
     required this.attachments,
     required this.initialIndex,
     required this.loader,
+    required this.saver,
   });
 
   final List<NoteAttachment> attachments;
   final int initialIndex;
   final NoteAttachmentLoader? loader;
+  final NoteAttachmentSaver? saver;
 
   @override
   State<_FullscreenPhotoViewer> createState() => _FullscreenPhotoViewerState();
@@ -1383,6 +1389,7 @@ class _FullscreenPhotoViewer extends StatefulWidget {
 class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
   late final PageController _controller;
   late int _currentIndex;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -1395,6 +1402,33 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _downloadCurrent() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      final current = widget.attachments[_currentIndex];
+      final loaded = current.dataBase64 != null
+          ? current
+          : await widget.loader?.call(current.id) ?? current;
+      final bytes = decodeNoteAttachmentBytes(loaded);
+      final result = await (widget.saver ?? saveNoteAttachmentToDevice)(
+        loaded,
+        bytes,
+      );
+      if (!mounted || result == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Foto guardada en el dispositivo')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No pudimos guardar la foto')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -1423,7 +1457,7 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
           if (widget.attachments.length > 1)
             Center(
               child: Padding(
-                padding: const EdgeInsets.only(right: 18),
+                padding: const EdgeInsets.only(right: 4),
                 child: Text(
                   '${_currentIndex + 1}/${widget.attachments.length}',
                   key: const ValueKey('fullscreen-photo-count'),
@@ -1431,6 +1465,20 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
                 ),
               ),
             ),
+          IconButton(
+            key: ValueKey('download-photo-${current.id}'),
+            tooltip: 'Guardar en el dispositivo',
+            onPressed: _isSaving ? null : _downloadCurrent,
+            icon: _isSaving
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.download_rounded),
+          ),
         ],
       ),
       body: PageView.builder(
@@ -1610,6 +1658,24 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
         : widget.loader?.call(attachment.id);
   }
 
+  void _openAttachment() {
+    final attachment = widget.attachment;
+    if (attachment.isPdf) {
+      showNotePdfViewer(context, attachment: attachment, loader: widget.loader);
+      return;
+    }
+    if (!attachment.isImage) return;
+    final photos = widget.attachments
+        .where((entry) => entry.isImage)
+        .toList(growable: false);
+    showNotePhotoViewer(
+      context,
+      attachments: photos,
+      initialIndex: photos.indexWhere((entry) => entry.id == attachment.id),
+      loader: widget.loader,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final foregroundColor = widget.foregroundColor;
@@ -1620,23 +1686,12 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
         Semantics(
           label: 'Adjunto ${widget.attachment.name}',
           image: widget.attachment.isImage,
-          button: widget.attachment.isImage,
+          button: widget.attachment.isImage || widget.attachment.isPdf,
           child: GestureDetector(
+            key: ValueKey('open-attachment-${widget.attachment.id}'),
             behavior: HitTestBehavior.opaque,
-            onTap: widget.attachment.isImage
-                ? () {
-                    final photos = widget.attachments
-                        .where((attachment) => attachment.isImage)
-                        .toList(growable: false);
-                    showNotePhotoViewer(
-                      context,
-                      attachments: photos,
-                      initialIndex: photos.indexWhere(
-                        (attachment) => attachment.id == widget.attachment.id,
-                      ),
-                      loader: widget.loader,
-                    );
-                  }
+            onTap: widget.attachment.isImage || widget.attachment.isPdf
+                ? _openAttachment
                 : null,
             child: Container(
               key: ValueKey('attachment-preview-${widget.attachment.id}'),
@@ -1713,7 +1768,7 @@ class _NoteAttachmentPreviewState extends State<_NoteAttachmentPreview> {
             right: 4,
             child: IconButton.filled(
               key: ValueKey('remove-preview-photo-${widget.attachment.id}'),
-              tooltip: 'Eliminar imagen',
+              tooltip: 'Quitar adjunto',
               visualDensity: VisualDensity.compact,
               style: IconButton.styleFrom(
                 backgroundColor: Colors.black.withValues(alpha: 0.68),
@@ -1782,6 +1837,12 @@ class _AttachmentFileTile extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            Icons.open_in_full_rounded,
+            color: foregroundColor.withValues(alpha: 0.66),
+            size: 18,
           ),
         ],
       ),
@@ -2091,9 +2152,10 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('¿Eliminar imagen?'),
-        content: const Text(
-          'La imagen se quitará de esta nota. Esta acción se guardará de inmediato.',
+        title: Text(attachment.isPdf ? '¿Quitar PDF?' : '¿Eliminar imagen?'),
+        content: Text(
+          '${attachment.isPdf ? 'El PDF' : 'La imagen'} se quitará de esta nota. '
+          'Esta acción se guardará de inmediato.',
         ),
         actions: [
           TextButton(
