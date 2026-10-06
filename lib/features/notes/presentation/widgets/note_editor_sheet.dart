@@ -92,6 +92,9 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _authorController = TextEditingController(
       text: note?.authorName ?? widget.defaultAuthorName,
     );
+    _color = note?.color ?? NoteColor.none;
+    _category = note?.category ?? NoteCategory.general;
+    _checklist = [...?note?.checklist];
     _assigneeUid =
         widget.assignees.any((person) => person.uid == note?.assigneeUid)
         ? note?.assigneeUid

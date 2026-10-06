@@ -167,10 +167,13 @@ void main() {
       ),
     );
 
-    final responsible = tester.widget<TextFormField>(
-      find.byKey(const ValueKey('note-custom-assignee-field')),
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('note-assignee-picker')),
+        matching: find.text('Camila'),
+      ),
+      findsOneWidget,
     );
-    expect(responsible.controller?.text, 'Camila');
     expect(find.text('comprobante.pdf'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('remove-note-attachment-button')),

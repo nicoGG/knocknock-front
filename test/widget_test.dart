@@ -1502,7 +1502,14 @@ void main() {
     );
 
     expect(pinRect.center.dy, closeTo(reactionsRect.center.dy, 0.5));
-    expect(animatedCard.child, isA<OverflowBox>());
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('grid-note-size-note-1')),
+        matching: find.byType(OverflowBox),
+      ),
+      findsOneWidget,
+    );
+    expect(animatedCard.constraints?.maxHeight, greaterThan(0));
     expect(tester.takeException(), isNull);
   });
 
@@ -4390,7 +4397,10 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 80));
     expect(
-      tester.widget<SliverOpacity>(find.byType(SliverOpacity)).opacity,
+      tester
+          .widget<SliverFadeTransition>(find.byType(SliverFadeTransition))
+          .opacity
+          .value,
       inExclusiveRange(0, 1),
     );
 
@@ -4407,7 +4417,10 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 80));
     expect(
-      tester.widget<SliverOpacity>(find.byType(SliverOpacity)).opacity,
+      tester
+          .widget<SliverFadeTransition>(find.byType(SliverFadeTransition))
+          .opacity
+          .value,
       inExclusiveRange(0, 1),
     );
 
@@ -4420,7 +4433,10 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 80));
     expect(
-      tester.widget<SliverOpacity>(find.byType(SliverOpacity)).opacity,
+      tester
+          .widget<SliverFadeTransition>(find.byType(SliverFadeTransition))
+          .opacity
+          .value,
       inExclusiveRange(0, 1),
     );
     expect(tester.takeException(), isNull);
