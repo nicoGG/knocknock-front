@@ -33,9 +33,8 @@ class _NoteCompletionTransition extends StatefulWidget {
 }
 
 class _NoteCompletionTransitionState extends State<_NoteCompletionTransition> {
-  static const _duration = Duration(milliseconds: 300);
+  static const _duration = Duration(milliseconds: 450);
 
-  Timer? _toggleTimer;
   bool _isExiting = false;
   bool? _previewCompleted;
 
@@ -43,16 +42,9 @@ class _NoteCompletionTransitionState extends State<_NoteCompletionTransition> {
   void didUpdateWidget(covariant _NoteCompletionTransition oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.note.isCompleted != widget.note.isCompleted) {
-      _toggleTimer?.cancel();
       _isExiting = false;
       _previewCompleted = null;
     }
-  }
-
-  @override
-  void dispose() {
-    _toggleTimer?.cancel();
-    super.dispose();
   }
 
   void _toggle() {
@@ -68,7 +60,6 @@ class _NoteCompletionTransitionState extends State<_NoteCompletionTransition> {
       _previewCompleted = !widget.note.isCompleted;
       _isExiting = true;
     });
-    _toggleTimer = Timer(_duration, widget.onToggle);
   }
 
   @override
@@ -77,16 +68,21 @@ class _NoteCompletionTransitionState extends State<_NoteCompletionTransition> {
         ? widget.note
         : widget.note.copyWith(isCompleted: _previewCompleted);
     final card = widget.builder(context, displayedNote, _toggle);
-    if (!_isExiting) return card;
     return TweenAnimationBuilder<double>(
       key: ValueKey('note-exit-motion-${widget.note.id}'),
-      tween: Tween(begin: 0, end: 1),
+      tween: Tween(begin: 0, end: _isExiting ? 1 : 0),
       duration: _duration,
-      curve: Curves.easeInCubic,
-      child: card,
+      curve: Curves.easeInOutCubic,
+      onEnd: () {
+        if (_isExiting) widget.onToggle();
+      },
+      child: RepaintBoundary(child: card),
       builder: (context, progress, child) => FractionalTranslation(
         key: ValueKey('note-exit-slide-${widget.note.id}'),
-        translation: Offset(0.08 * progress, -0.025 * progress),
+        translation: Offset(
+          0,
+          (widget.note.isCompleted ? -0.14 : 0.14) * progress,
+        ),
         transformHitTests: false,
         child: Transform.scale(
           key: ValueKey('note-exit-scale-${widget.note.id}'),
@@ -190,6 +186,111 @@ class _CompletedSectionHeader extends StatelessWidget {
   }
 }
 
+// Known card heights make section extents independent of recycled children.
+class _NoteMasonryDelegate extends SliverGridDelegate {
+  _NoteMasonryDelegate(this.heights, this.columns, this.spacing, this.gap);
+  final List<double> heights;
+  final int columns;
+  final double spacing;
+  final double gap;
+  _NoteMasonryLayout? _cachedLayout;
+  double? _cachedWidth;
+  AxisDirection? _cachedDirection;
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) {
+    if (_cachedLayout != null &&
+        _cachedWidth == constraints.crossAxisExtent &&
+        _cachedDirection == constraints.crossAxisDirection) {
+      return _cachedLayout!;
+    }
+    _cachedWidth = constraints.crossAxisExtent;
+    _cachedDirection = constraints.crossAxisDirection;
+    final width =
+        (constraints.crossAxisExtent - spacing * (columns - 1)) / columns;
+    final ends = List<double>.filled(columns, 0);
+    final geometry = <SliverGridGeometry>[];
+    for (final height in heights) {
+      var column = 0;
+      for (var i = 1; i < columns; i++) {
+        if (ends[i] < ends[column]) column = i;
+      }
+      final visualColumn =
+          axisDirectionIsReversed(constraints.crossAxisDirection)
+          ? columns - column - 1
+          : column;
+      geometry.add(
+        SliverGridGeometry(
+          scrollOffset: ends[column],
+          crossAxisOffset: visualColumn * (width + spacing),
+          mainAxisExtent: height,
+          crossAxisExtent: width,
+        ),
+      );
+      ends[column] += height + gap;
+    }
+    return _cachedLayout = _NoteMasonryLayout(geometry);
+  }
+
+  @override
+  bool shouldRelayout(covariant _NoteMasonryDelegate oldDelegate) =>
+      columns != oldDelegate.columns ||
+      spacing != oldDelegate.spacing ||
+      gap != oldDelegate.gap ||
+      !listEquals(heights, oldDelegate.heights);
+}
+
+class _NoteMasonryLayout extends SliverGridLayout {
+  _NoteMasonryLayout(this.geometry) {
+    var extent = 0.0;
+    for (final child in geometry) {
+      extent = math.max(extent, child.trailingScrollOffset);
+      _maximumEnds.add(extent);
+    }
+  }
+  final List<SliverGridGeometry> geometry;
+  final List<double> _maximumEnds = [];
+
+  @override
+  int getMinChildIndexForScrollOffset(double scrollOffset) {
+    // Prefix maxima preserve tall cards whose neighbours end earlier.
+    var low = 0;
+    var high = _maximumEnds.length;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      if (_maximumEnds[middle] < scrollOffset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return math.min(low, math.max(0, geometry.length - 1));
+  }
+
+  @override
+  int getMaxChildIndexForScrollOffset(double scrollOffset) {
+    var low = 0;
+    var high = geometry.length;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      if (geometry[middle].scrollOffset < scrollOffset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return math.max(0, low - 1);
+  }
+
+  @override
+  SliverGridGeometry getGeometryForChildIndex(int index) => geometry[index];
+
+  @override
+  double computeMaxScrollOffset(int childCount) => childCount == 0
+      ? 0
+      : _maximumEnds[math.min(childCount, geometry.length) - 1];
+}
+
 class _NotesGrid extends StatefulWidget {
   const _NotesGrid({
     required this.notes,
@@ -270,13 +371,13 @@ class _NotesGridState extends State<_NotesGrid> {
   static const _maximumCachedHeights = 256;
 
   final Set<String> _collapsedCompletedChecklistNoteIds = {};
+  bool _animateNoteReflow = false;
   final Set<String> _builtNoteIds = {};
   final Map<_GridNoteHeightCacheKey, double> _heightCache = {};
   String? _activeDragGroup;
   String? _activeDraggedNoteId;
   List<String>? _originalDragOrder;
   List<String>? _previewDragOrder;
-  int _masonryLayoutRevision = 0;
 
   List<Note> get notes => widget.notes;
   bool get groupCompleted => widget.groupCompleted;
@@ -291,19 +392,13 @@ class _NotesGridState extends State<_NotesGrid> {
   @override
   void didUpdateWidget(covariant _NotesGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldOrder = oldWidget.notes.map((note) => note.id).toList();
-    final newOrder = notes.map((note) => note.id).toList();
-    final oldIds = oldOrder.toSet();
-    final newIds = newOrder.toSet();
-    final oldSharedOrder = oldOrder.where(newIds.contains).toList();
-    final newSharedOrder = newOrder.where(oldIds.contains).toList();
-    if (!listEquals(oldSharedOrder, newSharedOrder)) {
-      // SliverMasonryGrid retains each reused child's previous main/cross-axis
-      // parent data. Recreate its render object only when existing cards truly
-      // change order so none keeps an offset from its old column. Recreating it
-      // for pagination or realtime inserts discards the column history and can
-      // correct a long scroll almost all the way back to the beginning.
-      _masonryLayoutRevision += 1;
+    if (_notePlacementChanged(oldWidget.notes, notes)) {
+      _animateNoteReflow = true;
+    } else if (!listEquals(
+      oldWidget.notes.map((note) => note.id).toList(),
+      notes.map((note) => note.id).toList(),
+    )) {
+      _animateNoteReflow = false;
     }
     final collapsibleNoteIds = notes
         .where((note) => note.checklist.any((item) => item.isCompleted))
@@ -327,6 +422,7 @@ class _NotesGridState extends State<_NotesGrid> {
     List<Note> groupNotes,
     String draggedNoteId,
   ) {
+    _animateNoteReflow = false;
     final order = groupNotes.map((note) => note.id).toList();
     setState(() {
       _activeDragGroup = groupKey;
@@ -371,7 +467,6 @@ class _NotesGridState extends State<_NotesGrid> {
         previewOrder != null &&
         !listEquals(originalOrder, previewOrder);
     setState(() {
-      if (orderChanged) _masonryLayoutRevision += 1;
       _activeDragGroup = null;
       _activeDraggedNoteId = null;
       _originalDragOrder = null;
@@ -395,8 +490,20 @@ class _NotesGridState extends State<_NotesGrid> {
 
   @override
   Widget build(BuildContext context) {
+    Object? cachedPresentation;
+    Widget? cachedSliver;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
+        final presentation = (
+          constraints.crossAxisExtent,
+          Theme.of(context),
+          MediaQuery.of(context),
+          Directionality.of(context),
+        );
+        if (cachedPresentation == presentation && cachedSliver != null) {
+          return cachedSliver!;
+        }
+        cachedPresentation = presentation;
         final availableWidth = constraints.crossAxisExtent;
         final isCompact = availableWidth < 720;
         final spacing = isCompact ? 10.0 : 16.0;
@@ -419,7 +526,7 @@ class _NotesGridState extends State<_NotesGrid> {
             ? notes.where((note) => note.isCompleted).toList()
             : const <Note>[];
 
-        return SliverMainAxisGroup(
+        return cachedSliver = SliverMainAxisGroup(
           slivers: [
             const SliverToBoxAdapter(child: SizedBox(height: 6)),
             if (pendingNotes.isNotEmpty)
@@ -478,34 +585,52 @@ class _NotesGridState extends State<_NotesGrid> {
     required String keySuffix,
   }) {
     final arrangedNotes = _previewedGridNotes(keySuffix, notes);
-    final layoutKey = _masonryLayoutRevision == 0
-        ? 'masonry-grid-columns$keySuffix'
-        : 'masonry-grid-columns$keySuffix-layout-$_masonryLayoutRevision';
+    final layoutKey = 'masonry-grid-columns$keySuffix';
     final groupNoteIds = notes.map((note) => note.id).toSet();
     final noteIndexes = <Key, int>{
       for (var index = 0; index < arrangedNotes.length; index++)
         ValueKey('grid-note-size-${arrangedNotes[index].id}'): index,
     };
-    return SliverMasonryGrid(
+    final heights = [
+      for (final note in arrangedNotes)
+        _gridNoteHeight(
+          context,
+          note,
+          columnWidth: columnWidth,
+          isCompact: isCompact,
+          completedChecklistExpanded: !_collapsedCompletedChecklistNoteIds
+              .contains(note.id),
+        ),
+    ];
+    final columnEnds = List<double>.filled(columnCount, 0);
+    final positions = <String, Offset>{};
+    for (var index = 0; index < arrangedNotes.length; index++) {
+      var column = 0;
+      for (var candidate = 1; candidate < columnCount; candidate++) {
+        if (columnEnds[candidate] < columnEnds[column]) column = candidate;
+      }
+      final visualColumn = Directionality.of(context) == TextDirection.rtl
+          ? columnCount - column - 1
+          : column;
+      positions[arrangedNotes[index].id] = Offset(
+        visualColumn * (columnWidth + spacing),
+        columnEnds[column],
+      );
+      columnEnds[column] += heights[index] + verticalSpacing;
+    }
+    return SliverGrid(
       key: ValueKey(layoutKey),
-      gridDelegate: SliverSimpleGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columnCount,
+      gridDelegate: _NoteMasonryDelegate(
+        heights,
+        columnCount,
+        spacing,
+        verticalSpacing,
       ),
-      mainAxisSpacing: verticalSpacing,
-      crossAxisSpacing: spacing,
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final note = arrangedNotes[index];
           final isFirstBuild = _builtNoteIds.add(note.id);
-          final completedChecklistExpanded =
-              !_collapsedCompletedChecklistNoteIds.contains(note.id);
-          final height = _gridNoteHeight(
-            context,
-            note,
-            columnWidth: columnWidth,
-            isCompact: isCompact,
-            completedChecklistExpanded: completedChecklistExpanded,
-          );
+          final height = heights[index];
           return AnimatedContainer(
             key: ValueKey('grid-note-size-${note.id}'),
             duration: MediaQuery.disableAnimationsOf(context)
@@ -513,32 +638,39 @@ class _NotesGridState extends State<_NotesGrid> {
                 : const Duration(milliseconds: 220),
             curve: Curves.easeInOutCubic,
             height: height,
-            child: OverflowBox(
-              alignment: Alignment.topCenter,
-              minHeight: height,
-              maxHeight: height,
-              child: _NoteEntrance(
-                key: ValueKey('note-entrance-${note.id}'),
-                index: index,
-                motionId: note.id,
-                enabled: animateEntrances && isFirstBuild,
-                child: _DraggableGridNote(
-                  key: ValueKey('reorder-grid-${note.id}'),
-                  note: note,
-                  canAccept: (draggedId) => groupNoteIds.contains(draggedId),
-                  onHover: (draggedId) =>
-                      _previewGridReorder(keySuffix, draggedId, note.id),
-                  onDragStarted: () =>
-                      _startGridDrag(keySuffix, notes, note.id),
-                  onDragEnded: (accepted) =>
-                      _finishGridDrag(keySuffix, note.id, accepted: accepted),
-                  child: buildCard(
-                    note,
-                    PostItCardLayout.grid,
-                    completedChecklistExpanded:
-                        !_collapsedCompletedChecklistNoteIds.contains(note.id),
-                    onCompletedChecklistExpansionChanged: (expanded) =>
-                        _setCompletedChecklistExpanded(note.id, expanded),
+            child: _NoteReflow(
+              enabled: _animateNoteReflow && _activeDraggedNoteId == null,
+              position: positions[note.id]!,
+              motionId: note.id,
+              child: OverflowBox(
+                alignment: Alignment.topCenter,
+                minHeight: height,
+                maxHeight: height,
+                child: _NoteEntrance(
+                  key: ValueKey('note-entrance-${note.id}'),
+                  index: index,
+                  motionId: note.id,
+                  enabled: animateEntrances && isFirstBuild,
+                  child: _DraggableGridNote(
+                    key: ValueKey('reorder-grid-${note.id}'),
+                    note: note,
+                    canAccept: (draggedId) => groupNoteIds.contains(draggedId),
+                    onHover: (draggedId) =>
+                        _previewGridReorder(keySuffix, draggedId, note.id),
+                    onDragStarted: () =>
+                        _startGridDrag(keySuffix, notes, note.id),
+                    onDragEnded: (accepted) =>
+                        _finishGridDrag(keySuffix, note.id, accepted: accepted),
+                    child: buildCard(
+                      note,
+                      PostItCardLayout.grid,
+                      completedChecklistExpanded:
+                          !_collapsedCompletedChecklistNoteIds.contains(
+                            note.id,
+                          ),
+                      onCompletedChecklistExpansionChanged: (expanded) =>
+                          _setCompletedChecklistExpanded(note.id, expanded),
+                    ),
                   ),
                 ),
               ),
@@ -585,7 +717,10 @@ class _NotesGridState extends State<_NotesGrid> {
       completedChecklistExpanded: completedChecklistExpanded,
     );
     _heightCache[key] = measured;
-    while (_heightCache.length > _maximumCachedHeights) {
+    // Keep a measurement for every loaded card so long boards do not remeasure
+    // all text on each scroll frame after overflowing the fixed cache.
+    final cacheLimit = math.max(_maximumCachedHeights, notes.length * 2);
+    while (_heightCache.length > cacheLimit) {
       _heightCache.remove(_heightCache.keys.first);
     }
     return measured;
@@ -600,18 +735,26 @@ class _NotesGridState extends State<_NotesGrid> {
   }) {
     final textScaler = MediaQuery.textScalerOf(context);
     final textDirection = Directionality.of(context);
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: note.title,
-        style: Theme.of(
-          context,
-        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-      ),
-      textDirection: textDirection,
-      textScaler: textScaler,
-      maxLines: 2,
-    )..layout(maxWidth: (columnWidth - 80).clamp(1, columnWidth));
-    final headerHeight = titlePainter.height < 48 ? 48.0 : titlePainter.height;
+    final titlePainter =
+        TextPainter(
+          text: TextSpan(
+            text: note.title,
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          textDirection: textDirection,
+          textScaler: textScaler,
+          maxLines: 2,
+        )..layout(
+          maxWidth: (columnWidth - (note.isRecurring ? 32 : 80)).clamp(
+            1,
+            columnWidth,
+          ),
+        );
+    final headerHeight =
+        (titlePainter.height < 48 ? 48.0 : titlePainter.height) +
+        (note.isRecurring ? 24 : 0);
     final contentPainter = TextPainter(
       text: noteLinkifiedTextSpan(
         plainText: note.content,
@@ -666,9 +809,10 @@ class _NotesGridState extends State<_NotesGrid> {
               ? 6.0
               : 40.0
         : 0.0;
-    final reminderHeight = hasBody && note.reminderAt != null ? 32.0 : 0.0;
+    final reminderHeight =
+        (hasBody || note.isRecurring) && note.reminderAt != null ? 32.0 : 0.0;
     final hasAssignee =
-        note.assigneeUid != null ||
+        note.assignedUserIds.isNotEmpty ||
         (note.customAssigneeName?.trim().isNotEmpty ?? false);
     final hasColorIndicator =
         NoteCategoryStyle.assetPath(note.category) != null;
@@ -694,18 +838,26 @@ class _NotesGridState extends State<_NotesGrid> {
           textScaler: textScaler,
           maxLines: 2,
         )..layout(maxWidth: (columnWidth - 32).clamp(1, columnWidth));
-        final baseHeight = (36.0 + titleOnlyPainter.height)
-            .clamp(isCompact ? 84.0 : 96.0, isCompact ? 120.0 : 136.0)
-            .toDouble();
-        return baseHeight + photoHeight + (hasColorIndicator ? 36 : 0);
+        final titleHeight = 36.0 + titleOnlyPainter.height.ceilToDouble();
+        final baseHeight = note.isRecurring
+            ? titleHeight
+            : titleHeight
+                  .clamp(isCompact ? 84.0 : 96.0, isCompact ? 120.0 : 136.0)
+                  .toDouble();
+        return baseHeight +
+            (note.isRecurring ? 24 : 0) +
+            reminderHeight +
+            photoHeight +
+            (hasColorIndicator ? 36 : 0);
       }
       final desiredEmptyHeight = 36.0 + headerHeight + 28 + photoHeight;
       return desiredEmptyHeight
-          .clamp(
-            isCompact ? 136.0 : 142.0,
-            (isCompact ? 150.0 : 166.0) + photoHeight,
-          )
-          .toDouble();
+              .clamp(
+                isCompact ? 136.0 : 142.0,
+                (isCompact ? 150.0 : 166.0) + photoHeight,
+              )
+              .toDouble() +
+          reminderHeight;
     }
     final desiredHeight =
         36.0 +
@@ -753,10 +905,12 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
   Widget build(BuildContext context) {
     return DragTarget<String>(
       onWillAcceptWithDetails: (details) {
-        final accepted =
-            details.data != widget.note.id && widget.canAccept(details.data);
-        if (_isTargeted != accepted) setState(() => _isTargeted = accepted);
-        if (accepted) widget.onHover(details.data);
+        final accepted = widget.canAccept(details.data);
+        final targeted = accepted && details.data != widget.note.id;
+        if (_isTargeted != targeted) setState(() => _isTargeted = targeted);
+        // The preview moves the source into the hovered slot. Accept a drop
+        // on that source too, without reordering it again on pointer updates.
+        if (targeted) widget.onHover(details.data);
         return accepted;
       },
       onLeave: (_) {
@@ -840,6 +994,7 @@ class _NotesList extends StatefulWidget {
 }
 
 class _NotesListState extends State<_NotesList> {
+  bool _animateNoteReflow = false;
   final Set<String> _builtNoteIds = {};
 
   List<Note> get notes => widget.notes;
@@ -853,6 +1008,19 @@ class _NotesListState extends State<_NotesList> {
   NoteReorderCallback get onReorder => widget.onReorder;
   ValueChanged<bool> get onCompletedSectionExpansionChanged =>
       widget.onCompletedSectionExpansionChanged;
+
+  @override
+  void didUpdateWidget(covariant _NotesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_notePlacementChanged(oldWidget.notes, notes)) {
+      _animateNoteReflow = true;
+    } else if (!listEquals(
+      oldWidget.notes.map((note) => note.id).toList(),
+      notes.map((note) => note.id).toList(),
+    )) {
+      _animateNoteReflow = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -912,6 +1080,7 @@ class _NotesListState extends State<_NotesList> {
   }
 
   void _reorder(List<Note> notes, int oldIndex, int newIndex) {
+    _animateNoteReflow = false;
     if (oldIndex == newIndex) return;
     final reordered = [...notes];
     final moved = reordered.removeAt(oldIndex);
@@ -925,24 +1094,32 @@ class _NotesListState extends State<_NotesList> {
     return ReorderableDelayedDragStartListener(
       key: ValueKey('reorder-list-${note.id}'),
       index: index,
-      child: Semantics(
-        hint:
-            'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
-        child: _NoteEntrance(
-          index: index,
-          motionId: note.id,
-          enabled: animateEntrances && isFirstBuild,
-          child: Padding(
-            padding: EdgeInsets.only(
-              bottom: layout == PostItCardLayout.compact ? 3 : 8,
-            ),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxWidth),
-                child: SizedBox(
-                  height: itemHeight,
-                  child: buildCard(note, layout),
+      child: _NoteReflow(
+        enabled: _animateNoteReflow,
+        position: Offset(
+          0,
+          index * (itemHeight + (layout == PostItCardLayout.compact ? 3 : 8)),
+        ),
+        motionId: note.id,
+        child: Semantics(
+          hint:
+              'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
+          child: _NoteEntrance(
+            index: index,
+            motionId: note.id,
+            enabled: animateEntrances && isFirstBuild,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: layout == PostItCardLayout.compact ? 3 : 8,
+              ),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: SizedBox(
+                    height: itemHeight,
+                    child: buildCard(note, layout),
+                  ),
                 ),
               ),
             ),
@@ -1018,4 +1195,101 @@ class _NoteEntranceState extends State<_NoteEntrance> {
       child: widget.child,
     );
   }
+}
+
+/// Keeps surviving cards visually in their old slot while the sliver relayouts.
+class _NoteReflow extends StatefulWidget {
+  const _NoteReflow({
+    required this.position,
+    this.enabled = false,
+    required this.motionId,
+    required this.child,
+  });
+  final Offset position;
+  final bool enabled;
+  final String motionId;
+  final Widget child;
+  @override
+  State<_NoteReflow> createState() => _NoteReflowState();
+}
+
+class _NoteReflowState extends State<_NoteReflow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _motion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 350),
+    value: 1,
+  );
+  Offset _from = Offset.zero;
+  Offset get _offset => Offset.lerp(
+    _from,
+    Offset.zero,
+    Curves.easeInOutCubic.transform(_motion.value),
+  )!;
+
+  @override
+  void didUpdateWidget(covariant _NoteReflow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.enabled &&
+        oldWidget.position != widget.position &&
+        !MediaQuery.disableAnimationsOf(context)) {
+      _from = _offset + oldWidget.position - widget.position;
+      _motion.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _motion.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _motion,
+    child: widget.child,
+    builder: (context, child) => Transform.translate(
+      key: ValueKey('note-reflow-${widget.motionId}'),
+      offset: _offset,
+      child: child,
+    ),
+  );
+}
+
+bool _notePlacementChanged(List<Note> previous, List<Note> next) {
+  if (previous.length != next.length) return true;
+  final previousNotes = {for (final note in previous) note.id: note};
+  return next.any((note) {
+    final oldNote = previousNotes[note.id];
+    return oldNote == null ||
+        oldNote.isCompleted != note.isCompleted ||
+        oldNote.isPinned != note.isPinned;
+  });
+}
+
+class _NoteFilterEntrance extends StatelessWidget {
+  const _NoteFilterEntrance({
+    required this.animation,
+    required this.motionId,
+    required this.child,
+  });
+  final Animation<double> animation;
+  final String motionId;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: animation,
+    child: child,
+    builder: (context, child) {
+      final progress = MediaQuery.disableAnimationsOf(context)
+          ? 1.0
+          : animation.value;
+      return Transform.translate(
+        key: ValueKey('note-filter-motion-$motionId'),
+        offset: Offset(0, 10 * (1 - progress)),
+        child: Transform.scale(scale: .98 + .02 * progress, child: child),
+      );
+    },
+  );
 }

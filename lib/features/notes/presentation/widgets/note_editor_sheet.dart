@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
@@ -58,13 +59,13 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
   late final TextEditingController _authorController;
-  late final TextEditingController _customAssigneeController;
   late NoteRichContent _content;
   late NoteColor _color;
   late NoteCategory _category;
   late List<NoteChecklistItem> _checklist;
   String? _assigneeUid;
-  late bool _usesCustomAssignee;
+  List<String> _assigneeUids = [];
+  List<String> _customAssigneeNames = [];
   late List<NoteAttachment> _attachments;
   DateTime? _reminderAt;
   ReminderRecurrence? _reminderRecurrence;
@@ -91,17 +92,12 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _authorController = TextEditingController(
       text: note?.authorName ?? widget.defaultAuthorName,
     );
-    _customAssigneeController = TextEditingController(
-      text: note?.customAssigneeName ?? '',
-    );
-    _color = note?.color ?? NoteColor.none;
-    _category = note?.category ?? NoteCategory.general;
-    _checklist = [...?note?.checklist];
     _assigneeUid =
         widget.assignees.any((person) => person.uid == note?.assigneeUid)
         ? note?.assigneeUid
         : null;
-    _usesCustomAssignee = note?.customAssigneeName?.trim().isNotEmpty == true;
+    _assigneeUids = List.of(note?.assignedUserIds ?? const []);
+    _customAssigneeNames = List.of(note?.assignedCustomNames ?? const []);
     _attachments = [...?note?.photoAttachments];
     _reminderAt = note?.reminderAt;
     _reminderRecurrence = note?.reminderRecurrence;
@@ -111,7 +107,6 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
   void dispose() {
     _titleController.dispose();
     _authorController.dispose();
-    _customAssigneeController.dispose();
     super.dispose();
   }
 
@@ -230,99 +225,52 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   ),
                   const SizedBox(height: 10),
                 ],
-                DropdownButtonFormField<String>(
-                  key: ValueKey(
-                    'note-assignee-field-${_usesCustomAssignee ? 'custom' : _assigneeUid ?? 'none'}',
+                ListTile(
+                  key: const ValueKey('note-assignee-picker'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.group_outlined),
+                  title: const Text('Responsables'),
+                  subtitle: Text(
+                    _assigneeUids.isEmpty && _customAssigneeNames.isEmpty
+                        ? 'Sin responsable'
+                        : [
+                            ...widget.assignees
+                                .where(
+                                  (person) =>
+                                      _assigneeUids.contains(person.uid),
+                                )
+                                .map(
+                                  (person) => person.displayName.trim().isEmpty
+                                      ? person.email
+                                      : person.displayName,
+                                ),
+                            ..._customAssigneeNames,
+                          ].join(', '),
                   ),
-                  initialValue: _usesCustomAssignee
-                      ? '__custom__'
-                      : _assigneeUid ?? '',
-                  isExpanded: true,
-                  decoration: _glassInputDecoration(
-                    context,
-                    labelText: 'Responsable',
-                    prefixIcon: const Icon(Icons.assignment_ind_outlined),
-                    helperText: 'Aparecerá en la tarjeta de esta tarea.',
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('Sin responsable'),
-                    ),
-                    const DropdownMenuItem(
-                      value: '__custom__',
-                      child: Row(
-                        children: [
-                          Icon(Icons.manage_accounts_outlined),
-                          SizedBox(width: 10),
-                          Text('Responsable personalizado'),
-                        ],
-                      ),
-                    ),
-                    ...widget.assignees.map((person) {
-                      final label = person.displayName.trim().isNotEmpty
-                          ? person.displayName.trim()
-                          : person.email;
-                      final photoUrl = person.photoUrl?.trim();
-                      final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
-                      return DropdownMenuItem(
-                        value: person.uid,
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              key: ValueKey(
-                                'assignee-option-avatar-${person.uid}',
-                              ),
-                              radius: 12,
-                              foregroundImage: hasPhoto
-                                  ? NetworkImage(photoUrl)
-                                  : null,
-                              onForegroundImageError: hasPhoto
-                                  ? (_, _) {}
-                                  : null,
-                              child: Text(label.characters.first.toUpperCase()),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                label,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) => setState(() {
-                    _usesCustomAssignee = value == '__custom__';
-                    _assigneeUid =
-                        value == null || value.isEmpty || value == '__custom__'
-                        ? null
-                        : value;
-                  }),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () async {
+                    final selection =
+                        await showModalBottomSheet<AssigneeSelection>(
+                          context: context,
+                          isScrollControlled: true,
+                          showDragHandle: true,
+                          constraints: BoxConstraints(
+                            maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+                          ),
+                          builder: (_) => AssigneePickerSheet(
+                            selectedUids: _assigneeUids,
+                            customNames: _customAssigneeNames,
+                            assignees: widget.assignees,
+                          ),
+                        );
+                    if (!mounted || selection == null) return;
+                    setState(() {
+                      _assigneeUids = selection.uids;
+                      _assigneeUid = selection.uid;
+                      _customAssigneeNames = selection.customNames;
+                    });
+                  },
                 ),
-                if (_usesCustomAssignee) ...[
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    key: const ValueKey('note-custom-assignee-field'),
-                    controller: _customAssigneeController,
-                    maxLength: 50,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: _glassInputDecoration(
-                      context,
-                      labelText: 'Nombre del responsable',
-                      hintText: 'Ej. Camila',
-                      helperText: 'No necesita tener una cuenta en NockNock.',
-                      prefixIcon: const Icon(Icons.manage_accounts_outlined),
-                    ),
-                    validator: (value) =>
-                        _usesCustomAssignee &&
-                            (value == null || value.trim().isEmpty)
-                        ? 'Escribe el nombre del responsable'
-                        : null,
-                  ),
-                ],
                 const SizedBox(height: 10),
                 Text(
                   'Categoría',
@@ -519,9 +467,9 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
             ? widget.defaultAuthorName.trim()
             : _authorController.text.trim(),
         assigneeUid: _assigneeUid,
-        customAssigneeName: _usesCustomAssignee
-            ? _customAssigneeController.text.trim()
-            : null,
+        assigneeUids: _assigneeUids,
+        customAssigneeName: _customAssigneeNames.firstOrNull,
+        customAssigneeNames: _customAssigneeNames,
         attachments: _attachments,
         reminderAt: _reminderAt,
         reminderRecurrence: _reminderRecurrence,

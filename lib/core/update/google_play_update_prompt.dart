@@ -181,29 +181,12 @@ class _GooglePlayUpdatePromptState extends State<GooglePlayUpdatePrompt> {
     final choice = await showDialog<_UpdatePromptChoice>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(Icons.system_update_alt_rounded),
-        title: const Text('Hay una nueva versión'),
-        content: const Text(
-          'Actualiza NockNock desde Google Play para obtener las últimas '
-          'mejoras y correcciones. Puedes seguir usando la app mientras se '
-          'descarga.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('google-play-update-later'),
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(_UpdatePromptChoice.later),
-            child: const Text('Más tarde'),
-          ),
-          FilledButton.icon(
-            key: const Key('google-play-update-now'),
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(_UpdatePromptChoice.update),
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Actualizar ahora'),
-          ),
-        ],
+      builder: (dialogContext) => _PlayUpdateDialog(
+        flexibleUpdateAllowed: flexibleUpdateAllowed,
+        onLater: () =>
+            Navigator.of(dialogContext).pop(_UpdatePromptChoice.later),
+        onUpdate: () =>
+            Navigator.of(dialogContext).pop(_UpdatePromptChoice.update),
       ),
     );
 
@@ -336,3 +319,182 @@ class _GooglePlayUpdatePromptState extends State<GooglePlayUpdatePrompt> {
 }
 
 enum _UpdatePromptChoice { later, update }
+
+class _PlayUpdateDialog extends StatelessWidget {
+  const _PlayUpdateDialog({
+    required this.flexibleUpdateAllowed,
+    required this.onLater,
+    required this.onUpdate,
+  });
+
+  final bool flexibleUpdateAllowed;
+  final VoidCallback onLater;
+  final VoidCallback onUpdate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final rounded = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+    );
+    return Dialog(
+      key: const Key('google-play-update-dialog'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
+      backgroundColor: colors.surface,
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          colors.primaryContainer,
+                          colors.secondaryContainer,
+                        ],
+                      ),
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Transform.rotate(
+                          angle: -.12,
+                          child: Icon(
+                            Icons.sticky_note_2_rounded,
+                            size: 48,
+                            color: colors.onPrimaryContainer,
+                          ),
+                        ),
+                        Positioned(
+                          right: 10,
+                          top: 10,
+                          child: Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 22,
+                            color: colors.onPrimaryContainer,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: .08),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Text(
+                      'NockNock · Nueva versión',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: colors.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Hay una nueva versión',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Tus notas, cada vez mejor. Actualiza para disfrutar de las últimas mejoras y correcciones.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        flexibleUpdateAllowed
+                            ? Icons.downloading_rounded
+                            : Icons.shop_rounded,
+                        size: 22,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          flexibleUpdateAllowed
+                              ? 'Puedes seguir usando la app mientras se descarga.'
+                              : 'Te llevaremos a Google Play para actualizar la app.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  key: const Key('google-play-update-now'),
+                  onPressed: onUpdate,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 16,
+                    ),
+                    shape: rounded,
+                    textStyle: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  icon: const Icon(Icons.download_rounded, size: 22),
+                  label: const Text('Actualizar ahora'),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  key: const Key('google-play-update-later'),
+                  onPressed: onLater,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    foregroundColor: colors.onSurfaceVariant,
+                    side: BorderSide(color: colors.outlineVariant),
+                    shape: rounded,
+                  ),
+                  child: const Text('Más tarde'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

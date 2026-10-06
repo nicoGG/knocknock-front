@@ -754,7 +754,23 @@ class NotesCubit extends Cubit<NotesState> {
   List<Note> _sortedNotes(Iterable<Note> notes) =>
       List<Note>.of(notes)..sort(compareNotes);
 
+  bool _acceptAssigneeCount(List<String> uids, List<String> names) {
+    if (uids.toSet().length +
+            names.map((name) => name.trim().toLowerCase()).toSet().length <=
+        3) {
+      return true;
+    }
+    emit(state.copyWith(message: 'Puedes asignar hasta 3 personas por nota.'));
+    return false;
+  }
+
   Future<void> createNote(NoteDraft draft) async {
+    if (!_acceptAssigneeCount(
+      draft.assignedUserIds,
+      draft.assignedCustomNames,
+    )) {
+      return;
+    }
     emit(state.copyWith(isSaving: true));
     try {
       _upsert(await _repository.createNote(state.selectedListId, draft));
@@ -766,6 +782,12 @@ class NotesCubit extends Cubit<NotesState> {
   }
 
   Future<void> editNote(Note note, NoteDraft draft) async {
+    if (!_acceptAssigneeCount(
+      draft.assignedUserIds,
+      draft.assignedCustomNames,
+    )) {
+      return;
+    }
     emit(state.copyWith(isSaving: true));
     try {
       _upsert(
@@ -777,10 +799,17 @@ class NotesCubit extends Cubit<NotesState> {
           'category': draft.category.name,
           'checklist': draft.checklist.map((item) => item.toJson()).toList(),
           'authorName': draft.authorName,
-          if (draft.assigneeUid != note.assigneeUid ||
-              draft.customAssigneeName != note.customAssigneeName) ...{
+          if (!listEquals(draft.assignedUserIds, note.assignedUserIds) ||
+              draft.assigneeUid != note.assigneeUid ||
+              draft.customAssigneeName != note.customAssigneeName ||
+              !listEquals(
+                draft.assignedCustomNames,
+                note.assignedCustomNames,
+              )) ...{
             'assigneeUid': draft.assigneeUid,
+            'assigneeUids': draft.assignedUserIds,
             'customAssigneeName': draft.customAssigneeName,
+            'customAssigneeNames': draft.assignedCustomNames,
           },
           if (!listEquals(draft.photoAttachments, note.photoAttachments))
             'attachments': draft.photoAttachments
@@ -834,10 +863,17 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void> updateNoteAssignee(
     Note note, {
     String? assigneeUid,
+    List<String>? assigneeUids,
     String? customAssigneeName,
+    List<String>? customAssigneeNames,
   }) => _updateNoteFields(note, {
-    'assigneeUid': assigneeUid,
+    'assigneeUid': assigneeUids?.firstOrNull ?? assigneeUid,
+    'assigneeUids':
+        assigneeUids ?? (assigneeUid == null ? <String>[] : [assigneeUid]),
     'customAssigneeName': customAssigneeName,
+    'customAssigneeNames':
+        customAssigneeNames ??
+        (customAssigneeName == null ? <String>[] : [customAssigneeName]),
   });
 
   Future<NoteAttachment> loadAttachment(Note note, String attachmentId) async {
@@ -937,6 +973,16 @@ class NotesCubit extends Cubit<NotesState> {
     Note note,
     Map<String, dynamic> changes,
   ) async {
+    if (changes.containsKey('assigneeUids') ||
+        changes.containsKey('customAssigneeNames')) {
+      final uids =
+          (changes['assigneeUids'] as List?)?.cast<String>() ??
+          note.assignedUserIds;
+      final names =
+          (changes['customAssigneeNames'] as List?)?.cast<String>() ??
+          note.assignedCustomNames;
+      if (!_acceptAssigneeCount(uids, names)) return;
+    }
     emit(state.copyWith(isSaving: true));
     try {
       _upsert(await _repository.updateNote(note.id, changes));
@@ -1182,7 +1228,7 @@ class NotesCubit extends Cubit<NotesState> {
     switch (event) {
       case NoteChanged(:final note):
         if (note.boardId == state.selectedListId ||
-            note.assigneeUid != null ||
+            note.assignedUserIds.isNotEmpty ||
             note.isPinned ||
             note.reminderAt != null ||
             state.assignedNotes.any((item) => item.id == note.id) ||
@@ -1320,7 +1366,7 @@ class NotesCubit extends Cubit<NotesState> {
     final assignedIndex = assignedNotes.indexWhere(
       (item) => item.id == note.id,
     );
-    if (note.assigneeUid != null) {
+    if (note.assignedUserIds.isNotEmpty) {
       if (assignedIndex == -1) {
         assignedNotes.insert(0, note);
       } else {

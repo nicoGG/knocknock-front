@@ -3,32 +3,52 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 
 const _customAssigneePrefix = 'custom:';
 
-String? noteAssigneeFilterKey(Note note) {
-  final uid = note.assigneeUid?.trim();
-  if (uid != null && uid.isNotEmpty) return uid;
-  final name = note.customAssigneeName?.trim();
-  if (name == null || name.isEmpty) return null;
-  return '$_customAssigneePrefix${name.toLowerCase()}';
-}
+String? noteAssigneeFilterKey(Note note) =>
+    noteAssigneeFilterKeys(note).firstOrNull;
+
+List<String> noteAssigneeFilterKeys(Note note) => [
+  ...note.assignedUserIds,
+  for (final name in note.assignedCustomNames)
+    '$_customAssigneePrefix${name.toLowerCase()}',
+];
+
+List<ListCollaborator> resolveNoteAssignees(
+  Note note,
+  Iterable<ListCollaborator> collaborators,
+) => [
+  for (final person in collaborators)
+    if (note.assignedUserIds.contains(person.uid)) person,
+  for (final name in note.assignedCustomNames)
+    ListCollaborator(
+      uid: '$_customAssigneePrefix${name.toLowerCase()}',
+      email: '',
+      displayName: name,
+      role: ListMemberRole.editor,
+      joinedAt: note.createdAt,
+    ),
+];
 
 ListCollaborator? resolveNoteAssignee(
   Note note,
   Iterable<ListCollaborator> collaborators,
 ) {
-  final uid = note.assigneeUid?.trim();
-  if (uid != null && uid.isNotEmpty) {
-    for (final person in collaborators) {
-      if (person.uid == uid) return person;
-    }
-  }
-  final customName = note.customAssigneeName?.trim();
-  if (customName == null || customName.isEmpty) return null;
+  final people = resolveNoteAssignees(note, collaborators);
+  if (people.isEmpty) return null;
+  if (people.length == 1) return people.first;
+  final first = people.first;
   return ListCollaborator(
-    uid: '$_customAssigneePrefix${note.id}',
-    email: '',
-    displayName: customName,
-    role: ListMemberRole.editor,
-    joinedAt: note.createdAt,
+    uid: first.uid,
+    email: first.email,
+    displayName: people
+        .map(
+          (person) => person.displayName.trim().isEmpty
+              ? person.email
+              : person.displayName,
+        )
+        .join(', '),
+    photoUrl: first.photoUrl,
+    role: first.role,
+    joinedAt: first.joinedAt,
   );
 }
 

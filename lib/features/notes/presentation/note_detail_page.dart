@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
@@ -226,137 +227,28 @@ class NoteDetailPage extends StatelessWidget {
     final assignees =
         _listFrom(cubit.state, note)?.collaborators ??
         const <ListCollaborator>[];
-    final selection = await showModalBottomSheet<_DetailAssigneeSelection>(
+    final selection = await showModalBottomSheet<AssigneeSelection>(
       context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+      ),
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.only(bottom: 12),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-              child: Text(
-                'Asignar responsable',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-            ),
-            ListTile(
-              key: const ValueKey('assignee-option-unassigned'),
-              leading: const CircleAvatar(
-                child: Icon(Icons.person_off_outlined),
-              ),
-              title: const Text('Sin responsable'),
-              trailing:
-                  note.assigneeUid == null && note.customAssigneeName == null
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-              onTap: () =>
-                  Navigator.pop(sheetContext, const _DetailAssigneeSelection()),
-            ),
-            ...assignees.map((person) {
-              final label = person.displayName.trim().isNotEmpty
-                  ? person.displayName.trim()
-                  : person.email.trim().isNotEmpty
-                  ? person.email.trim()
-                  : 'Persona';
-              final photoUrl = person.photoUrl?.trim();
-              final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
-              return ListTile(
-                key: ValueKey('assignee-option-${person.uid}'),
-                leading: CircleAvatar(
-                  foregroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
-                  onForegroundImageError: hasPhoto ? (_, _) {} : null,
-                  child: Text(label.characters.first.toUpperCase()),
-                ),
-                title: Text(label),
-                subtitle: person.email.isEmpty || person.email == label
-                    ? null
-                    : Text(person.email),
-                trailing: note.assigneeUid == person.uid
-                    ? const Icon(Icons.check_rounded)
-                    : null,
-                onTap: () => Navigator.pop(
-                  sheetContext,
-                  _DetailAssigneeSelection(assigneeUid: person.uid),
-                ),
-              );
-            }),
-            ListTile(
-              key: const ValueKey('assignee-option-custom'),
-              leading: const CircleAvatar(
-                child: Icon(Icons.person_add_alt_1_outlined),
-              ),
-              title: const Text('Responsable personalizado'),
-              subtitle: const Text('Por ejemplo, alguien que te debe dinero'),
-              trailing: note.customAssigneeName?.trim().isNotEmpty ?? false
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-              onTap: () async {
-                final name = await _askCustomAssigneeName(
-                  sheetContext,
-                  initialName: note.customAssigneeName,
-                );
-                if (name == null || !sheetContext.mounted) return;
-                Navigator.pop(
-                  sheetContext,
-                  _DetailAssigneeSelection(customName: name),
-                );
-              },
-            ),
-          ],
-        ),
+      builder: (_) => AssigneePickerSheet(
+        selectedUids: note.assignedUserIds,
+        customNames: note.assignedCustomNames,
+        assignees: assignees,
+        optionPrefix: 'assignee-option',
+        nameFieldKey: 'detail-custom-assignee-name-field',
       ),
     );
     if (selection == null || !context.mounted) return;
     await cubit.updateNoteAssignee(
       note,
-      assigneeUid: selection.assigneeUid,
+      assigneeUids: selection.uids,
       customAssigneeName: selection.customName,
+      customAssigneeNames: selection.customNames,
     );
-  }
-
-  Future<String?> _askCustomAssigneeName(
-    BuildContext context, {
-    String? initialName,
-  }) async {
-    final controller = TextEditingController(text: initialName?.trim());
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Responsable personalizado'),
-        content: TextField(
-          key: const ValueKey('detail-custom-assignee-name-field'),
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          maxLength: 80,
-          decoration: const InputDecoration(
-            hintText: 'Nombre de la persona',
-            prefixIcon: Icon(Icons.person_outline_rounded),
-          ),
-          onSubmitted: (value) {
-            final name = value.trim();
-            if (name.isNotEmpty) Navigator.pop(dialogContext, name);
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return result;
   }
 
   Future<void> _editReminder(BuildContext context, Note note) async {
@@ -1482,13 +1374,6 @@ String? _firstPhotoUrl(String? primary, String? fallback) {
   return normalizedFallback == null || normalizedFallback.isEmpty
       ? null
       : normalizedFallback;
-}
-
-class _DetailAssigneeSelection {
-  const _DetailAssigneeSelection({this.assigneeUid, this.customName});
-
-  final String? assigneeUid;
-  final String? customName;
 }
 
 class _DetailFooter extends StatelessWidget {

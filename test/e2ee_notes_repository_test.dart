@@ -15,6 +15,42 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+    'preserves multiple assignees through encrypted updates and reads',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final remote = _FakeE2eeRemote();
+      final repository = E2eeNotesRepository(
+        repository: CachedNotesRepository(
+          repository: remote,
+          preferences: preferences,
+          userIdProvider: () => 'user-1',
+        ),
+        userIdProvider: () => 'user-1',
+        keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+      );
+      await repository.fetchLists();
+      final note = (await repository.fetchNotes('home-user-1')).single;
+      final updated = await repository.updateNote(note.id, {
+        'title': 'Tarea compartida privada',
+        'assigneeUid': 'user-1',
+        'assigneeUids': ['user-1', 'user-2'],
+      });
+      expect(updated.assignedUserIds, ['user-1', 'user-2']);
+      expect(remote.rawNote.assignedUserIds, ['user-1', 'user-2']);
+      expect(remote.rawNote.title, startsWith(e2eeCiphertextPrefix));
+      final reloaded = (await repository.fetchNotes('home-user-1')).single;
+      expect(reloaded.assignedUserIds, ['user-1', 'user-2']);
+      expect(reloaded.title, 'Tarea compartida privada');
+      expect(reloaded.copyWith(isPinned: true).assignedUserIds, [
+        'user-1',
+        'user-2',
+      ]);
+      repository.dispose();
+    },
+  );
+
   test('adds an account recovery envelope to every readable list', () async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
@@ -198,6 +234,7 @@ void main() {
       final preferences = await SharedPreferences.getInstance();
       final remote = _FakeE2eeRemote()
         ..initialCustomAssigneeName = 'Camila'
+        ..initialCustomAssigneeNames = ['Camila', 'Pedro']
         ..attachmentPayload = const NoteAttachment(
           id: 'attachment-1',
           name: 'comprobante.png',
@@ -240,6 +277,15 @@ void main() {
         startsWith(e2eeCiphertextPrefix),
       );
       expect(note.customAssigneeName, 'Camila');
+      expect(note.assignedCustomNames, ['Camila', 'Pedro']);
+      expect(
+        remote.rawNote.assignedCustomNames,
+        everyElement(startsWith(e2eeCiphertextPrefix)),
+      );
+      expect(
+        preferences.getString(CachedNotesRepository.storageKey),
+        isNot(contains('Pedro')),
+      );
       expect(attachment.name, 'comprobante.png');
       expect(attachment.dataBase64, 'aG9sYQ==');
       repository.dispose();
@@ -587,6 +633,7 @@ class _FakeE2eeRemote extends Fake
   bool isOffline = false;
   int fetchNotesCalls = 0;
   String? initialCustomAssigneeName;
+  List<String>? initialCustomAssigneeNames;
   NoteAttachment? attachmentPayload;
   final permanentlyDeletedIds = <String>[];
   int emptyTrashCallCount = 0;
@@ -606,6 +653,7 @@ class _FakeE2eeRemote extends Fake
     color: NoteColor.yellow,
     authorName: 'Nico',
     customAssigneeName: initialCustomAssigneeName,
+    customAssigneeNames: initialCustomAssigneeNames,
     attachment: attachmentPayload == null
         ? null
         : NoteAttachment(

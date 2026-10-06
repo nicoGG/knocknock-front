@@ -101,6 +101,7 @@ class _AppDrawer extends StatelessWidget {
             ],
           ),
           child: SafeArea(
+            bottom: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -263,7 +264,12 @@ class _AppDrawer extends StatelessWidget {
                       Positioned.fill(
                         child: Scrollbar(
                           child: ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(10, 2, 10, 112),
+                            padding: EdgeInsets.fromLTRB(
+                              10,
+                              2,
+                              10,
+                              112 + MediaQuery.viewPaddingOf(context).bottom,
+                            ),
                             itemExtent: 60,
                             itemCount: lists.length,
                             itemBuilder: (context, index) {
@@ -375,7 +381,12 @@ class _DrawerFloatingSettingsButton extends StatelessWidget {
       alignment: Alignment.bottomCenter,
       child: Container(
         key: const ValueKey('drawer-floating-settings-footer'),
-        padding: const EdgeInsets.fromLTRB(10, 18, 10, 6),
+        padding: EdgeInsets.fromLTRB(
+          10,
+          18,
+          10,
+          6 + MediaQuery.viewPaddingOf(context).bottom,
+        ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,

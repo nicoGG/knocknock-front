@@ -38,6 +38,28 @@ class ListBoardBackground extends StatelessWidget {
           isDark: isDark,
           reduceMotion: reduceMotion,
         ),
+        if (appearance.backgroundPreset != ListBackgroundPreset.paper &&
+            !useThemeBackground)
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: const [0, 0.32, 0.6],
+                  colors: [
+                    Theme.of(
+                      context,
+                    ).colorScheme.surface.withValues(alpha: 0.38),
+                    Theme.of(
+                      context,
+                    ).colorScheme.surface.withValues(alpha: 0.2),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
         child,
         if (topFadeScrollProgress case final progress?)
           Positioned.fill(

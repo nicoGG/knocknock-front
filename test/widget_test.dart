@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:nocknock/app/nocknock_app.dart';
@@ -98,6 +97,74 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  testWidgets('notification opens the mosaic preview in its source list', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository();
+    final otherList = await repository.createList('Otra lista');
+    final auth = _FakeAuthRepository();
+    final notifications = _TapNotificationsController(auth);
+    addTearDown(notifications.dispose);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: auth,
+        notificationsController: notifications,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final cubit = tester
+        .element(find.byKey(const ValueKey('board-scroll-view')))
+        .read<NotesCubit>();
+    await cubit.selectList(otherList.id);
+    await tester.pumpAndSettle();
+
+    notifications.taps.add({'boardId': 'home', 'noteId': 'note-1'});
+    await tester.pumpAndSettle();
+    expect(cubit.state.selectedListId, 'home');
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
+    expect(find.text('Comprar café'), findsWidgets);
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('note-preview-dialog'))),
+    ).pop();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+    expect(find.text('Mis notas'), findsWidgets);
+  });
+
+  testWidgets('notification finds a note beyond the first list page', (
+    tester,
+  ) async {
+    final repository = _FakePaginatedNotesRepository(
+      noteCount: 3,
+      noteContents: ['Primera', 'Segunda', 'Destino'],
+      pageSize: 1,
+    );
+    final auth = _FakeAuthRepository();
+    final notifications = _TapNotificationsController(auth);
+    addTearDown(notifications.dispose);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: auth,
+        notificationsController: notifications,
+      ),
+    );
+    await tester.pumpAndSettle();
+    notifications.taps.add({'boardId': 'home', 'noteId': 'note-3'});
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+    expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('note-preview-dialog')),
+        matching: find.byKey(const ValueKey('note-surface-note-3')),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('opens an Android invitation app link on the board', (
     tester,
   ) async {
@@ -113,7 +180,7 @@ void main() {
         authRepository: _FakeAuthRepository(),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('Mis notas'), findsOneWidget);
     expect(find.byKey(const ValueKey('share-list-button')), findsNothing);
@@ -458,6 +525,52 @@ void main() {
     expect(laterOffset.y, 0);
   });
 
+  testWidgets(
+    'status category and responsible filters animate card entrances briefly',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(
+            withInvitedPeople: true,
+            category: NoteCategory.shopping,
+          ),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final key in [
+        'filter-mode-pending',
+        'filter-mode-all',
+        'category-filter-shopping',
+        'assignee-filter-person-ana',
+      ]) {
+        final filter = find.byKey(ValueKey(key));
+        await tester.ensureVisible(filter);
+        await tester.tap(filter);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 55));
+        final motion = find.byKey(const ValueKey('note-filter-motion-note-1'));
+        expect(
+          tester.widget<Transform>(motion).transform.entry(1, 3),
+          inExclusiveRange(0, 10),
+        );
+        final cardElement = tester.element(
+          find.byKey(const ValueKey('note-note-1')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.element(find.byKey(const ValueKey('note-note-1'))),
+          same(cardElement),
+        );
+        expect(tester.widget<Transform>(motion).transform.entry(1, 3), 0);
+      }
+    },
+  );
+
   testWidgets('keeps category and assignee filters visible on the board', (
     tester,
   ) async {
@@ -506,46 +619,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('filter counters only include pending notes', (tester) async {
-    tester.view.physicalSize = const Size(390, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'completed facets only appear in completed mode with real counts',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
-      NockNockApp(
-        repository: _FakeNotesRepository(
-          category: NoteCategory.shopping,
-          withInvitedPeople: true,
-          initiallyCompleted: true,
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(
+            category: NoteCategory.shopping,
+            withInvitedPeople: true,
+            initiallyCompleted: true,
+          ),
+          authRepository: _FakeAuthRepository(),
         ),
-        authRepository: _FakeAuthRepository(),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    final assigneeCount = find.byKey(
-      const ValueKey('assignee-filter-count-person-ana'),
-    );
-    final categoryCount = find.byKey(
-      const ValueKey('category-filter-count-shopping'),
-    );
-    expect(assigneeCount, findsOneWidget);
-    expect(categoryCount, findsOneWidget);
-    expect(
-      find.descendant(of: assigneeCount, matching: find.text('0')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: categoryCount, matching: find.text('0')),
-      findsOneWidget,
-    );
+      final assigneeCount = find.byKey(
+        const ValueKey('assignee-filter-count-person-ana'),
+      );
+      final categoryCount = find.byKey(
+        const ValueKey('category-filter-count-shopping'),
+      );
+      expect(assigneeCount, findsNothing);
+      expect(categoryCount, findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
-    await tester.pumpAndSettle();
-    expect(find.text('Comprar café'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+      await tester.pumpAndSettle();
+      expect(assigneeCount, findsNothing);
+      expect(categoryCount, findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('filter-mode-completed')));
+      await tester.pumpAndSettle();
+      expect(assigneeCount, findsOneWidget);
+      expect(categoryCount, findsOneWidget);
+      expect(
+        find.descendant(of: assigneeCount, matching: find.text('1')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: categoryCount, matching: find.text('1')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('assignee-filter-person-ana')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Comprar café'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('shows the board and can open the note editor', (tester) async {
     final repository = _FakeNotesRepository();
@@ -907,7 +1034,16 @@ void main() {
       find.byKey(const ValueKey('preview-assignee-owner-1')),
       findsOneWidget,
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('preview-assignee-person-ana')),
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
     await tester.tap(find.byKey(const ValueKey('preview-assignee-person-ana')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('save-assignees-button')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('quick-note-editor')), findsNothing);
 
@@ -972,11 +1108,13 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
+      await tester.pumpAndSettle();
       expect(
         repository.lastChanges,
         containsPair('customAssigneeName', 'Camila'),
       );
-      expect(repository.lastChanges, containsPair('assigneeUid', null));
+      expect(repository.lastChanges, containsPair('assigneeUid', 'person-ana'));
       expect(tester.takeException(), isNull);
     },
   );
@@ -1103,6 +1241,75 @@ void main() {
     expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
   });
 
+  testWidgets(
+    'mosaic drop accepts the moved source after another pointer update',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = _FakeNotesRepository(noteCount: 3);
+
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final first = find.byKey(const ValueKey('reorder-grid-note-1'));
+      final second = find.byKey(const ValueKey('reorder-grid-note-2'));
+      final firstPosition = tester.getTopLeft(first);
+      final secondPosition = tester.getTopLeft(second);
+      final gesture = await tester.startGesture(tester.getCenter(first));
+      await tester.pump(const Duration(milliseconds: 550));
+      await gesture.moveTo(tester.getCenter(second));
+      await tester.pump(const Duration(milliseconds: 160));
+
+      expect(repository.reorderedNoteIds, isNull);
+      expect((tester.getTopLeft(second) - firstPosition).distance, lessThan(4));
+      expect(tester.getTopLeft(first), secondPosition);
+      final dragSource = find.byKey(const ValueKey('grid-drag-source-note-1'));
+      expect(dragSource, findsOneWidget);
+      expect(
+        find.descendant(
+          of: dragSource,
+          matching: find.byKey(const ValueKey('note-surface-note-1')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('grid-drag-feedback-note-1')),
+        findsOneWidget,
+      );
+
+      // The preview now places the source under the pointer. A real touch
+      // continues to emit updates before it is released.
+      await gesture.moveBy(const Offset(1, 1));
+      await tester.pump(const Duration(milliseconds: 160));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(repository.reorderedNoteIds, ['note-2', 'note-1', 'note-3']);
+      expect(
+        find.byKey(const ValueKey('grid-drag-source-note-1')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('grid-drag-feedback-note-1')),
+        findsNothing,
+      );
+      for (var index = 1; index <= 3; index++) {
+        expect(
+          find.byKey(ValueKey('note-surface-note-$index')),
+          findsOneWidget,
+        );
+      }
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+    },
+  );
+
   testWidgets('mosaic compacts unequal-height columns after dropping a card', (
     tester,
   ) async {
@@ -1146,10 +1353,7 @@ void main() {
       lessThan(4),
     );
     expect(tester.getTopLeft(second).dy, greaterThan(secondInitialPosition.dy));
-    expect(
-      find.byKey(const ValueKey('masonry-grid-columns-layout-2')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('masonry-grid-columns')), findsOneWidget);
   });
 
   testWidgets('canceling a mosaic drag restores the visible card order', (
@@ -1525,7 +1729,16 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Asignar responsable'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('preview-assignee-owner-1')),
+        60,
+        scrollable: find.byType(Scrollable).last,
+      );
       await tester.tap(find.byKey(const ValueKey('preview-assignee-owner-1')));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('save-assignees-button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
@@ -1535,7 +1748,10 @@ void main() {
         containsPair('title', 'Comprar café y té'),
       );
       expect(repository.lastChanges, containsPair('content', updatedContent));
-      expect(repository.lastChanges, containsPair('assigneeUid', 'owner-1'));
+      expect(
+        repository.lastChanges,
+        containsPair('assigneeUids', ['person-ana', 'owner-1']),
+      );
       final savedChecklist =
           repository.lastChanges!['checklist'] as List<dynamic>;
       expect(savedChecklist.map((item) => (item as Map)['text']), [
@@ -3113,12 +3329,27 @@ void main() {
     final assigneeOption = find.byKey(
       const ValueKey('preview-assignee-person-ana'),
     );
+    await tester.scrollUntilVisible(
+      assigneeOption,
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
     final avatar = tester.widget<CircleAvatar>(
       find.descendant(of: assigneeOption, matching: find.byType(CircleAvatar)),
     );
     expect(avatar.foregroundImage, isA<NetworkImage>());
     expect((avatar.foregroundImage! as NetworkImage).url, photoUrl);
+    await tester.scrollUntilVisible(
+      assigneeOption,
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
     await tester.tap(assigneeOption);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('save-assignees-button')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
     await tester.pumpAndSettle();
 
     final saveButton = find.byKey(const ValueKey('save-note-button'));
@@ -3127,6 +3358,62 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.createdDraft?.assigneeUid, 'person-ana');
+  });
+
+  testWidgets('assigns two people and filters a note for either responsible', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository(withInvitedPeople: true);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('note-note-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('note-preview-card')),
+        matching: find.byKey(const ValueKey('assignee-avatar-note-1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('preview-assignee-owner-1')),
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const ValueKey('preview-assignee-owner-1')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('save-assignees-button')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
+    await tester.pumpAndSettle();
+    expect(
+      repository.lastChanges,
+      containsPair('assigneeUids', ['person-ana', 'owner-1']),
+    );
+    await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
+    await tester.pumpAndSettle();
+    final avatarGroups = find.byKey(const ValueKey('assignee-stack-note-1'));
+    expect(avatarGroups, findsWidgets);
+    for (final element in avatarGroups.evaluate()) {
+      expect(
+        find.descendant(
+          of: find.byWidget(element.widget),
+          matching: find.byType(CircleAvatar),
+        ),
+        findsNWidgets(2),
+      );
+    }
+    expect(repository._note.assignedUserIds, ['person-ana', 'owner-1']);
+    for (final uid in ['person-ana', 'owner-1']) {
+      await tester.tap(find.byKey(ValueKey('assignee-filter-$uid')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-note-1')), findsOneWidget);
+    }
   });
 
   testWidgets('changes the responsible person directly from note detail', (
@@ -3150,9 +3437,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Asignar responsable'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('assignee-option-person-ana')),
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(
       find.byKey(const ValueKey('assignee-option-person-ana')),
       findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('assignee-option-unassigned')),
+      -60,
+      scrollable: find.byType(Scrollable).last,
     );
     await tester.tap(find.byKey(const ValueKey('assignee-option-unassigned')));
     await tester.pumpAndSettle();
@@ -3164,7 +3461,21 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(assigneeRow);
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('assignee-option-person-ana')),
+      60,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(find.byKey(const ValueKey('assignee-option-person-ana'))),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('assignee-option-person-ana')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('save-assignees-button')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-assignees-button')));
     await tester.pumpAndSettle();
 
     expect(repository.lastChanges, containsPair('assigneeUid', 'person-ana'));
@@ -3314,7 +3625,7 @@ void main() {
     expect(assigneeRect.right, closeTo(noteSurfaceRect.right - 12, 0.1));
     expect(assigneeRect.top - reminderRect.bottom, greaterThanOrEqualTo(10));
     expect(find.byKey(const ValueKey('masonry-grid-columns')), findsOneWidget);
-    expect(find.byType(SliverMasonryGrid), findsOneWidget);
+    expect(find.byType(SliverGrid), findsOneWidget);
     final gridCardSize = tester.getSize(
       find.byKey(const ValueKey('reorder-grid-note-1')),
     );
@@ -3384,6 +3695,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'mixed mosaic advances through completed notes without jumping back',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: _FakeNotesRepository(
+            noteCount: 19,
+            completedNoteCount: 14,
+            noteContents: List.generate(
+              19,
+              (i) =>
+                  List.filled((i % 5) * 10 + 1, 'Contenido variable').join(' '),
+            ),
+          ),
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final board = find.byKey(const ValueKey('masonry-grid-scroll-view'));
+      final scrollable = find
+          .descendant(of: board, matching: find.byType(Scrollable))
+          .first;
+      final position = tester.state<ScrollableState>(scrollable).position;
+      for (var i = 0; i < 64; i++) {
+        final before = position.pixels;
+        await tester.drag(board, const Offset(0, -180));
+        await tester.pumpAndSettle();
+        expect(
+          position.pixels,
+          greaterThanOrEqualTo(before - 1),
+          reason: 'Gesture $i must not rewind completed grid',
+        );
+      }
+      expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('mosaic builds only the cards near the viewport', (tester) async {
     tester.view.physicalSize = const Size(390, 800);
     tester.view.devicePixelRatio = 1;
@@ -3398,11 +3751,51 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(SliverMasonryGrid), findsOneWidget);
+    expect(find.byType(SliverGrid), findsOneWidget);
     expect(find.byKey(const ValueKey('reorder-grid-note-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('reorder-grid-note-40')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final mode in ['grid', 'list']) {
+    testWidgets('$mode reaches the last note across short pages', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = _FakePaginatedNotesRepository(
+        noteCount: 12,
+        noteContents: List.filled(12, 'Nota breve'),
+        pageSize: 1,
+      );
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        repository.fetchNotesPageCount,
+        greaterThan(1),
+        reason: 'Una página corta debe cargar más sin otro gesto.',
+      );
+      await tester.tap(find.byKey(ValueKey('view-mode-$mode')));
+      await tester.pumpAndSettle();
+      final boardScroll = find.byKey(
+        const ValueKey('masonry-grid-scroll-view'),
+      );
+      for (var i = 0; i < 20; i++) {
+        await tester.drag(boardScroll, const Offset(0, -300));
+        await tester.pumpAndSettle();
+      }
+      expect(repository.fetchNotesPageCount, 12);
+      expect(find.byKey(ValueKey('reorder-$mode-note-12')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('mosaic keeps advancing during a long scroll', (tester) async {
     tester.view.physicalSize = const Size(390, 720);
@@ -3436,6 +3829,9 @@ void main() {
         .descendant(of: boardScroll, matching: find.byType(Scrollable))
         .first;
     final position = tester.state<ScrollableState>(scrollable).position;
+    final initialGrid = tester.widget<SliverGrid>(
+      find.byKey(const ValueKey('masonry-grid-columns')),
+    );
     var previousOffset = position.pixels;
 
     for (var gesture = 0; gesture < 4; gesture++) {
@@ -3448,6 +3844,17 @@ void main() {
       );
       previousOffset = position.pixels;
     }
+
+    expect(
+      identical(
+        initialGrid,
+        tester.widget<SliverGrid>(
+          find.byKey(const ValueKey('masonry-grid-columns')),
+        ),
+      ),
+      isTrue,
+      reason: 'Scrolling must reuse the measured grid until notes change.',
+    );
 
     final paginationTriggerOffset = position.maxScrollExtent - 200;
     position.jumpTo(paginationTriggerOffset);
@@ -3866,11 +4273,11 @@ void main() {
 
     expect(find.text('FILTRAR'), findsNothing);
     expect(find.text('Todas'), findsOneWidget);
-    expect(find.text('Pend.'), findsOneWidget);
-    expect(find.text('Hechas'), findsOneWidget);
+    expect(find.text('Pendientes'), findsOneWidget);
+    expect(find.text('Listas'), findsOneWidget);
     expect(find.text('VISTA'), findsNothing);
-    expect(find.text('Mosaico'), findsOneWidget);
-    expect(find.text('Lista'), findsOneWidget);
+    expect(find.text('Mosaico'), findsNothing);
+    expect(find.byTooltip('Vista de lista compacta'), findsOneWidget);
     expect(find.text('Grande'), findsNothing);
     expect(
       find.byKey(const ValueKey('filter-mode-glass-blur')),
@@ -3881,7 +4288,7 @@ void main() {
       tester
           .getSize(find.byKey(const ValueKey('compact-filter-selector')))
           .height,
-      52,
+      48,
     );
     final filterIndicator = find.byKey(
       const ValueKey('filter-mode-selection-indicator'),
@@ -4171,6 +4578,183 @@ void main() {
     },
   );
 
+  testWidgets(
+    'uncompleting moves the card upward before returning to pending',
+    (tester) async {
+      final repository = _FakeNotesRepository(initiallyCompleted: true);
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final checkbox = find.descendant(
+        of: find.byKey(const ValueKey('note-note-1')),
+        matching: find.byType(Checkbox),
+      );
+      await tester.tap(checkbox);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 225));
+      expect(repository._note.isCompleted, isTrue);
+      final slide = tester.widget<FractionalTranslation>(
+        find.byKey(const ValueKey('note-exit-slide-note-1')),
+      );
+      expect(slide.translation.dy, lessThan(0));
+      await tester.pumpAndSettle();
+      expect(repository._note.isCompleted, isFalse);
+    },
+  );
+
+  testWidgets('pinning and unpinning cards animates their new positions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(noteCount: 4),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final motion = find.byKey(const ValueKey('note-reflow-note-2'));
+    final cubit = tester
+        .element(find.byKey(const ValueKey('board-scroll-view')))
+        .read<NotesCubit>();
+    final original = cubit.state.notes;
+    for (var action = 0; action < 2; action++) {
+      final pinned = action == 0;
+      final updated =
+          original
+              .map(
+                (note) => note.id == 'note-2'
+                    ? note.copyWith(isPinned: pinned)
+                    : note,
+              )
+              .toList()
+            ..sort(compareNotes);
+      cubit.emit(cubit.state.copyWith(notes: updated));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      final initial = tester
+          .widget<Transform>(motion)
+          .transform
+          .getTranslation()
+          .length;
+      expect(initial, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 175));
+      final halfway = tester
+          .widget<Transform>(motion)
+          .transform
+          .getTranslation()
+          .length;
+      expect(halfway, inExclusiveRange(0, initial));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Transform>(motion).transform.getTranslation().length,
+        0,
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('remaining mosaic cards glide into the completed card slot', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: _FakeNotesRepository(noteCount: 4),
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('filter-mode-pending')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('note-note-1')),
+        matching: find.byType(Checkbox),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 225));
+    expect(
+      tester
+          .widget<FractionalTranslation>(
+            find.byKey(const ValueKey('note-exit-slide-note-1')),
+          )
+          .translation
+          .dy,
+      greaterThan(0),
+    );
+    await tester.pump(const Duration(milliseconds: 225));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump();
+    final motion = find.byKey(const ValueKey('note-reflow-note-2'));
+    final initial = tester
+        .widget<Transform>(motion)
+        .transform
+        .entry(0, 3)
+        .abs();
+    expect(initial, greaterThan(0));
+    await tester.pump(const Duration(milliseconds: 175));
+    final halfway = tester
+        .widget<Transform>(motion)
+        .transform
+        .entry(0, 3)
+        .abs();
+    expect(halfway, inExclusiveRange(0, initial));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Transform>(motion).transform.entry(0, 3), 0);
+  });
+
+  testWidgets('completing in all mode animates before moving to completed', (
+    tester,
+  ) async {
+    final repository = _FakeNotesRepository();
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final checkbox = find.descendant(
+      of: find.byKey(const ValueKey('note-note-1')),
+      matching: find.byType(Checkbox),
+    );
+    await tester.tap(checkbox);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 225));
+    expect(repository._note.isCompleted, isFalse);
+    expect(
+      tester
+          .widget<Opacity>(
+            find.byKey(const ValueKey('note-exit-opacity-note-1')),
+          )
+          .opacity,
+      inExclusiveRange(0, 1),
+    );
+    await tester.pumpAndSettle();
+    expect(repository._note.isCompleted, isTrue);
+    expect(
+      tester
+          .widget<Opacity>(
+            find.byKey(const ValueKey('note-exit-opacity-note-1')),
+          )
+          .opacity,
+      1,
+    );
+    expect(
+      find.byKey(const ValueKey('completed-section-header')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('a completed pending task animates before leaving the list', (
     tester,
   ) async {
@@ -4219,7 +4803,7 @@ void main() {
     );
     expect(exitScale.transform.entry(0, 0), inExclusiveRange(0.94, 1));
 
-    await tester.pump(const Duration(milliseconds: 149));
+    await tester.pump(const Duration(milliseconds: 299));
     expect(card, findsOneWidget);
     await tester.pump(const Duration(milliseconds: 1));
     await tester.pumpAndSettle();
@@ -4587,6 +5171,17 @@ void main() {
       'trabajo',
     );
     await tester.tap(find.byKey(const ValueKey('create-list-confirm-button')));
+    await tester.pumpAndSettle();
+
+    final options = find.byKey(const ValueKey('list-options-button'));
+    await tester.tap(find.byKey(const ValueKey('editable-list-title')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('inline-list-name-field')),
+      findsOneWidget,
+    );
+    expect(options, findsNothing);
+    await tester.tap(find.byKey(const ValueKey('cancel-inline-list-name')));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('list-options-button')));
@@ -5419,8 +6014,11 @@ void main() {
       ),
       findsNothing,
     );
-    expect(checkbox.activeColor, AppTheme.ink);
-    expect(checkbox.checkColor, Colors.white);
+    expect(checkbox.value, isTrue);
+    final completedCheck = tester.widget<Icon>(
+      find.byKey(const ValueKey('completed-check')),
+    );
+    expect(completedCheck.color, const Color(0xFFF1FFF8));
     expect(tester.takeException(), isNull);
   });
 
@@ -6536,6 +7134,9 @@ class _FakeNotesRepository
                 .toList(),
       reactions: existing.reactions,
       authorName: changes['authorName'] as String? ?? existing.authorName,
+      assigneeUids: changes.containsKey('assigneeUids')
+          ? (changes['assigneeUids'] as List).cast<String>()
+          : existing.assignedUserIds,
       assigneeUid: changes.containsKey('assigneeUid')
           ? changes['assigneeUid'] as String?
           : existing.assigneeUid,
@@ -6587,8 +7188,10 @@ class _FakePaginatedNotesRepository extends _FakeNotesRepository
   _FakePaginatedNotesRepository({
     required super.noteCount,
     required super.noteContents,
+    this.pageSize,
   });
 
+  final int? pageSize;
   int fetchNotesPageCount = 0;
 
   @override
@@ -6600,10 +7203,27 @@ class _FakePaginatedNotesRepository extends _FakeNotesRepository
     fetchNotesPageCount += 1;
     final notes = await super.fetchNotes(boardId);
     final start = int.tryParse(cursor ?? '') ?? 0;
-    final end = start + limit < notes.length ? start + limit : notes.length;
+    final size = pageSize ?? limit;
+    final end = start + size < notes.length ? start + size : notes.length;
     return NotesPage(
       items: notes.sublist(start, end),
       nextCursor: end < notes.length ? '$end' : null,
     );
+  }
+}
+
+class _TapNotificationsController extends NotificationsController {
+  _TapNotificationsController(AuthRepository auth)
+    : super(authRepository: auth, apiBaseUrl: 'http://localhost:4000/api');
+
+  final taps = StreamController<Map<String, String>>.broadcast();
+
+  @override
+  Stream<Map<String, String>> get tapEvents => taps.stream;
+
+  @override
+  void dispose() {
+    unawaited(taps.close());
+    super.dispose();
   }
 }

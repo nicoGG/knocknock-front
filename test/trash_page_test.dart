@@ -104,6 +104,35 @@ void main() {
     unawaited(cubit.close());
   });
 
+  testWidgets('empty trash fits a narrow screen with large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final cubit = NotesCubit(LocalNotesRepository());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: TrashPage(cubit: cubit),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('La papelera está vacía'), findsOneWidget);
+    await tester.ensureVisible(find.text('Volver a mis notas'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await cubit.close();
+  });
+
   testWidgets('shows deleted notes and restores them', (tester) async {
     final repository = LocalNotesRepository();
     final note = await repository.createNote(
@@ -181,6 +210,8 @@ void main() {
     expect(find.byKey(ValueKey('restore-note-${first.id}')), findsOneWidget);
     expect(find.byKey(ValueKey('delete-note-${first.id}')), findsOneWidget);
 
+    await tester.ensureVisible(find.byKey(ValueKey('delete-note-${first.id}')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('delete-note-${first.id}')));
     await tester.pumpAndSettle();
     expect(find.text('¿Eliminar definitivamente?'), findsOneWidget);
@@ -189,6 +220,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(await repository.fetchTrash(), hasLength(2));
 
+    await tester.ensureVisible(find.byKey(ValueKey('delete-note-${first.id}')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('delete-note-${first.id}')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('confirm-delete-note-${first.id}')));
@@ -196,6 +229,10 @@ void main() {
     expect(find.byKey(ValueKey('trash-note-${first.id}')), findsNothing);
     expect(await repository.fetchTrash(), hasLength(1));
 
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('empty-trash-button')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('empty-trash-button')));
     await tester.pumpAndSettle();
     expect(find.text('¿Vaciar la papelera?'), findsOneWidget);
@@ -250,6 +287,8 @@ void main() {
       find.byKey(const ValueKey('trash-list')),
       const Offset(0, -600),
     );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('delete-note-${note.id}')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('delete-note-${note.id}')));
     await tester.pumpAndSettle();

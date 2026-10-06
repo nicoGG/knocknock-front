@@ -295,8 +295,10 @@ class Note extends Equatable {
     this.category = NoteCategory.general,
     this.checklist = const [],
     this.reactions = const [],
-    this.assigneeUid,
+    String? assigneeUid,
+    this.assigneeUids,
     this.customAssigneeName,
+    this.customAssigneeNames,
     this.attachments = const [],
     NoteAttachment? attachment,
     this.reminderAt,
@@ -304,7 +306,8 @@ class Note extends Equatable {
     this.contentDelta,
     this.revision = 0,
     this.deletedAt,
-  }) : _legacyAttachment = attachment;
+  }) : _legacyAttachment = attachment,
+       _legacyAssigneeUid = assigneeUid;
 
   factory Note.fromJson(Map<String, dynamic> json) {
     final rawRecurrence = json['reminderRecurrence'];
@@ -323,7 +326,10 @@ class Note extends Equatable {
       ),
       authorName: json['authorName'] as String? ?? 'Invitado',
       assigneeUid: json['assigneeUid'] as String?,
+      assigneeUids: (json['assigneeUids'] as List<dynamic>?)?.cast<String>(),
       customAssigneeName: json['customAssigneeName'] as String?,
+      customAssigneeNames: (json['customAssigneeNames'] as List<dynamic>?)
+          ?.cast<String>(),
       attachments: _attachmentsFromJson(json),
       isCompleted: reminderRecurrence == null
           ? json['isCompleted'] as bool? ?? false
@@ -366,8 +372,23 @@ class Note extends Equatable {
   final String? contentDelta;
   final NoteColor color;
   final String authorName;
-  final String? assigneeUid;
+  final String? _legacyAssigneeUid;
+  final List<String>? assigneeUids;
+  String? get assigneeUid {
+    final uids = assigneeUids;
+    return uids == null ? _legacyAssigneeUid : uids.firstOrNull;
+  }
+
+  List<String> get assignedUserIds =>
+      assigneeUids ??
+      (_legacyAssigneeUid == null ? const [] : [_legacyAssigneeUid]);
   final String? customAssigneeName;
+  final List<String>? customAssigneeNames;
+  List<String> get assignedCustomNames =>
+      customAssigneeNames ??
+      (customAssigneeName?.trim().isNotEmpty == true
+          ? [customAssigneeName!.trim()]
+          : const []);
   final List<NoteAttachment> attachments;
   final NoteAttachment? _legacyAttachment;
   List<NoteAttachment> get photoAttachments => attachments.isNotEmpty
@@ -401,7 +422,9 @@ class Note extends Equatable {
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
+    'assigneeUids': assignedUserIds,
     if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
+    'customAssigneeNames': assignedCustomNames,
     'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'isCompleted': isCompleted,
     'isPinned': isPinned,
@@ -441,7 +464,9 @@ class Note extends Equatable {
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
+    assigneeUids: assignedUserIds,
     customAssigneeName: customAssigneeName,
+    customAssigneeNames: assignedCustomNames,
     attachments: attachments ?? photoAttachments,
     isCompleted: reminderRecurrence == null
         ? isCompleted ?? this.isCompleted
@@ -471,7 +496,9 @@ class Note extends Equatable {
     color,
     authorName,
     assigneeUid,
+    assignedUserIds,
     customAssigneeName,
+    assignedCustomNames,
     photoAttachments,
     isCompleted,
     isPinned,
@@ -498,8 +525,10 @@ class NoteDraft extends Equatable {
     required this.authorName,
     this.category = NoteCategory.general,
     this.checklist = const [],
-    this.assigneeUid,
+    String? assigneeUid,
+    this.assigneeUids,
     this.customAssigneeName,
+    this.customAssigneeNames,
     this.attachments = const [],
     NoteAttachment? attachment,
     this.reminderAt,
@@ -512,7 +541,8 @@ class NoteDraft extends Equatable {
     this.sortOrder,
     this.positionX = 0,
     this.positionY = 0,
-  }) : _legacyAttachment = attachment;
+  }) : _legacyAttachment = attachment,
+       _legacyAssigneeUid = assigneeUid;
 
   factory NoteDraft.fromJson(Map<String, dynamic> json) => NoteDraft(
     title: json['title'] as String,
@@ -524,7 +554,10 @@ class NoteDraft extends Equatable {
     ),
     authorName: json['authorName'] as String? ?? 'Invitado',
     assigneeUid: json['assigneeUid'] as String?,
+    assigneeUids: (json['assigneeUids'] as List<dynamic>?)?.cast<String>(),
     customAssigneeName: json['customAssigneeName'] as String?,
+    customAssigneeNames: (json['customAssigneeNames'] as List<dynamic>?)
+        ?.cast<String>(),
     attachments: _attachmentsFromJson(json),
     category: NoteCategory.values.firstWhere(
       (category) => category.name == json['category'],
@@ -559,8 +592,23 @@ class NoteDraft extends Equatable {
   final String? contentDelta;
   final NoteColor color;
   final String authorName;
-  final String? assigneeUid;
+  final String? _legacyAssigneeUid;
+  final List<String>? assigneeUids;
+  String? get assigneeUid {
+    final uids = assigneeUids;
+    return uids == null ? _legacyAssigneeUid : uids.firstOrNull;
+  }
+
+  List<String> get assignedUserIds =>
+      assigneeUids ??
+      (_legacyAssigneeUid == null ? const [] : [_legacyAssigneeUid]);
   final String? customAssigneeName;
+  final List<String>? customAssigneeNames;
+  List<String> get assignedCustomNames =>
+      customAssigneeNames ??
+      (customAssigneeName?.trim().isNotEmpty == true
+          ? [customAssigneeName!.trim()]
+          : const []);
   final List<NoteAttachment> attachments;
   final NoteAttachment? _legacyAttachment;
   List<NoteAttachment> get photoAttachments => attachments.isNotEmpty
@@ -591,7 +639,9 @@ class NoteDraft extends Equatable {
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
+    assigneeUids: assignedUserIds,
     customAssigneeName: customAssigneeName,
+    customAssigneeNames: assignedCustomNames,
     attachments: photoAttachments,
     category: category,
     checklist: checklist,
@@ -613,7 +663,9 @@ class NoteDraft extends Equatable {
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
+    'assigneeUids': assignedUserIds,
     if (customAssigneeName != null) 'customAssigneeName': customAssigneeName,
+    'customAssigneeNames': assignedCustomNames,
     'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'category': category.name,
     'checklist': checklist.map((item) => item.toJson()).toList(),
@@ -637,7 +689,9 @@ class NoteDraft extends Equatable {
     color,
     authorName,
     assigneeUid,
+    assignedUserIds,
     customAssigneeName,
+    assignedCustomNames,
     photoAttachments,
     category,
     checklist,

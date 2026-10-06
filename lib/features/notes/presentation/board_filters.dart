@@ -5,6 +5,8 @@ part of 'board_page.dart';
 class _BoardHeader extends StatelessWidget {
   const _BoardHeader({
     required this.title,
+    required this.isEditingTitle,
+    required this.onEditingTitleChanged,
     required this.list,
     required this.filter,
     required this.categoryCounts,
@@ -30,6 +32,8 @@ class _BoardHeader extends StatelessWidget {
     required this.isCompact,
   });
 
+  final bool isEditingTitle;
+  final ValueChanged<bool> onEditingTitleChanged;
   final String title;
   final NoteList? list;
   final NoteFilter filter;
@@ -67,7 +71,7 @@ class _BoardHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: AnimatedSwitcher(
@@ -75,7 +79,7 @@ class _BoardHeader extends StatelessWidget {
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 layoutBuilder: (currentChild, previousChildren) => Stack(
-                  alignment: Alignment.bottomLeft,
+                  alignment: Alignment.topLeft,
                   children: [...previousChildren, ?currentChild],
                 ),
                 transitionBuilder: (child, animation) => FadeTransition(
@@ -88,19 +92,24 @@ class _BoardHeader extends StatelessWidget {
                     child: child,
                   ),
                 ),
-                child: Text(
-                  title,
-                  key: ValueKey(title),
-                  style: Theme.of(context).textTheme.displaySmall,
+                child: EditableListTitle(
+                  key: ValueKey(list?.id ?? title),
+                  title: title,
+                  onEditingChanged: onEditingTitleChanged,
+                  onSave: list?.currentUserRole == ListMemberRole.owner
+                      ? (name) =>
+                            context.read<NotesCubit>().updateSelectedList(name)
+                      : null,
                 ),
               ),
             ),
-            if (showAddButton ||
-                onShare != null ||
-                onCustomizeBackground != null ||
-                onRenameList != null ||
-                onToggleListProtection != null ||
-                onDeleteList != null)
+            if (!isEditingTitle &&
+                (showAddButton ||
+                    onShare != null ||
+                    onCustomizeBackground != null ||
+                    onRenameList != null ||
+                    onToggleListProtection != null ||
+                    onDeleteList != null))
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -544,7 +553,7 @@ class _AssigneeFilterChip extends StatelessWidget {
       button: true,
       selected: selected,
       label:
-          '${assignee.displayName}, ${assignee.count} ${assignee.count == 1 ? 'nota pendiente asignada' : 'notas pendientes asignadas'}',
+          '${assignee.displayName}, ${assignee.count} ${assignee.count == 1 ? 'nota asignada' : 'notas asignadas'}',
       child: AnimatedContainer(
         duration: duration,
         curve: Curves.easeOutCubic,
@@ -555,7 +564,7 @@ class _AssigneeFilterChip extends StatelessWidget {
               : colorScheme.surface.withValues(alpha: 0.72),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: colorScheme.primary.withValues(alpha: selected ? 0.9 : 0.4),
+            color: colorScheme.primary.withValues(alpha: selected ? 0.9 : 0.16),
           ),
           boxShadow: selected
               ? [
@@ -631,7 +640,9 @@ class _AssigneeFilterChip extends StatelessWidget {
                       style: TextStyle(
                         color: foreground,
                         fontSize: 12,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: selected
+                            ? FontWeight.w800
+                            : FontWeight.w600,
                       ),
                     ),
                   ),
@@ -757,8 +768,7 @@ class _CategoryFilterChip extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label:
-          '$label, $count ${count == 1 ? 'nota pendiente' : 'notas pendientes'}',
+      label: '$label, $count ${count == 1 ? 'nota' : 'notas'}',
       child: AnimatedContainer(
         duration: duration,
         curve: Curves.easeOutCubic,
@@ -771,7 +781,7 @@ class _CategoryFilterChip extends StatelessWidget {
           border: Border.all(
             color: selected
                 ? categoryColor.withValues(alpha: 0.95)
-                : categoryColor.withValues(alpha: 0.42),
+                : colorScheme.outlineVariant.withValues(alpha: 0.5),
           ),
           boxShadow: selected
               ? [
@@ -832,12 +842,6 @@ class _CategoryFilterChip extends StatelessWidget {
                         height: 1,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 3),
-                  Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 14,
-                    color: foreground.withValues(alpha: 0.72),
                   ),
                 ],
               ),
@@ -1429,17 +1433,25 @@ class _GlassSelectorSurface extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          stops: const [0, 0.42, 1],
           colors: [
             Colors.white.withValues(
               alpha: isDark
-                  ? 0.12
+                  ? 0.22
                   : useBackdropBlur
-                  ? 0.42
+                  ? 0.54
                   : 0.72,
             ),
             colorScheme.surface.withValues(
               alpha: isDark
-                  ? 0.64
+                  ? 0.44
+                  : useBackdropBlur
+                  ? 0.38
+                  : 0.68,
+            ),
+            colorScheme.surface.withValues(
+              alpha: isDark
+                  ? 0.62
                   : useBackdropBlur
                   ? 0.46
                   : 0.7,
@@ -1448,7 +1460,7 @@ class _GlassSelectorSurface extends StatelessWidget {
         ),
         borderRadius: borderRadius,
         border: Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.16 : 0.5),
+          color: Colors.white.withValues(alpha: isDark ? 0.32 : 0.65),
         ),
       ),
     );
@@ -1473,7 +1485,7 @@ class _GlassSelectorSurface extends StatelessWidget {
                 child: useBackdropBlur
                     ? BackdropFilter(
                         key: blurKey,
-                        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
                         child: surface,
                       )
                     : surface,
@@ -1524,14 +1536,16 @@ class _SlidingSelectorHighlight extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
+              stops: const [0, 0.4, 1],
               colors: [
-                color.withValues(alpha: isDark ? 0.88 : 0.82),
-                color.withValues(alpha: isDark ? 0.72 : 0.66),
+                Color.lerp(color, Colors.white, 0.18)!.withValues(alpha: 0.82),
+                color.withValues(alpha: isDark ? 0.72 : 0.68),
+                color.withValues(alpha: isDark ? 0.58 : 0.54),
               ],
             ),
             borderRadius: borderRadius,
             border: Border.all(
-              color: Colors.white.withValues(alpha: isDark ? 0.26 : 0.5),
+              color: Colors.white.withValues(alpha: isDark ? 0.42 : 0.65),
             ),
             boxShadow: [
               BoxShadow(
@@ -1582,13 +1596,13 @@ class _CompactBoardControls extends StatelessWidget {
               ),
               _BoardControlOption(
                 value: NoteFilter.pending,
-                label: 'Pend.',
+                label: 'Pendientes',
                 tooltip: 'Pendientes',
                 icon: Icons.schedule_rounded,
               ),
               _BoardControlOption(
                 value: NoteFilter.completed,
-                label: 'Hechas',
+                label: 'Listas',
                 tooltip: 'Completadas',
                 icon: Icons.check_circle_outline_rounded,
                 selectedIcon: Icons.check_circle_rounded,
@@ -1597,7 +1611,8 @@ class _CompactBoardControls extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        Expanded(
+        SizedBox(
+          width: 96,
           child: _CompactIconSelector<BoardViewMode>(
             key: const ValueKey('compact-view-selector'),
             keyPrefix: 'view-mode',
@@ -1651,7 +1666,7 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
         ? Duration.zero
         : _boardControlMotionDuration;
     return SizedBox(
-      height: 52,
+      height: 48,
       child: _GlassSelectorSurface(
         blurKey: ValueKey('$keyPrefix-glass-blur'),
         borderRadius: BorderRadius.circular(20),
@@ -1712,40 +1727,103 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
                                 scale: isSelected ? 1 : 0.96,
                                 duration: motionDuration,
                                 curve: Curves.easeOutBack,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(17),
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    alignment: Alignment.center,
                                     children: [
-                                      TweenAnimationBuilder<Color?>(
-                                        duration: motionDuration,
-                                        tween: ColorTween(end: foreground),
-                                        builder: (context, color, child) =>
-                                            Icon(
-                                              isSelected
-                                                  ? option.selectedIcon ??
-                                                        option.icon
-                                                  : option.icon,
-                                              size: 18,
-                                              color: color ?? foreground,
+                                      if (T == NoteFilter)
+                                        Positioned(
+                                          right: -3,
+                                          bottom: -5,
+                                          child: ExcludeSemantics(
+                                            child: Transform.rotate(
+                                              angle: -0.12,
+                                              child: TweenAnimationBuilder<Color?>(
+                                                duration: motionDuration,
+                                                tween: ColorTween(
+                                                  end: foreground.withValues(
+                                                    alpha: isSelected
+                                                        ? 0.18
+                                                        : 0.12,
+                                                  ),
+                                                ),
+                                                builder: (context, color, _) => Icon(
+                                                  isSelected
+                                                      ? option.selectedIcon ??
+                                                            option.icon
+                                                      : option.icon,
+                                                  key: ValueKey(
+                                                    '$keyPrefix-${option.value.name}-background-icon',
+                                                  ),
+                                                  size: 44,
+                                                  color: color ?? foreground,
+                                                ),
+                                              ),
                                             ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      AnimatedDefaultTextStyle(
-                                        duration: motionDuration,
-                                        curve: Curves.easeOutCubic,
-                                        style: TextStyle(
-                                          color: foreground,
-                                          fontSize: 10,
-                                          fontWeight: isSelected
-                                              ? FontWeight.w900
-                                              : FontWeight.w700,
-                                          height: 1,
+                                          ),
                                         ),
-                                        child: Text(
-                                          option.label,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.fade,
-                                          softWrap: false,
+                                      Center(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (T == BoardViewMode)
+                                              TweenAnimationBuilder<Color?>(
+                                                duration: motionDuration,
+                                                tween: ColorTween(
+                                                  end: foreground,
+                                                ),
+                                                builder:
+                                                    (
+                                                      context,
+                                                      color,
+                                                      child,
+                                                    ) => Icon(
+                                                      isSelected
+                                                          ? option.selectedIcon ??
+                                                                option.icon
+                                                          : option.icon,
+                                                      size: 18,
+                                                      color:
+                                                          color ?? foreground,
+                                                    ),
+                                              ),
+                                            if (T != BoardViewMode)
+                                              AnimatedDefaultTextStyle(
+                                                duration: motionDuration,
+                                                curve: Curves.easeOutCubic,
+                                                style: TextStyle(
+                                                  color: foreground,
+                                                  fontSize: 12,
+                                                  fontFamily: Theme.of(context)
+                                                      .textTheme
+                                                      .labelLarge
+                                                      ?.fontFamily,
+                                                  fontWeight: isSelected
+                                                      ? FontWeight.w900
+                                                      : FontWeight.w700,
+                                                  height: 1.2,
+                                                  leadingDistribution:
+                                                      TextLeadingDistribution
+                                                          .even,
+                                                ),
+                                                child: Text(
+                                                  option.label,
+                                                  textAlign: TextAlign.center,
+                                                  textHeightBehavior:
+                                                      const TextHeightBehavior(
+                                                        applyHeightToFirstAscent:
+                                                            false,
+                                                        applyHeightToLastDescent:
+                                                            false,
+                                                      ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.fade,
+                                                  softWrap: false,
+                                                ),
+                                              ),
+                                          ],
                                         ),
                                       ),
                                     ],

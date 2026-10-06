@@ -854,6 +854,7 @@ class E2eeNotesRepository
           contentDelta: note.contentDelta,
           authorName: note.authorName,
           customAssigneeName: note.customAssigneeName,
+          customAssigneeNames: note.assignedCustomNames,
           attachments: fullAttachments,
           checklist: note.checklist,
         );
@@ -1026,6 +1027,16 @@ class E2eeNotesRepository
           field: _noteAuthorField,
         ),
         assigneeUid: draft.assigneeUid,
+        assigneeUids: draft.assignedUserIds,
+        customAssigneeNames: await Future.wait(
+          draft.assignedCustomNames.map(
+            (name) => _cipher.encryptString(
+              name,
+              key,
+              field: _noteCustomAssigneeField,
+            ),
+          ),
+        ),
         customAssigneeName: draft.customAssigneeName == null
             ? null
             : await _cipher.encryptString(
@@ -1085,6 +1096,14 @@ class E2eeNotesRepository
         );
       }
     }
+    if (encrypted['customAssigneeNames'] case final List names) {
+      encrypted['customAssigneeNames'] = await Future.wait(
+        names.cast<String>().map(
+          (name) =>
+              _cipher.encryptString(name, key, field: _noteCustomAssigneeField),
+        ),
+      );
+    }
     final checklist = encrypted['checklist'];
     if (checklist is List) {
       encrypted['checklist'] = await Future.wait(
@@ -1142,6 +1161,11 @@ class E2eeNotesRepository
       key,
       field: _noteAuthorField,
     ),
+    'customAssigneeNames': await Future.wait(
+      note.assignedCustomNames.map(
+        (name) => _encryptIfNeeded(name, key, field: _noteCustomAssigneeField),
+      ),
+    ),
     if (note.customAssigneeName != null)
       'customAssigneeName': await _encryptIfNeeded(
         note.customAssigneeName!,
@@ -1177,6 +1201,8 @@ class E2eeNotesRepository
       contentDelta: changes['contentDelta'] as String?,
       authorName: changes['authorName'] as String,
       customAssigneeName: changes['customAssigneeName'] as String?,
+      customAssigneeNames: (changes['customAssigneeNames'] as List)
+          .cast<String>(),
       attachments: (changes['attachments'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
@@ -1194,7 +1220,8 @@ class E2eeNotesRepository
   }
 
   Future<Note> _decryptNote(Note raw, SecretKey key) async {
-    if (!E2eeCipher.isCiphertext(raw.title) ||
+    if (raw.assignedCustomNames.any((name) => !E2eeCipher.isCiphertext(name)) ||
+        !E2eeCipher.isCiphertext(raw.title) ||
         !E2eeCipher.isCiphertext(raw.content) ||
         !E2eeCipher.isCiphertext(raw.authorName) ||
         raw.checklist.any((item) => !E2eeCipher.isCiphertext(item.text)) ||
@@ -1232,6 +1259,12 @@ class E2eeNotesRepository
         key,
         field: _noteAuthorField,
       ),
+      customAssigneeNames: await Future.wait(
+        raw.assignedCustomNames.map(
+          (name) =>
+              _cipher.decryptString(name, key, field: _noteCustomAssigneeField),
+        ),
+      ),
       customAssigneeName: raw.customAssigneeName == null
           ? null
           : await _cipher.decryptString(
@@ -1265,6 +1298,7 @@ class E2eeNotesRepository
     required String? contentDelta,
     required String authorName,
     required String? customAssigneeName,
+    required List<String> customAssigneeNames,
     required List<NoteAttachment> attachments,
     required List<NoteChecklistItem> checklist,
   }) => Note(
@@ -1276,7 +1310,9 @@ class E2eeNotesRepository
     color: note.color,
     authorName: authorName,
     assigneeUid: note.assigneeUid,
+    assigneeUids: note.assignedUserIds,
     customAssigneeName: customAssigneeName,
+    customAssigneeNames: customAssigneeNames,
     attachments: attachments,
     isCompleted: note.isCompleted,
     isPinned: note.isPinned,

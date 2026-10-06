@@ -434,6 +434,12 @@ class NoteChecklistPreview extends StatefulWidget {
 
 class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
   bool _locallyCompletedExpanded = true;
+  String? _movingItemId;
+
+  void _toggleItem(NoteChecklistItem item) {
+    _movingItemId = item.id;
+    widget.onToggle(item);
+  }
 
   bool get _completedExpanded =>
       widget.completedExpanded ?? _locallyCompletedExpanded;
@@ -536,9 +542,11 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
                 children: [
                   for (final item in visibleCompleted)
                     _ChecklistPreviewRow(
+                      key: ValueKey('completed-row-${item.id}'),
+                      animateArrival: _movingItemId == item.id,
                       item: item,
                       foregroundColor: widget.foregroundColor,
-                      onToggle: widget.onToggle,
+                      onToggle: _toggleItem,
                     ),
                 ],
               )
@@ -549,9 +557,11 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
           children: [
             for (final item in visiblePending)
               _ChecklistPreviewRow(
+                key: ValueKey('pending-row-${item.id}'),
+                animateArrival: _movingItemId == item.id,
                 item: item,
                 foregroundColor: widget.foregroundColor,
-                onToggle: widget.onToggle,
+                onToggle: _toggleItem,
               ),
             if (hiddenPendingCount > 0)
               Padding(
@@ -650,23 +660,45 @@ class _NoteChecklistPreviewState extends State<NoteChecklistPreview> {
   }
 }
 
-class _ChecklistPreviewRow extends StatelessWidget {
+class _ChecklistPreviewRow extends StatefulWidget {
   const _ChecklistPreviewRow({
+    super.key,
+    this.animateArrival = false,
     required this.item,
     required this.foregroundColor,
     required this.onToggle,
   });
 
+  final bool animateArrival;
   final NoteChecklistItem item;
   final Color foregroundColor;
   final ValueChanged<NoteChecklistItem> onToggle;
+
+  @override
+  State<_ChecklistPreviewRow> createState() => _ChecklistPreviewRowState();
+}
+
+class _ChecklistPreviewRowState extends State<_ChecklistPreviewRow> {
+  bool _departing = false;
+  bool _committed = false;
+  NoteChecklistItem get item => widget.item;
+  Color get foregroundColor => widget.foregroundColor;
+
+  void _toggle() {
+    if (_departing) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      widget.onToggle(item);
+      return;
+    }
+    setState(() => _departing = true);
+  }
 
   @override
   Widget build(BuildContext context) {
     final itemColor = item.isCompleted
         ? foregroundColor.withValues(alpha: 0.72)
         : foregroundColor;
-    return Padding(
+    final row = Padding(
       padding: EdgeInsets.only(left: item.indent * 18, bottom: 2),
       child: Row(
         children: [
@@ -674,8 +706,8 @@ class _ChecklistPreviewRow extends StatelessWidget {
             dimension: 27,
             child: Checkbox(
               key: ValueKey('preview-check-${item.id}'),
-              value: item.isCompleted,
-              onChanged: (_) => onToggle(item),
+              value: _departing ? !item.isCompleted : item.isCompleted,
+              onChanged: (_) => _toggle(),
               activeColor: itemColor,
               checkColor: Colors.black87,
               side: BorderSide(color: itemColor, width: 1.5),
@@ -696,6 +728,39 @@ class _ChecklistPreviewRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    if (!_departing && !widget.animateArrival) return row;
+    final direction = item.isCompleted ? -1.0 : 1.0;
+    return IgnorePointer(
+      ignoring: _departing,
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey('subtask-motion-${item.id}-$_departing'),
+        tween: Tween(begin: 0, end: 1),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 200),
+        curve: Curves.easeInOutCubic,
+        onEnd: () {
+          if (_departing && !_committed) {
+            _committed = true;
+            widget.onToggle(item);
+          }
+        },
+        child: RepaintBoundary(child: row),
+        builder: (context, progress, child) => Opacity(
+          opacity: _departing ? 1 - progress : progress,
+          child: Transform.translate(
+            key: ValueKey('subtask-slide-${item.id}'),
+            offset: Offset(
+              0,
+              _departing
+                  ? direction * 14 * progress
+                  : direction * 14 * (1 - progress),
+            ),
+            child: child,
+          ),
+        ),
       ),
     );
   }

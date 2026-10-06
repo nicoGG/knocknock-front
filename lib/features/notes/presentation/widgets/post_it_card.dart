@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/presentation/widgets/animated_note_checkbox.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -20,7 +21,6 @@ import 'package:nocknock/features/notes/presentation/widgets/note_link.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_pdf_viewer.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_reactions.dart';
-import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:uuid/uuid.dart';
 
 enum PostItCardLayout { grid, compact, large }
@@ -232,6 +232,7 @@ class PostItCard extends StatelessWidget {
     required this.onOpen,
     required this.onChecklistToggle,
     this.assignee,
+    this.assignees = const [],
     this.authorPhotoUrl,
     this.originListName,
     this.compactSubtitle,
@@ -260,6 +261,7 @@ class PostItCard extends StatelessWidget {
   final VoidCallback onOpen;
   final ValueChanged<NoteChecklistItem> onChecklistToggle;
   final ListCollaborator? assignee;
+  final List<ListCollaborator> assignees;
   final String? authorPhotoUrl;
   final String? originListName;
   final String? compactSubtitle;
@@ -327,6 +329,7 @@ class PostItCard extends StatelessWidget {
         note: note,
         onToggle: onToggle,
         assignee: assignee,
+        assignees: assignees,
         authorPhotoUrl: authorPhotoUrl,
         originListName: originListName,
         subtitle: compactSubtitle,
@@ -340,6 +343,7 @@ class PostItCard extends StatelessWidget {
                 note: note,
                 onToggle: onToggle,
                 assignee: assignee,
+                assignees: assignees,
                 authorPhotoUrl: authorPhotoUrl,
                 originListName: originListName,
                 foregroundColor: foregroundColor,
@@ -360,6 +364,7 @@ class PostItCard extends StatelessWidget {
                 onOpen: onOpen,
                 onToggle: onToggle,
                 assignee: assignee,
+                assignees: assignees,
                 authorPhotoUrl: authorPhotoUrl,
                 originListName: originListName,
                 contentMaxLines: layout == PostItCardLayout.grid ? null : 7,
@@ -774,6 +779,7 @@ class _NoteBody extends StatelessWidget {
     required this.onOpen,
     required this.onToggle,
     required this.assignee,
+    this.assignees = const [],
     required this.authorPhotoUrl,
     required this.originListName,
     required this.contentMaxLines,
@@ -794,6 +800,7 @@ class _NoteBody extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
+  final List<ListCollaborator> assignees;
   final String? authorPhotoUrl;
   final String? originListName;
   final int? contentMaxLines;
@@ -820,7 +827,9 @@ class _NoteBody extends StatelessWidget {
     final showMetadata = !isGrid || hasBody;
     final showReactionControls = !isGrid && onToggleReaction != null;
     final visibleOriginListName = showMetadata ? originListName : null;
-    final visibleReminder = showMetadata ? note.reminderAt : null;
+    final visibleReminder = showMetadata || note.isRecurring
+        ? note.reminderAt
+        : null;
     final titleRow = Row(
       children: [
         Expanded(
@@ -831,6 +840,8 @@ class _NoteBody extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: foregroundColor,
               fontWeight: FontWeight.w800,
+              height: 1.2,
+              letterSpacing: -0.3,
               decoration: note.isCompleted ? TextDecoration.lineThrough : null,
             ),
           ),
@@ -850,37 +861,72 @@ class _NoteBody extends StatelessWidget {
               ),
             ),
           ),
-        Padding(
-          padding: EdgeInsets.only(right: isGrid ? 0 : 6),
-          child: note.isRecurring
-              ? Tooltip(
-                  message: 'Recordatorio recurrente',
-                  child: Icon(
-                    Icons.repeat_rounded,
-                    key: ValueKey('recurring-note-${note.id}'),
-                    color: foregroundColor,
-                    size: 24,
+        if (!isGrid || !note.isRecurring)
+          Padding(
+            padding: EdgeInsets.only(right: isGrid ? 0 : 6),
+            child: note.isRecurring
+                ? Tooltip(
+                    message: 'Recordatorio recurrente',
+                    child: Icon(
+                      Icons.repeat_rounded,
+                      key: ValueKey('recurring-note-${note.id}'),
+                      color: foregroundColor,
+                      size: 24,
+                    ),
+                  )
+                : AnimatedNoteCheckbox(
+                    value: note.isCompleted,
+                    onChanged: (_) => onToggle(),
+                    activeColor: foregroundColor,
+                    checkColor: note.category == NoteCategory.general
+                        ? Colors.white
+                        : Colors.black87,
                   ),
-                )
-              : Checkbox(
-                  value: note.isCompleted,
-                  onChanged: (_) => onToggle(),
-                  activeColor: foregroundColor,
-                  checkColor: note.category == NoteCategory.general
-                      ? Colors.white
-                      : Colors.black87,
-                  side: BorderSide(color: foregroundColor, width: 1.5),
-                ),
-        ),
+          ),
       ],
     );
-    if (isGrid && !hasBody && assignee == null && !showGridColorIndicator) {
-      return titleRow;
+    final gridHeader = isGrid && note.isRecurring
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                label: 'Recordatorio recurrente',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.repeat_rounded,
+                      key: ValueKey('recurring-note-${note.id}'),
+                      color: foregroundColor.withValues(alpha: 0.85),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      'Recurrente',
+                      style: TextStyle(
+                        color: foregroundColor.withValues(alpha: 0.85),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              titleRow,
+            ],
+          )
+        : titleRow;
+    if (isGrid &&
+        !hasBody &&
+        assignee == null &&
+        !showGridColorIndicator &&
+        visibleReminder == null) {
+      return gridHeader;
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        titleRow,
+        gridHeader,
         if (visibleOriginListName case final listName?) ...[
           _OriginListBadge(
             noteId: note.id,
@@ -933,7 +979,7 @@ class _NoteBody extends StatelessWidget {
                         deltaJson: note.contentDelta,
                         style: gridNoteDescriptionTextStyle(
                           context,
-                          color: foregroundColor.withValues(alpha: 0.9),
+                          color: foregroundColor.withValues(alpha: 0.78),
                         ),
                         linkColor: gridNoteLinkColor(foregroundColor),
                         maxLines: contentMaxLines,
@@ -1004,13 +1050,7 @@ class _NoteBody extends StatelessWidget {
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
-                  note.reminderRecurrence == null
-                      ? DateFormat('dd MMM · HH:mm', 'es').format(reminder)
-                      : reminderRecurrenceLabel(
-                          note.reminderRecurrence!,
-                          reminder,
-                          includeTime: true,
-                        ),
+                  DateFormat('dd MMM · HH:mm', 'es').format(reminder.toLocal()),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1055,7 +1095,11 @@ class _NoteBody extends StatelessWidget {
                     else
                       const SizedBox.shrink(),
                     if (assignee case final person?)
-                      _GridAssignee(noteId: note.id, person: person),
+                      _GridAssignee(
+                        noteId: note.id,
+                        person: person,
+                        assignees: assignees,
+                      ),
                   ],
                 );
               }
@@ -1065,6 +1109,7 @@ class _NoteBody extends StatelessWidget {
                 note: note,
                 authorPhotoUrl: authorPhotoUrl,
                 assignee: assignee,
+                assignees: assignees,
                 foregroundColor: foregroundColor,
                 onAssigneeTap: onAssigneeTap,
               );
@@ -1093,7 +1138,11 @@ class _NoteBody extends StatelessWidget {
                   const Spacer(),
                 if (assignee case final person?) ...[
                   const SizedBox(width: 4),
-                  _AssigneeIndicator(noteId: note.id, person: person),
+                  _AssigneeIndicator(
+                    noteId: note.id,
+                    person: person,
+                    assignees: assignees,
+                  ),
                 ],
               ],
             );
@@ -1855,6 +1904,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
     required this.note,
     required this.onToggle,
     required this.assignee,
+    this.assignees = const [],
     required this.authorPhotoUrl,
     required this.originListName,
     required this.foregroundColor,
@@ -1873,6 +1923,7 @@ class _EditableLargeNoteBody extends StatefulWidget {
   final Note note;
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
+  final List<ListCollaborator> assignees;
   final String? authorPhotoUrl;
   final String? originListName;
   final Color foregroundColor;
@@ -2200,7 +2251,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       checklist: checklist ?? note.checklist,
       authorName: note.authorName,
       assigneeUid: note.assigneeUid,
+      assigneeUids: note.assignedUserIds,
       customAssigneeName: note.customAssigneeName,
+      customAssigneeNames: note.assignedCustomNames,
       attachments: attachments ?? note.photoAttachments,
       reminderAt: note.reminderAt,
       reminderRecurrence: note.reminderRecurrence,
@@ -2345,14 +2398,13 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                 size: 24,
               )
             else
-              Checkbox(
+              AnimatedNoteCheckbox(
                 value: note.isCompleted,
                 onChanged: (_) => widget.onToggle(),
                 activeColor: foregroundColor,
                 checkColor: note.category == NoteCategory.general
                     ? Colors.white
                     : Colors.black87,
-                side: BorderSide(color: foregroundColor, width: 1.5),
               ),
           ],
         ),
@@ -2676,6 +2728,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                       note: note,
                       authorPhotoUrl: widget.authorPhotoUrl,
                       assignee: widget.assignee,
+                      assignees: widget.assignees,
                       foregroundColor: foregroundColor,
                       onAssigneeTap: widget.onAssigneeTap,
                     ),
@@ -3143,6 +3196,7 @@ class _LargeNotePeopleFooter extends StatelessWidget {
     required this.note,
     required this.authorPhotoUrl,
     required this.assignee,
+    this.assignees = const [],
     required this.foregroundColor,
     required this.onAssigneeTap,
   });
@@ -3150,6 +3204,7 @@ class _LargeNotePeopleFooter extends StatelessWidget {
   final Note note;
   final String? authorPhotoUrl;
   final ListCollaborator? assignee;
+  final List<ListCollaborator> assignees;
   final Color foregroundColor;
   final VoidCallback? onAssigneeTap;
 
@@ -3225,6 +3280,7 @@ class _LargeNotePeopleFooter extends StatelessWidget {
                   _AssigneeIndicator(
                     noteId: note.id,
                     person: person,
+                    assignees: assignees,
                     onTap: onAssigneeTap,
                   ),
                 ],
@@ -3307,26 +3363,33 @@ class _GridColorIndicator extends StatelessWidget {
 }
 
 class _GridAssignee extends StatelessWidget {
-  const _GridAssignee({required this.noteId, required this.person});
+  const _GridAssignee({
+    required this.noteId,
+    required this.person,
+    this.assignees = const [],
+  });
 
   final String noteId;
   final ListCollaborator person;
+  final List<ListCollaborator> assignees;
 
   @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: SizedBox.square(
-        key: ValueKey('grid-assignee-$noteId'),
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerRight,
+    child: SizedBox(
+      key: ValueKey('grid-assignee-$noteId'),
+      width:
+          28 +
+          (assignees.length > 1 ? (assignees.length.clamp(1, 3) - 1) * 18 : 0),
+      height: 28,
+      child: _AssigneeIndicator(
+        noteId: noteId,
+        person: person,
+        assignees: assignees,
         dimension: 28,
-        child: _AssigneeIndicator(
-          noteId: noteId,
-          person: person,
-          dimension: 28,
-        ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _CompactNoteBody extends StatelessWidget {
@@ -3334,6 +3397,7 @@ class _CompactNoteBody extends StatelessWidget {
     required this.note,
     required this.onToggle,
     required this.assignee,
+    this.assignees = const [],
     required this.authorPhotoUrl,
     required this.originListName,
     required this.subtitle,
@@ -3345,6 +3409,7 @@ class _CompactNoteBody extends StatelessWidget {
   final Note note;
   final VoidCallback onToggle;
   final ListCollaborator? assignee;
+  final List<ListCollaborator> assignees;
   final String? authorPhotoUrl;
   final String? originListName;
   final String? subtitle;
@@ -3400,14 +3465,13 @@ class _CompactNoteBody extends StatelessWidget {
             ),
           )
         else
-          Checkbox(
+          AnimatedNoteCheckbox(
             value: note.isCompleted,
             onChanged: (_) => onToggle(),
             activeColor: foregroundColor,
             checkColor: note.category == NoteCategory.general
                 ? Colors.white
                 : Colors.black87,
-            side: BorderSide(color: foregroundColor, width: 1.5),
             visualDensity: VisualDensity.compact,
           ),
         SizedBox(width: readOnly || note.isRecurring ? 10 : 2),
@@ -3499,7 +3563,11 @@ class _CompactNoteBody extends StatelessWidget {
         ),
         if (assignee case final person?) ...[
           const SizedBox(width: 8),
-          _CompactAssigneeAvatar(noteId: note.id, person: person),
+          _CompactAssigneeAvatar(
+            noteId: note.id,
+            person: person,
+            assignees: assignees,
+          ),
         ],
         if (showOpenIndicator) ...[
           const SizedBox(width: 8),
@@ -3515,13 +3583,26 @@ class _CompactNoteBody extends StatelessWidget {
 }
 
 class _CompactAssigneeAvatar extends StatelessWidget {
-  const _CompactAssigneeAvatar({required this.noteId, required this.person});
+  const _CompactAssigneeAvatar({
+    required this.noteId,
+    required this.person,
+    this.assignees = const [],
+  });
 
   final String noteId;
   final ListCollaborator person;
 
+  final List<ListCollaborator> assignees;
+
   @override
   Widget build(BuildContext context) {
+    if (assignees.length > 1) {
+      return _AssigneeAvatarStack(
+        noteId: noteId,
+        people: assignees,
+        dimension: 24,
+      );
+    }
     final personLabel = _personLabel(person);
     final label = 'Responsable: $personLabel';
     final photoUrl = person.photoUrl?.trim();
@@ -3642,16 +3723,27 @@ class _AssigneeIndicator extends StatelessWidget {
     required this.noteId,
     required this.person,
     this.dimension = 34,
+    this.assignees = const [],
     this.onTap,
   });
 
   final String noteId;
   final ListCollaborator person;
+  final List<ListCollaborator> assignees;
   final double dimension;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    if (assignees.length > 1) {
+      return _AssigneeAvatarStack(
+        noteId: noteId,
+        people: assignees,
+        dimension: dimension,
+        onTap: onTap,
+        showBadge: true,
+      );
+    }
     final personLabel = _personLabel(person);
     final label = 'Responsable: $personLabel';
     final initial = personLabel.characters.first.toUpperCase();
@@ -3710,6 +3802,121 @@ class _AssigneeIndicator extends StatelessWidget {
                       ),
                     ),
                   ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AssigneeAvatarStack extends StatelessWidget {
+  const _AssigneeAvatarStack({
+    required this.noteId,
+    required this.people,
+    required this.dimension,
+    this.onTap,
+    this.showBadge = false,
+  });
+
+  final String noteId;
+  final List<ListCollaborator> people;
+  final double dimension;
+  final VoidCallback? onTap;
+  final bool showBadge;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = people.take(3).toList();
+    final step = dimension * 0.64;
+    final label = 'Responsables: ${visible.map(_personLabel).join(', ')}';
+    final borderColor = Theme.of(context).colorScheme.surface;
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        button: onTap != null,
+        image: true,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(dimension),
+          child: InkWell(
+            key: ValueKey('assignee-$noteId'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(dimension),
+            child: SizedBox(
+              key: ValueKey('assignee-stack-$noteId'),
+              width: dimension + step * (visible.length - 1),
+              height: dimension,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  for (var index = 0; index < visible.length; index++)
+                    Positioned(
+                      left: index * step,
+                      top: 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: borderColor, width: 1.5),
+                        ),
+                        child: CircleAvatar(
+                          key: index == 0
+                              ? ValueKey('assignee-avatar-$noteId')
+                              : ValueKey(
+                                  'assignee-avatar-$noteId-${visible[index].uid}',
+                                ),
+                          radius: (dimension - 3) / 2,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primaryContainer,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimaryContainer,
+                          foregroundImage:
+                              visible[index].photoUrl?.trim().isNotEmpty == true
+                              ? _avatarImageProvider(
+                                  context,
+                                  visible[index].photoUrl!.trim(),
+                                  dimension,
+                                )
+                              : null,
+                          onForegroundImageError:
+                              visible[index].photoUrl?.trim().isNotEmpty == true
+                              ? (_, _) {}
+                              : null,
+                          child: Text(
+                            _personLabel(
+                              visible[index],
+                            ).characters.first.toUpperCase(),
+                            style: TextStyle(
+                              fontSize: dimension * .34,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (showBadge)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: const BoxDecoration(
+                          color: AppTheme.ink,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.assignment_ind_rounded,
+                          size: 9,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

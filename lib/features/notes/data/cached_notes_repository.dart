@@ -553,7 +553,9 @@ class CachedNotesRepository
         color: synchronizedDraft.color,
         authorName: synchronizedDraft.authorName,
         assigneeUid: synchronizedDraft.assigneeUid,
+        assigneeUids: synchronizedDraft.assignedUserIds,
         customAssigneeName: synchronizedDraft.customAssigneeName,
+        customAssigneeNames: synchronizedDraft.assignedCustomNames,
         attachments: synchronizedDraft.photoAttachments,
         category: synchronizedDraft.category,
         checklist: synchronizedDraft.checklist,
@@ -1179,6 +1181,12 @@ class CachedNotesRepository
       ..remove('expectedRevision')
       ..remove('clientMutationId')
       ..['updatedAt'] = DateTime.now().toIso8601String();
+    if (changes.containsKey('assigneeUid') &&
+        !changes.containsKey('assigneeUids')) {
+      json['assigneeUids'] = [
+        if (changes['assigneeUid'] case final String uid) uid,
+      ];
+    }
     return Note.fromJson(json);
   }
 

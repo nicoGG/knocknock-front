@@ -243,7 +243,9 @@ class LocalNotesRepository
       checklist: draft.checklist,
       authorName: draft.authorName,
       assigneeUid: draft.assigneeUid,
+      assigneeUids: draft.assignedUserIds,
       customAssigneeName: draft.customAssigneeName,
+      customAssigneeNames: draft.assignedCustomNames,
       attachments: draft.photoAttachments,
       isCompleted: false,
       sortOrder: -now.microsecondsSinceEpoch,
@@ -324,9 +326,19 @@ class LocalNotesRepository
                 .toList(),
       reactions: existing.reactions,
       authorName: changes['authorName'] as String? ?? existing.authorName,
+      assigneeUids: changes.containsKey('assigneeUids')
+          ? (changes['assigneeUids'] as List).cast<String>()
+          : changes.containsKey('assigneeUid')
+          ? [if (changes['assigneeUid'] case final String uid) uid]
+          : existing.assignedUserIds,
       assigneeUid: changes.containsKey('assigneeUid')
           ? changes['assigneeUid'] as String?
           : existing.assigneeUid,
+      customAssigneeNames: changes.containsKey('customAssigneeNames')
+          ? (changes['customAssigneeNames'] as List).cast<String>()
+          : changes.containsKey('customAssigneeName')
+          ? null
+          : existing.customAssigneeNames,
       customAssigneeName: changes.containsKey('customAssigneeName')
           ? changes['customAssigneeName'] as String?
           : existing.customAssigneeName,

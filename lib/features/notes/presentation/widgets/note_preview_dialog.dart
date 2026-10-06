@@ -1,3 +1,5 @@
+import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -416,18 +418,22 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
 
   Future<void> _editAssignee() async {
     final initialNote = widget.noteProvider();
-    final selection = await showModalBottomSheet<_AssigneeSelection>(
+    final selection = await showModalBottomSheet<AssigneeSelection>(
       context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+      ),
       showDragHandle: true,
-      builder: (sheetContext) => _PreviewAssigneePickerSheet(
-        selectedUid: initialNote.assigneeUid,
-        customName: initialNote.customAssigneeName,
+      builder: (sheetContext) => AssigneePickerSheet(
+        selectedUids: initialNote.assignedUserIds,
+        customNames: initialNote.assignedCustomNames,
         assignees: widget.assigneesProvider(),
       ),
     );
     if (!mounted || selection == null) return;
-    if (selection.uid == initialNote.assigneeUid &&
-        selection.customName == initialNote.customAssigneeName) {
+    if (listEquals(selection.uids, initialNote.assignedUserIds) &&
+        listEquals(selection.customNames, initialNote.assignedCustomNames)) {
       return;
     }
     final note = widget.noteProvider();
@@ -436,7 +442,9 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
       _draftFromNote(
         note,
         assigneeUid: selection.uid,
+        assigneeUids: selection.uids,
         customAssigneeName: selection.customName,
+        customAssigneeNames: selection.customNames,
         replaceAssignee: true,
       ),
     );
@@ -786,7 +794,9 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   late NoteColor _color;
   late NoteCategory _category;
   late String? _assigneeUid;
+  late List<String> _assigneeUids;
   late String? _customAssigneeName;
+  late List<String> _customAssigneeNames;
   late List<NoteAttachment> _attachments;
   late DateTime? _reminderAt;
   late ReminderRecurrence? _reminderRecurrence;
@@ -816,7 +826,9 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     _color = note.color;
     _category = note.category;
     _assigneeUid = note.assigneeUid;
+    _assigneeUids = List.of(note.assignedUserIds);
     _customAssigneeName = note.customAssigneeName;
+    _customAssigneeNames = List.of(note.assignedCustomNames);
     _attachments = [...note.photoAttachments];
     _reminderAt = note.reminderAt;
     _reminderRecurrence = note.reminderRecurrence;
@@ -1258,20 +1270,29 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   ListCollaborator? get _selectedAssignee {
-    for (final person in widget.assignees) {
-      if (person.uid == _assigneeUid) return person;
-    }
-    final customName = _customAssigneeName?.trim();
-    if (customName != null && customName.isNotEmpty) {
-      return ListCollaborator(
-        uid: 'custom:new-note',
-        email: '',
-        displayName: customName,
-        role: ListMemberRole.editor,
-        joinedAt: DateTime.now(),
-      );
-    }
-    return null;
+    final people = [
+      ...widget.assignees.where((person) => _assigneeUids.contains(person.uid)),
+      for (final name in _customAssigneeNames)
+        ListCollaborator(
+          uid: 'custom:$name',
+          email: '',
+          displayName: name,
+          role: ListMemberRole.editor,
+          joinedAt: DateTime.now(),
+        ),
+    ];
+    if (people.isEmpty) return null;
+    final first = people.first;
+    return ListCollaborator(
+      uid: first.uid,
+      email: first.email,
+      displayName: people
+          .map((person) => _collaboratorLabel(person))
+          .join(', '),
+      photoUrl: first.photoUrl,
+      role: first.role,
+      joinedAt: first.joinedAt,
+    );
   }
 
   void _expandDescription() {
@@ -1373,19 +1394,25 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   Future<void> _pickAssignee() async {
-    final selection = await showModalBottomSheet<_AssigneeSelection>(
+    final selection = await showModalBottomSheet<AssigneeSelection>(
       context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+      ),
       showDragHandle: true,
-      builder: (sheetContext) => _PreviewAssigneePickerSheet(
-        selectedUid: _assigneeUid,
-        customName: _customAssigneeName,
+      builder: (sheetContext) => AssigneePickerSheet(
+        selectedUids: _assigneeUids,
+        customNames: _customAssigneeNames,
         assignees: widget.assignees,
       ),
     );
     if (!mounted || selection == null) return;
     setState(() {
       _assigneeUid = selection.uid;
+      _assigneeUids = selection.uids;
       _customAssigneeName = selection.customName;
+      _customAssigneeNames = selection.customNames;
     });
   }
 
@@ -1446,7 +1473,9 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
             ? _authorController.text.trim()
             : note.authorName,
         assigneeUid: _assigneeUid,
+        assigneeUids: _assigneeUids,
         customAssigneeName: _customAssigneeName,
+        customAssigneeNames: _customAssigneeNames,
         attachments: _attachments,
         reminderAt: _reminderAt,
         reminderRecurrence: _reminderRecurrence,
@@ -1697,7 +1726,9 @@ NoteDraft _draftFromNote(
   NoteColor? color,
   NoteCategory? category,
   String? assigneeUid,
+  List<String>? assigneeUids,
   String? customAssigneeName,
+  List<String>? customAssigneeNames,
   bool replaceAssignee = false,
   List<NoteAttachment>? attachments,
   bool replaceAttachments = false,
@@ -1713,6 +1744,12 @@ NoteDraft _draftFromNote(
   checklist: List.of(note.checklist),
   authorName: note.authorName,
   assigneeUid: replaceAssignee ? assigneeUid : note.assigneeUid,
+  assigneeUids: replaceAssignee
+      ? assigneeUids ?? const []
+      : note.assignedUserIds,
+  customAssigneeNames: replaceAssignee
+      ? customAssigneeNames ?? const []
+      : note.assignedCustomNames,
   customAssigneeName: replaceAssignee
       ? customAssigneeName
       : note.customAssigneeName,
@@ -2265,157 +2302,6 @@ class _PreviewCategoryPickerSheet extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _AssigneeSelection {
-  const _AssigneeSelection({this.uid, this.customName});
-
-  final String? uid;
-  final String? customName;
-}
-
-class _PreviewAssigneePickerSheet extends StatelessWidget {
-  const _PreviewAssigneePickerSheet({
-    required this.selectedUid,
-    required this.customName,
-    required this.assignees,
-  });
-
-  final String? selectedUid;
-  final String? customName;
-  final List<ListCollaborator> assignees;
-
-  Future<void> _pickCustomName(BuildContext context) async {
-    var enteredName = customName ?? '';
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Responsable personalizado'),
-        content: TextFormField(
-          key: const ValueKey('custom-assignee-name-field'),
-          initialValue: enteredName,
-          autofocus: true,
-          maxLength: 50,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(
-            labelText: 'Nombre',
-            hintText: 'Ej. Camila',
-            helperText: 'No necesita tener una cuenta en NockNock.',
-          ),
-          onChanged: (value) => enteredName = value,
-          onFieldSubmitted: (value) {
-            final normalized = value.trim();
-            if (normalized.isNotEmpty) {
-              Navigator.pop(dialogContext, normalized);
-            }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const ValueKey('save-custom-assignee-button'),
-            onPressed: () {
-              final normalized = enteredName.trim();
-              if (normalized.isNotEmpty) {
-                Navigator.pop(dialogContext, normalized);
-              }
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (!context.mounted || name == null) return;
-    Navigator.pop(context, _AssigneeSelection(customName: name));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.only(bottom: 12),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-            child: Text(
-              'Asignar responsable',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ),
-          ListTile(
-            key: const ValueKey('preview-assignee-unassigned'),
-            leading: const CircleAvatar(child: Icon(Icons.person_off_outlined)),
-            title: const Text('Sin responsable'),
-            trailing: selectedUid == null && customName == null
-                ? const Icon(Icons.check_rounded)
-                : null,
-            onTap: () => Navigator.pop(context, const _AssigneeSelection()),
-          ),
-          ListTile(
-            key: const ValueKey('preview-assignee-custom'),
-            leading: const CircleAvatar(
-              child: Icon(Icons.manage_accounts_outlined),
-            ),
-            title: Text(
-              customName?.trim().isNotEmpty == true
-                  ? customName!.trim()
-                  : 'Responsable personalizado',
-            ),
-            subtitle: const Text('Agrega a alguien aunque no use NockNock.'),
-            trailing: customName?.trim().isNotEmpty == true
-                ? const Icon(Icons.check_rounded)
-                : null,
-            onTap: () => _pickCustomName(context),
-          ),
-          if (assignees.isEmpty)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 14, 20, 18),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.group_add_outlined),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Aún no hay personas en esta lista. Invita colaboradores para poder asignarles la nota.',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          for (final person in assignees)
-            ListTile(
-              key: ValueKey('preview-assignee-${person.uid}'),
-              leading: CircleAvatar(
-                foregroundImage: person.photoUrl?.trim().isNotEmpty == true
-                    ? NetworkImage(person.photoUrl!.trim())
-                    : null,
-                onForegroundImageError:
-                    person.photoUrl?.trim().isNotEmpty == true
-                    ? (_, _) {}
-                    : null,
-                child: Text(_collaboratorInitial(person)),
-              ),
-              title: Text(_collaboratorLabel(person)),
-              subtitle: person.email.trim().isEmpty
-                  ? null
-                  : Text(person.email.trim()),
-              trailing: selectedUid == person.uid
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-              onTap: () =>
-                  Navigator.pop(context, _AssigneeSelection(uid: person.uid)),
-            ),
-        ],
       ),
     );
   }

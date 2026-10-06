@@ -11,6 +11,46 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  test(
+    'mixed custom and invited assignees survive editing and reopening',
+    () async {
+      final repository = LocalNotesRepository();
+      final note = await repository.createNote(
+        'home',
+        const NoteDraft(
+          title: 'Tarea',
+          content: '',
+          color: NoteColor.blue,
+          authorName: 'Nico',
+          assigneeUids: ['user-1'],
+          customAssigneeName: 'Camila',
+          customAssigneeNames: ['Camila', 'Pedro'],
+        ),
+      );
+      await repository.updateNote(note.id, {'title': 'Actualizada'});
+      repository.dispose();
+      final reopened = LocalNotesRepository();
+      final stored = (await reopened.fetchNotes(
+        'home',
+      )).firstWhere((entry) => entry.id == note.id);
+      expect(stored.assignedUserIds, ['user-1']);
+      expect(stored.assignedCustomNames, ['Camila', 'Pedro']);
+      await reopened.updateNote(note.id, {
+        'assigneeUids': ['user-1', 'user-2'],
+        'customAssigneeName': 'Camila',
+        'customAssigneeNames': ['Camila'],
+      });
+      final updated = (await reopened.fetchNotes(
+        'home',
+      )).firstWhere((entry) => entry.id == note.id);
+      expect(updated.assignedCustomNames, ['Camila']);
+      expect(updated.copyWith(isCompleted: true).assignedCustomNames, [
+        'Camila',
+      ]);
+      reopened.dispose();
+    },
+  );
+
   test('guest changes remain available after reopening the repository', () async {
     final repository = LocalNotesRepository();
     final initialLists = await repository.fetchLists();
@@ -38,6 +78,7 @@ void main() {
         ],
         authorName: 'Invitado',
         assigneeUid: 'local-user',
+        assigneeUids: ['local-user', 'second-user'],
       ),
     );
     await repository.updateNote(note.id, {
@@ -62,6 +103,7 @@ void main() {
     ]);
     expect(storedNotes.single.checklist.last.indent, 1);
     expect(storedNotes.single.assigneeUid, 'local-user');
+    expect(storedNotes.single.assignedUserIds, ['local-user', 'second-user']);
 
     await reopenedRepository.deleteNote(note.id);
     expect(await reopenedRepository.fetchNotes(list.id), isEmpty);
@@ -71,6 +113,35 @@ void main() {
     expect(await afterDeletionRepository.fetchNotes(list.id), isEmpty);
     afterDeletionRepository.dispose();
   });
+
+  test(
+    'plural assignment can be cleared without reviving its legacy UID',
+    () async {
+      final repository = LocalNotesRepository();
+      final note = await repository.createNote(
+        'home',
+        const NoteDraft(
+          title: 'Compartida',
+          content: '',
+          color: NoteColor.blue,
+          authorName: 'Invitado',
+          assigneeUid: 'first',
+          assigneeUids: ['first', 'second'],
+        ),
+      );
+      final updated = await repository.updateNote(note.id, {
+        'assigneeUids': ['second'],
+      });
+      expect(updated.assigneeUid, 'second');
+      final cleared = await repository.updateNote(note.id, {
+        'assigneeUids': <String>[],
+      });
+      expect(cleared.assignedUserIds, isEmpty);
+      expect(cleared.assigneeUid, isNull);
+      expect(Note.fromJson(cleared.toJson()).assignedUserIds, isEmpty);
+      repository.dispose();
+    },
+  );
 
   test('clears every guest list and note from local storage', () async {
     final repository = LocalNotesRepository();

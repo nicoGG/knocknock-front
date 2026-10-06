@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nocknock/core/widgets/ambient_page_background.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/logic/notes_cubit.dart';
 import 'package:nocknock/features/notes/logic/notes_error_message.dart';
@@ -193,108 +194,153 @@ class _TrashPageState extends State<TrashPage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Papelera')),
-      body: FutureBuilder<List<Note>>(
-        future: _trashFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const _TrashLoadingState();
-          }
-          if (snapshot.hasError) {
-            return _TrashMessage(
-              icon: Icons.cloud_off_outlined,
-              title: 'No pudimos abrir la papelera',
-              detail: notesErrorMessage(snapshot.error!),
-              actionLabel: 'Reintentar',
-              onAction: _reload,
-            );
-          }
-          final notes = snapshot.data ?? const <Note>[];
-          if (notes.isEmpty) {
-            return const _TrashMessage(
-              icon: Icons.delete_sweep_outlined,
-              title: 'La papelera está vacía',
-              detail: 'Las notas eliminadas aparecerán aquí durante 7 días.',
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: () async => _reload(),
-            child: ListView(
-              key: const ValueKey('trash-list'),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-              children: [
-                Container(
-                  key: const ValueKey('trash-retention-notice'),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: colorScheme.secondaryContainer.withValues(
-                      alpha: 0.72,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const AmbientPageBackground(),
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            title: const Text(
+              'Papelera',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.45,
+              ),
+            ),
+          ),
+          body: SafeArea(
+            top: false,
+            child: FutureBuilder<List<Note>>(
+              future: _trashFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const _TrashLoadingState();
+                }
+                if (snapshot.hasError) {
+                  return _TrashMessage(
+                    icon: Icons.cloud_off_outlined,
+                    title: 'No pudimos abrir la papelera',
+                    detail: notesErrorMessage(snapshot.error!),
+                    actionLabel: 'Reintentar',
+                    onAction: _reload,
+                  );
+                }
+                final notes = snapshot.data ?? const <Note>[];
+                if (notes.isEmpty) {
+                  return _TrashMessage(
+                    icon: Icons.delete_outline_rounded,
+                    title: 'La papelera está vacía',
+                    detail:
+                        'Todo en orden. Tus notas siguen donde deben estar.',
+                    actionLabel: 'Volver a mis notas',
+                    onAction: () => Navigator.of(context).maybePop(),
+                  );
+                }
+                return RefreshIndicator(
+                  onRefresh: () async => _reload(),
+                  child: ListView(
+                    key: const ValueKey('trash-list'),
+                    padding: EdgeInsets.fromLTRB(
+                      MediaQuery.sizeOf(context).width > 720
+                          ? (MediaQuery.sizeOf(context).width - 680) / 2
+                          : 18,
+                      12,
+                      MediaQuery.sizeOf(context).width > 720
+                          ? (MediaQuery.sizeOf(context).width - 680) / 2
+                          : 18,
+                      28,
                     ),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.schedule_rounded,
-                        color: colorScheme.onSecondaryContainer,
+                      Text(
+                        notes.length == 1
+                            ? '1 nota para recuperar'
+                            : '${notes.length} notas para recuperar',
+                        style: Theme.of(context).textTheme.headlineSmall,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Las notas se eliminan definitivamente 7 días después de enviarlas a la papelera.',
-                          style: TextStyle(
-                            color: colorScheme.onSecondaryContainer,
-                            height: 1.35,
-                            fontWeight: FontWeight.w600,
+                      const SizedBox(height: 6),
+                      Text(
+                        'Dales otra oportunidad antes de que se eliminen.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 20),
+                      Container(
+                        key: const ValueKey('trash-retention-notice'),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: colorScheme.secondaryContainer.withValues(
+                            alpha: 0.72,
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.schedule_rounded,
+                              color: colorScheme.onSecondaryContainer,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Las notas se eliminan definitivamente 7 días después de enviarlas a la papelera.',
+                                style: TextStyle(
+                                  color: colorScheme.onSecondaryContainer,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          key: const ValueKey('empty-trash-button'),
+                          onPressed:
+                              _isEmptying ||
+                                  _restoringIds.isNotEmpty ||
+                                  _deletingIds.isNotEmpty
+                              ? null
+                              : () => _emptyTrash(notes),
+                          icon: _isEmptying
+                              ? const SizedBox.square(
+                                  dimension: 17,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.delete_forever_rounded),
+                          label: const Text('Vaciar papelera'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: colorScheme.error,
                           ),
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      for (final note in notes) ...[
+                        _TrashNoteCard(
+                          note: note,
+                          listName: _listName(note.boardId),
+                          isRestoring: _restoringIds.contains(note.id),
+                          isDeleting: _deletingIds.contains(note.id),
+                          isDisabled: _isEmptying,
+                          onRestore: () => _restore(note),
+                          onDelete: () => _deletePermanently(note),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                     ],
                   ),
-                ),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    key: const ValueKey('empty-trash-button'),
-                    onPressed:
-                        _isEmptying ||
-                            _restoringIds.isNotEmpty ||
-                            _deletingIds.isNotEmpty
-                        ? null
-                        : () => _emptyTrash(notes),
-                    icon: _isEmptying
-                        ? const SizedBox.square(
-                            dimension: 17,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete_forever_rounded),
-                    label: const Text('Vaciar papelera'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: colorScheme.error,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                for (final note in notes) ...[
-                  _TrashNoteCard(
-                    note: note,
-                    listName: _listName(note.boardId),
-                    isRestoring: _restoringIds.contains(note.id),
-                    isDeleting: _deletingIds.contains(note.id),
-                    isDisabled: _isEmptying,
-                    onRestore: () => _restore(note),
-                    onDelete: () => _deletePermanently(note),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ],
+                );
+              },
             ),
-          );
-        },
-      ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -835,23 +881,164 @@ class _TrashMessage extends StatelessWidget {
   final VoidCallback? onAction;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 54, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(height: 16),
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          Text(detail, textAlign: TextAlign.center),
-          if (actionLabel != null && onAction != null) ...[
-            const SizedBox(height: 18),
-            FilledButton(onPressed: onAction, child: Text(actionLabel!)),
-          ],
-        ],
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ExcludeSemantics(
+                child: SizedBox(
+                  width: 164,
+                  height: 152,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 152,
+                        height: 152,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              colors.primary.withValues(alpha: 0.18),
+                              colors.primary.withValues(alpha: 0),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Transform.rotate(
+                        angle: -0.16,
+                        child: Container(
+                          width: 88,
+                          height: 104,
+                          decoration: BoxDecoration(
+                            color: colors.primaryContainer.withValues(
+                              alpha: 0.6,
+                            ),
+                            borderRadius: BorderRadius.circular(22),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Transform.rotate(
+                        angle: 0.07,
+                        child: Container(
+                          width: 88,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                colors.surfaceContainerHigh,
+                                colors.surfaceContainer,
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(22),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.28),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: colors.shadow.withValues(alpha: 0.12),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Icon(icon, size: 42, color: colors.primary),
+                        ),
+                      ),
+                      if (actionLabel == 'Volver a mis notas')
+                        Positioned(
+                          right: 18,
+                          top: 18,
+                          child: CircleAvatar(
+                            radius: 17,
+                            backgroundColor: colors.primaryContainer,
+                            child: Icon(
+                              Icons.check_rounded,
+                              size: 20,
+                              color: colors.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall?.copyWith(height: 1.2),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                detail,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  height: 1.5,
+                ),
+              ),
+              if (actionLabel == 'Volver a mis notas') ...[
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerLow.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: colors.outlineVariant.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.history_rounded,
+                        color: colors.primary,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Cuando elimines una nota, tendrás 7 días para recuperarla aquí.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (actionLabel != null && onAction != null) ...[
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: onAction,
+                  icon: Icon(
+                    actionLabel == 'Volver a mis notas'
+                        ? Icons.arrow_back_rounded
+                        : Icons.refresh_rounded,
+                    size: 18,
+                  ),
+                  label: Text(actionLabel!),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }

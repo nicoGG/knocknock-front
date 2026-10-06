@@ -131,6 +131,37 @@ void main() {
     );
   });
 
+  testWidgets('title-only recurring grid card shows next reminder date', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 180,
+              height: 190,
+              child: PostItCard(
+                note: _recurringNote(),
+                layout: PostItCardLayout.grid,
+                onToggle: () {},
+                onPin: () {},
+                onOpen: () {},
+                onChecklistToggle: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey('grid-reminder-recurring-note')),
+      findsOneWidget,
+    );
+    expect(find.text('05 sept · 08:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('recurrence setup stays usable on a narrow dark screen', (
     tester,
   ) async {

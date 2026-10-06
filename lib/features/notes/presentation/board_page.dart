@@ -3,11 +3,11 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:nocknock/features/notes/presentation/widgets/editable_list_title.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
 import 'package:nocknock/features/auth/data/auth_repository.dart';
@@ -104,6 +104,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   _BoardScope _scope = _BoardScope.list;
   BoardViewMode _viewMode = BoardViewMode.grid;
   bool _completedSectionExpanded = true;
+  bool _isEditingListTitle = false;
   late String _activePreferenceListId;
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
@@ -112,6 +113,8 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   late final Animation<double> _fabScale;
   late final AnimationController _contentTransitionController;
   late final Animation<double> _contentOpacity;
+  final ScrollController _boardScrollController = ScrollController();
+  Object? _lastAutomaticPaginationRequest;
   final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
   late final BoardFilterOrderController _filterOrderController =
       BoardFilterOrderController();
@@ -203,6 +206,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     _listShortcutsController
       ..removeListener(_refreshShortcuts)
       ..dispose();
+    _boardScrollController.dispose();
     _appBarScrollProgress.dispose();
     super.dispose();
   }
@@ -268,6 +272,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
           previous.lists != current.lists,
       listener: (context, state) {
         if (state.selectedListId != _activePreferenceListId) {
+          _isEditingListTitle = false;
           _restoreBoardPreferences(state.selectedListId);
         }
         _scheduleActiveListProtectionSync(state);
@@ -278,6 +283,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         }
       },
       builder: (context, state) {
+        _scheduleBoardPagination(state);
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
         final isSignedIn = context.read<AuthRepository>().currentUser != null;
@@ -302,7 +308,10 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             ? _assignedToCurrentUser(scopedNotes)
             : scopedNotes;
         final statusFilteredNotes = _filtered(scopeNotes);
-        final categoryCounts = _categoryCounts(statusFilteredNotes);
+        final facetNotes = _filter == NoteFilter.completed
+            ? statusFilteredNotes
+            : statusFilteredNotes.where((note) => !note.isCompleted).toList();
+        final categoryCounts = _categoryCounts(facetNotes);
         final selectedCategory = categoryCounts.containsKey(_categoryFilter)
             ? _categoryFilter
             : null;
@@ -312,7 +321,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                   .where((note) => note.category == selectedCategory)
                   .toList();
         final assigneeFilters = _assigneeFilters(
-          categoryFilteredNotes,
+          selectedCategory == null
+              ? facetNotes
+              : facetNotes
+                    .where((note) => note.category == selectedCategory)
+                    .toList(),
           state.lists,
         );
         final selectedAssigneeUid =
@@ -325,8 +338,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             ? categoryFilteredNotes
             : categoryFilteredNotes
                   .where(
-                    (note) =>
-                        noteAssigneeFilterKey(note) == selectedAssigneeUid,
+                    (note) => noteAssigneeFilterKeys(
+                      note,
+                    ).contains(selectedAssigneeUid),
                   )
                   .toList();
         final isPinnedScope = _scope == _BoardScope.pinned;
@@ -445,6 +459,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                               key: const ValueKey('board-scroll-view'),
                               child: CustomScrollView(
                                 key: const ValueKey('masonry-grid-scroll-view'),
+                                controller: _boardScrollController,
                                 scrollCacheExtent: ScrollCacheExtent.pixels(
                                   _viewMode == BoardViewMode.grid
                                       ? (MediaQuery.sizeOf(context).height *
@@ -491,6 +506,13 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                                               'board-header-repaint-boundary',
                                             ),
                                             child: _BoardHeader(
+                                              isEditingTitle:
+                                                  _isEditingListTitle,
+                                              onEditingTitleChanged:
+                                                  (editing) => setState(
+                                                    () => _isEditingListTitle =
+                                                        editing,
+                                                  ),
                                               title: switch (_scope) {
                                                 _BoardScope.list =>
                                                   state.selectedList?.name ??

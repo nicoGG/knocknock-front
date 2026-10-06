@@ -64,6 +64,40 @@ void main() {
     );
   });
 
+  testWidgets('update dialog supports small screens and large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final preferences = await SharedPreferences.getInstance();
+    final gateway = _FakePlayUpdateGateway(
+      check: const PlayUpdateCheck(
+        updateAvailable: true,
+        flexibleUpdateAllowed: false,
+        downloaded: false,
+      ),
+    );
+    addTearDown(gateway.dispose);
+    await tester.pumpWidget(_app(preferences: preferences, gateway: gateway));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      find.text('Te llevaremos a Google Play para actualizar la app.'),
+      findsOneWidget,
+    );
+    final later = find.byKey(const Key('google-play-update-later'));
+    await tester.ensureVisible(later);
+    await tester.pumpAndSettle();
+    await tester.tap(later);
+    await tester.pumpAndSettle();
+    expect(preferences.getInt(googlePlayUpdateSnoozedAtKey), isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('snoozes the prompt for 24 hours', (tester) async {
     final preferences = await SharedPreferences.getInstance();
     final gateway = _FakePlayUpdateGateway(
@@ -80,6 +114,7 @@ void main() {
       _app(preferences: preferences, gateway: gateway, now: () => now),
     );
     await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('google-play-update-later')));
     await tester.pump();
 

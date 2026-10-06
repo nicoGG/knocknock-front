@@ -152,6 +152,42 @@ extension _BoardPageContent on _BoardPageState {
     );
   }
 
+  void _scheduleBoardPagination(NotesState state) {
+    if (_scope != _BoardScope.list ||
+        state.status != NotesStatus.ready ||
+        !state.hasMoreNotes ||
+        state.isLoadingMoreNotes) {
+      return;
+    }
+    final request = (
+      state.selectedListId,
+      state.nextNotesCursor,
+      _filter,
+      _categoryFilter,
+      _assigneeFilterUid,
+      _viewMode,
+      _completedSectionExpanded,
+    );
+    if (_lastAutomaticPaginationRequest == request) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_boardScrollController.hasClients) return;
+      final cubit = context.read<NotesCubit>();
+      if (_scope != _BoardScope.list ||
+          cubit.state.selectedListId != state.selectedListId ||
+          cubit.state.nextNotesCursor != state.nextNotesCursor ||
+          cubit.state.isLoadingMoreNotes ||
+          !cubit.state.hasMoreNotes ||
+          _lastAutomaticPaginationRequest == request ||
+          _boardScrollController.position.extentAfter >= 480) {
+        return;
+      }
+      // A filtered/short page may not produce another scroll event. Continue
+      // filling the viewport, but never automatically retry a failed cursor.
+      _lastAutomaticPaginationRequest = request;
+      unawaited(cubit.loadMoreNotes());
+    });
+  }
+
   bool _handleBoardScroll(ScrollNotification notification) {
     _updateAppBarParallax(notification);
     if (notification.depth == 0 &&
@@ -202,48 +238,55 @@ extension _BoardPageContent on _BoardPageState {
         ? currentUser?.photoUrl?.trim()
         : null;
     final collaboratorPhoto = author?.photoUrl?.trim();
-    return _NoteCompletionTransition(
-      key: ValueKey('note-completion-transition-${note.id}'),
-      note: note,
-      removesFromCurrentFilter: switch (_filter) {
-        NoteFilter.all => false,
-        NoteFilter.pending => !note.isCompleted,
-        NoteFilter.completed => note.isCompleted,
-      },
-      onToggle: () => context.read<NotesCubit>().toggleNote(note),
-      builder: (context, displayedNote, onToggle) => PostItCard(
-        note: displayedNote,
-        layout: layout,
-        originListName:
-            _scope == _BoardScope.assignedToMe ||
-                _scope == _BoardScope.pinned ||
-                _scope == _BoardScope.withReminder
-            ? noteList?.name ?? 'Lista desconocida'
-            : null,
-        assignee: assignee,
-        authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
-            ? currentUserPhoto
-            : collaboratorPhoto,
-        onToggle: onToggle,
-        onPin: () {
-          _playBoardTapSound();
-          HapticFeedback.lightImpact();
-          context.read<NotesCubit>().togglePin(note);
+    return _NoteFilterEntrance(
+      animation: _contentOpacity,
+      motionId: note.id,
+      child: _NoteCompletionTransition(
+        key: ValueKey('note-completion-transition-${note.id}'),
+        note: note,
+        removesFromCurrentFilter: switch (_filter) {
+          NoteFilter.all => true,
+          NoteFilter.pending => !note.isCompleted,
+          NoteFilter.completed => note.isCompleted,
         },
-        onOpen: () {
-          unawaited(_openNotePreview(note));
-        },
-        onChecklistToggle: (item) {
-          HapticFeedback.selectionClick();
-          context.read<NotesCubit>().toggleChecklistItem(note, item);
-        },
-        attachmentLoader: note.photoAttachments.isEmpty
-            ? null
-            : (attachmentId) =>
-                  context.read<NotesCubit>().loadAttachment(note, attachmentId),
-        completedChecklistExpanded: completedChecklistExpanded,
-        onCompletedChecklistExpansionChanged:
-            onCompletedChecklistExpansionChanged,
+        onToggle: () => context.read<NotesCubit>().toggleNote(note),
+        builder: (context, displayedNote, onToggle) => PostItCard(
+          note: displayedNote,
+          layout: layout,
+          originListName:
+              _scope == _BoardScope.assignedToMe ||
+                  _scope == _BoardScope.pinned ||
+                  _scope == _BoardScope.withReminder
+              ? noteList?.name ?? 'Lista desconocida'
+              : null,
+          assignee: assignee,
+          assignees: resolveNoteAssignees(displayedNote, collaborators),
+          authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
+              ? currentUserPhoto
+              : collaboratorPhoto,
+          onToggle: onToggle,
+          onPin: () {
+            _playBoardTapSound();
+            HapticFeedback.lightImpact();
+            context.read<NotesCubit>().togglePin(note);
+          },
+          onOpen: () {
+            unawaited(_openNotePreview(note));
+          },
+          onChecklistToggle: (item) {
+            HapticFeedback.selectionClick();
+            context.read<NotesCubit>().toggleChecklistItem(note, item);
+          },
+          attachmentLoader: note.photoAttachments.isEmpty
+              ? null
+              : (attachmentId) => context.read<NotesCubit>().loadAttachment(
+                  note,
+                  attachmentId,
+                ),
+          completedChecklistExpanded: completedChecklistExpanded,
+          onCompletedChecklistExpansionChanged:
+              onCompletedChecklistExpansionChanged,
+        ),
       ),
     );
   }
@@ -262,7 +305,6 @@ extension _BoardPageContent on _BoardPageState {
       for (final category in visibleCategories) category: 0,
     };
     for (final note in notes) {
-      if (note.isCompleted) continue;
       unorderedCounts.update(
         note.category,
         (count) => count + 1,
@@ -290,15 +332,14 @@ extension _BoardPageContent on _BoardPageState {
     final counts = <String, int>{};
     final customNamesByKey = <String, String>{};
     for (final note in notes) {
-      final assigneeKey = noteAssigneeFilterKey(note);
-      if (assigneeKey == null) continue;
-      counts.putIfAbsent(assigneeKey, () => 0);
-      if (!note.isCompleted) {
-        counts.update(assigneeKey, (count) => count + 1);
-      }
-      final customName = note.customAssigneeName?.trim();
-      if (customName != null && customName.isNotEmpty) {
-        customNamesByKey.putIfAbsent(assigneeKey, () => customName);
+      for (final assigneeKey in noteAssigneeFilterKeys(note)) {
+        counts.update(assigneeKey, (count) => count + 1, ifAbsent: () => 1);
+        final customName = note.assignedCustomNames
+            .where((name) => 'custom:${name.toLowerCase()}' == assigneeKey)
+            .firstOrNull;
+        if (customName != null && customName.isNotEmpty) {
+          customNamesByKey.putIfAbsent(assigneeKey, () => customName);
+        }
       }
     }
 
@@ -327,7 +368,9 @@ extension _BoardPageContent on _BoardPageState {
   List<Note> _assignedToCurrentUser(List<Note> notes) {
     final userId = context.read<AuthRepository>().currentUser?.id;
     return notes
-        .where((note) => userId != null && note.assigneeUid == userId)
+        .where(
+          (note) => userId != null && note.assignedUserIds.contains(userId),
+        )
         .toList();
   }
 
@@ -563,6 +606,7 @@ extension _BoardPageContent on _BoardPageState {
                 enableHero: false,
                 originListName: sourceList?.name,
                 assignee: assignee,
+                assignees: resolveNoteAssignees(note, collaborators),
                 authorPhotoUrl: currentUserPhoto?.isNotEmpty == true
                     ? currentUserPhoto
                     : collaboratorPhoto,
@@ -1146,11 +1190,18 @@ extension _BoardPageContent on _BoardPageState {
     if (!mounted) return;
     final noteId = data['noteId'];
     if (noteId == null || noteId.isEmpty) return;
-    for (final note in cubit.state.notes) {
-      if (note.id == noteId) {
-        _openNote(note);
+    while (mounted && cubit.state.selectedListId == boardId) {
+      final note = cubit.state.notes
+          .where((note) => note.id == noteId)
+          .firstOrNull;
+      if (note != null) {
+        await _openNotePreview(note);
         return;
       }
+      if (!cubit.state.hasMoreNotes) return;
+      final previousCursor = cubit.state.nextNotesCursor;
+      await cubit.loadMoreNotes();
+      if (cubit.state.nextNotesCursor == previousCursor) return;
     }
   }
 }
@@ -1166,15 +1217,6 @@ class _RetiringSliverFadeTransition extends StatelessWidget {
   final Widget sliver;
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: opacity,
-    child: sliver,
-    builder: (context, child) {
-      final value = opacity.value.clamp(0.0, 1.0).toDouble();
-      if (opacity.status == AnimationStatus.completed && value >= 1) {
-        return child!;
-      }
-      return SliverOpacity(opacity: value, sliver: child!);
-    },
-  );
+  Widget build(BuildContext context) =>
+      SliverFadeTransition(opacity: opacity, sliver: sliver);
 }
