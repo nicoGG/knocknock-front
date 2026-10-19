@@ -556,7 +556,7 @@ class NotesCubit extends Cubit<NotesState> {
         state.copyWith(
           lists: lists,
           isInviting: false,
-          message: 'Invitación enviada a ${email.trim().toLowerCase()}.',
+          message: 'Invitación creada para ${email.trim().toLowerCase()}.',
         ),
       );
       return true;
@@ -1224,6 +1224,21 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<void> _refreshListMembers(String listId) async {
+    final generation = _loadGeneration;
+    try {
+      final lists = await _repository.fetchLists();
+      if (isClosed || generation != _loadGeneration) return;
+      final updated = lists.where((list) => list.id == listId).firstOrNull;
+      if (updated == null || !state.lists.any((list) => list.id == listId)) {
+        return;
+      }
+      emit(state.copyWith(lists: _replaceList(updated)));
+    } catch (_) {
+      // Preserve the current board if the metadata refresh fails offline.
+    }
+  }
+
   void _onRealtime(NotesRealtimeEvent event) {
     switch (event) {
       case NoteChanged(:final note):
@@ -1276,6 +1291,8 @@ class NotesCubit extends Cubit<NotesState> {
                 .copyWithScope(scope, appearance),
           ),
         );
+      case ListMembersChanged(:final listId):
+        unawaited(_refreshListMembers(listId));
       case ListAccessRemoved(:final listId):
         if (state.lists.any((list) => list.id == listId)) {
           unawaited(_refreshAfterAccessRemoved());

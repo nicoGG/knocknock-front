@@ -87,6 +87,41 @@ void main() {
     await cubit.close();
   });
 
+  test(
+    'refreshes collaborators in real time without resetting the board',
+    () async {
+      final repository = _RealtimeLocalNotesRepository();
+      final cubit = NotesCubit(repository);
+      await cubit.load();
+      final original = cubit.state.selectedList!;
+      final notes = cubit.state.notes;
+      repository.updatedLists = [
+        NoteList.fromJson({
+          ...original.toJson(),
+          'collaborators': [
+            {
+              'uid': 'guest',
+              'email': 'guest@example.com',
+              'displayName': 'Invitada',
+              'role': 'editor',
+              'joinedAt': DateTime.utc(2026, 10, 19).toIso8601String(),
+            },
+          ],
+        }),
+      ];
+      final refreshed = cubit.stream.firstWhere(
+        (state) => state.selectedList?.collaborators.isNotEmpty == true,
+      );
+      repository.emit(ListMembersChanged(original.id));
+      await refreshed.timeout(const Duration(seconds: 2));
+      expect(cubit.state.selectedList!.collaborators.single.uid, 'guest');
+      expect(cubit.state.selectedListId, original.id);
+      expect(cubit.state.notes, notes);
+      expect(repository.fetchListsCalls, 2);
+      await cubit.close();
+    },
+  );
+
   test('applies list name changes received in real time', () async {
     final repository = _RealtimeLocalNotesRepository();
     final cubit = NotesCubit(repository);
@@ -238,11 +273,14 @@ class _RealtimeLocalNotesRepository extends LocalNotesRepository {
   Stream<NotesRealtimeEvent> get realtimeEvents => _realtimeEvents.stream;
 
   int fetchListsCalls = 0;
+  List<NoteList>? updatedLists;
 
   @override
   Future<List<NoteList>> fetchLists() {
     fetchListsCalls++;
-    return super.fetchLists();
+    return updatedLists != null
+        ? Future.value(updatedLists!)
+        : super.fetchLists();
   }
 
   void emit(NotesRealtimeEvent event) => _realtimeEvents.add(event);

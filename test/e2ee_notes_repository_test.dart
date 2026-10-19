@@ -1,3 +1,5 @@
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+
 import 'dart:async';
 
 import 'package:dio/dio.dart';
@@ -51,12 +53,53 @@ void main() {
     },
   );
 
+  test(
+    'encrypts drawing vectors and restores them through cache and reads',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final remote = _FakeE2eeRemote();
+      final repository = E2eeNotesRepository(
+        repository: CachedNotesRepository(
+          repository: remote,
+          preferences: preferences,
+          userIdProvider: () => 'user-1',
+        ),
+        userIdProvider: () => 'user-1',
+        keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+      );
+      await repository.fetchLists();
+      final note = (await repository.fetchNotes('home-user-1')).single;
+      final drawing = NoteDrawing([
+        DrawingStroke(0xff292621, 3, [
+          DrawingPoint(0.1, 0.2),
+          DrawingPoint(0.8, 0.7),
+        ]),
+      ]).encode();
+      await repository.updateNote(note.id, {
+        'content': '',
+        'contentDelta': drawing,
+        'checklist': [],
+        'attachments': [],
+      });
+      expect(remote.rawNote.contentDelta, startsWith(e2eeCiphertextPrefix));
+      final reloaded = (await repository.fetchNotes('home-user-1')).single;
+      expect(reloaded.contentDelta, drawing);
+      expect(reloaded.content, isEmpty);
+      expect(reloaded.checklist, isEmpty);
+      expect(
+        preferences.getString(CachedNotesRepository.storageKey),
+        isNot(contains('nocknock-drawing')),
+      );
+      repository.dispose();
+    },
+  );
+
   test('adds an account recovery envelope to every readable list', () async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
-    final recoveryIdentity = await E2eeKeyStore(
-      storage: _MemorySecureStore(),
-    ).loadOrCreateIdentity('recovery-user-1');
+    final recoveryIdentity = await E2eeKeyStore(storage: _MemorySecureStore())
+        .loadOrCreateIdentity('recovery-user-1');
     final remote = _FakeE2eeRemote()
       ..deriveRecipientsFromRegisteredDevices = true;
     final repository = E2eeNotesRepository(
@@ -99,9 +142,8 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final preferences = await SharedPreferences.getInstance();
       final cipher = E2eeCipher();
-      final recoveryIdentity = await E2eeKeyStore(
-        storage: _MemorySecureStore(),
-      ).loadOrCreateIdentity('recovery-user-1');
+      final recoveryIdentity = await E2eeKeyStore(storage: _MemorySecureStore())
+          .loadOrCreateIdentity('recovery-user-1');
       final listKey = await cipher.newListKey();
       final date = DateTime.utc(2026, 8, 12);
       final remote = _FakeE2eeRemote()
@@ -305,9 +347,8 @@ void main() {
       userIdProvider: () => 'user-1',
       keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
     );
-    final recipientIdentity = await E2eeKeyStore(
-      storage: _MemorySecureStore(),
-    ).loadOrCreateIdentity('user-2');
+    final recipientIdentity = await E2eeKeyStore(storage: _MemorySecureStore())
+        .loadOrCreateIdentity('user-2');
 
     await repository.fetchLists();
     remote.recipients = [
@@ -351,9 +392,8 @@ void main() {
       userIdProvider: () => 'user-1',
       keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
     );
-    final recipientIdentity = await E2eeKeyStore(
-      storage: _MemorySecureStore(),
-    ).loadOrCreateIdentity('user-2');
+    final recipientIdentity = await E2eeKeyStore(storage: _MemorySecureStore())
+        .loadOrCreateIdentity('user-2');
 
     await repository.fetchLists();
     final encrypted = remote.rawList;

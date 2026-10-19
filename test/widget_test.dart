@@ -1,3 +1,7 @@
+import 'package:nocknock/features/notes/data/local_notes_repository.dart';
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -769,8 +773,7 @@ void main() {
           initialContent: 'Texto importante para mañana',
           initialCreatedAt: DateTime(2026, 1, 2, 9, 5),
           initialUpdatedAt: lastEditedAt,
-          initialContentDelta:
-              '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
+          initialContentDelta: '[{"insert":"Texto importante","attributes":{"bold":true}},{"insert":" para mañana\\n"}]',
         ),
         authRepository: _FakeAuthRepository(),
       ),
@@ -1976,6 +1979,23 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('preview-category-action')));
     await tester.pumpAndSettle();
     expect(find.text('Categoría y fondo'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('preview-category-glass-surface')),
+      findsOneWidget,
+    );
+    final workLabel = find.descendant(
+      of: find.byKey(const ValueKey('preview-category-work')),
+      matching: find.text('Trabajo'),
+    );
+    expect(workLabel, findsOneWidget);
+    final workIcon = find.descendant(
+      of: find.byKey(const ValueKey('preview-category-work')),
+      matching: find.byType(Icon),
+    );
+    expect(
+      tester.getTopLeft(workLabel).dy,
+      greaterThan(tester.getBottomLeft(workIcon).dy),
+    );
     final workCategoryTile = tester.widget<Container>(
       find
           .descendant(
@@ -2462,6 +2482,109 @@ void main() {
     final rebuiltEditor = tester.widget<QuillEditor>(editorFinder);
     expect(rebuiltEditor.focusNode, same(initialEditor.focusNode));
     expect(rebuiltEditor.focusNode.hasFocus, isTrue);
+  });
+
+  testWidgets('creates a drawing-only note and reopens its canvas', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = LocalNotesRepository();
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-note-fab')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('note-title-field')),
+      'Mi dibujo',
+    );
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
+    final pencil = find.byKey(const ValueKey('quick-editor-drawing-action'));
+    await tester.ensureVisible(pencil);
+    await tester.tap(pencil);
+    await tester.pumpAndSettle();
+    final canvas = find.byKey(const ValueKey('note-drawing-canvas'));
+    await tester.dragFrom(tester.getCenter(canvas), const Offset(60, 40));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('save-note-drawing')));
+    await tester.pumpAndSettle();
+    expect(find.byType(NoteDrawingView), findsOneWidget);
+    expect(find.text('Agregar descripción'), findsNothing);
+    expect(find.text('Subtareas'), findsNothing);
+    await tester.tap(find.text('Crear nota'));
+    await tester.pumpAndSettle();
+    final note = (await repository.fetchNotes('home'))
+        .firstWhere((n) => n.title == 'Mi dibujo');
+    expect(note.content, isEmpty);
+    expect(note.checklist, isEmpty);
+    final drawing = NoteDrawing.decode(note.contentDelta);
+    expect(drawing, isNotNull);
+    expect(drawing!.strokes.single.points.length, greaterThan(1));
+    final card = find.byKey(ValueKey('note-${note.id}'));
+    await tester.ensureVisible(card);
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Editar dibujo'), findsOneWidget);
+    final drawingViewport = find.byKey(
+      const ValueKey('drawing-preview-rounded-viewport'),
+    );
+    final drawingReactions = find.byKey(
+      const ValueKey('drawing-preview-reactions'),
+    );
+    expect(
+      find.descendant(of: drawingViewport, matching: drawingReactions),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .getRect(drawingViewport)
+          .contains(tester.getCenter(drawingReactions)),
+      isTrue,
+    );
+    expect(
+      tester.widget<ClipRRect>(drawingViewport).borderRadius,
+      BorderRadius.circular(16),
+    );
+    expect(
+      find.byKey(const ValueKey('add-note-reaction-button')),
+      findsOneWidget,
+    );
+
+    expect(find.text('Editar dibujo'), findsNothing);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('edit-note-drawing-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('edit-note-drawing-button')));
+    await tester.pumpAndSettle();
+    expect(canvas, findsOneWidget);
+    await tester.dragFrom(
+      tester.getCenter(canvas) + const Offset(-50, -50),
+      const Offset(40, 70),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('drawing-background-action')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('drawing-background-blue')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('save-note-drawing')));
+    await tester.pumpAndSettle();
+    final edited = (await repository.fetchNotes('home'))
+        .firstWhere((n) => n.id == note.id);
+    expect(edited.title, 'Mi dibujo');
+    expect(edited.color, NoteColor.blue);
+    expect(NoteDrawing.decode(edited.contentDelta)!.strokes, hasLength(2));
+    expect(edited.content, isEmpty);
+    expect(edited.checklist, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('creates categorized notes with simple checklist items', (
@@ -5426,6 +5549,33 @@ void main() {
     expect(find.byKey(const ValueKey('trash-menu-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('app-version-label')), findsOneWidget);
     expect(find.textContaining('Versión'), findsOneWidget);
+    final listViewport = find.descendant(
+      of: find.byType(Drawer),
+      matching: find.byType(ListView),
+    );
+    final drawerScrollbar = tester.widget<Scrollbar>(
+      find.descendant(
+        of: find.byType(Drawer),
+        matching: find.byType(Scrollbar),
+      ),
+    );
+    expect(drawerScrollbar.controller, isNotNull);
+    expect(drawerScrollbar.controller!.positions, hasLength(1));
+    final drawerPosition = Scrollable.of(
+      tester.element(find.byKey(const ValueKey('list-home'))),
+    ).position;
+    expect(drawerScrollbar.controller!.position, same(drawerPosition));
+    final footer = find.byKey(
+      const ValueKey('drawer-floating-settings-footer'),
+    );
+    expect(
+      tester.getBottomLeft(listViewport).dy,
+      lessThanOrEqualTo(tester.getTopLeft(footer).dy),
+    );
+    await tester.drag(listViewport, const Offset(0, -300));
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.tap(find.byKey(const ValueKey('settings-menu-button')));
     await tester.pumpAndSettle();
 
@@ -5960,9 +6110,9 @@ void main() {
     expect(find.byKey(const ValueKey('profile-theme-light')), findsOneWidget);
     expect(find.byKey(const ValueKey('profile-theme-dark')), findsOneWidget);
 
-    final initialPrimary = Theme.of(
-      tester.element(find.text('Atardecer')),
-    ).colorScheme.primary;
+    final initialPrimary = Theme.of(tester.element(find.text('Atardecer')))
+        .colorScheme
+        .primary;
     for (var page = 0; page < 3; page++) {
       await tester.drag(
         find.byKey(const ValueKey('profile-color-theme-list')),
@@ -5980,9 +6130,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    final graphitePrimary = Theme.of(
-      tester.element(find.text('Grafito')),
-    ).colorScheme.primary;
+    final graphitePrimary = Theme.of(tester.element(find.text('Grafito')))
+        .colorScheme
+        .primary;
     expect(themeController.colorTheme, AppColorTheme.graphite);
     expect(graphitePrimary, isNot(initialPrimary));
     expect(
@@ -6511,7 +6661,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.invitedEmail, 'ana@example.com');
-    expect(find.text('Invitación enviada a ana@example.com.'), findsOneWidget);
+    expect(
+      find.text('Invitación creada para ana@example.com.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('owner confirms before removing a collaborator', (tester) async {

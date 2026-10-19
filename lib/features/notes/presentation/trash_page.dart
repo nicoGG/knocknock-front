@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/widgets/ambient_page_background.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -118,7 +119,7 @@ class _TrashPageState extends State<TrashPage> {
     final title = note.title.trim().isEmpty ? 'Nota sin título' : note.title;
     return await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
+          builder: (dialogContext) => LiquidAlertDialog(
             scrollable: true,
             icon: Icon(
               Icons.delete_forever_rounded,
@@ -152,7 +153,7 @@ class _TrashPageState extends State<TrashPage> {
   Future<bool> _confirmEmptyTrash(int noteCount) async =>
       await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => LiquidAlertDialog(
           scrollable: true,
           icon: Icon(
             Icons.warning_amber_rounded,

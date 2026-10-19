@@ -1,5 +1,10 @@
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+import 'package:nocknock/features/notes/presentation/widgets/liquid_bottom_sheet.dart';
 import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
 import 'package:flutter/foundation.dart';
+
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -18,18 +23,20 @@ import 'package:nocknock/features/notes/presentation/widgets/note_rich_text.dart
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:uuid/uuid.dart';
 
-typedef NotePreviewCardBuilder =
-    Widget Function(
-      BuildContext context,
-      VoidCallback editAssignee,
-      VoidCallback? editAttachment,
-      ValueNotifier<PostItInlineEditTarget> editTarget,
-      Future<bool> Function(NoteDraft draft) saveInline,
-    );
+typedef NotePreviewCardBuilder = Widget Function(
+  BuildContext context,
+  VoidCallback editAssignee,
+  VoidCallback? editAttachment,
+  ValueNotifier<PostItInlineEditTarget> editTarget,
+  Future<bool> Function(NoteDraft draft) saveInline,
+  Widget closeButton,
+);
 typedef NotePreviewNoteProvider = Note Function();
 typedef NotePreviewAssigneesProvider = List<ListCollaborator> Function();
-typedef NoteQuickSaveCallback =
-    Future<void> Function(Note note, NoteDraft draft);
+typedef NoteQuickSaveCallback = Future<void> Function(
+  Note note,
+  NoteDraft draft,
+);
 typedef NotePreviewDeleteCallback = Future<void> Function(Note note);
 
 int _previewImageCacheWidth(
@@ -88,7 +95,7 @@ Future<NoteDraft?> showCreateNoteDialog({
         boardId: '',
         title: '',
         content: '',
-        color: NoteColor.none,
+        color: NoteColor.yellow,
         authorName: defaultAuthorName,
         isCompleted: false,
         positionX: 0,
@@ -312,7 +319,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     final note = widget.noteProvider();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         title: const Text('¿Eliminar esta nota?'),
         content: Text(
           'Se eliminará “${note.title}” para todos los colaboradores. '
@@ -351,7 +358,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
 
   Future<void> _editColor() async {
     final initialNote = widget.noteProvider();
-    final color = await showModalBottomSheet<NoteColor>(
+    final color = await showLiquidBottomSheet<NoteColor>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) =>
@@ -366,7 +373,9 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     final initialNote = widget.noteProvider();
     final category = await showModalBottomSheet<NoteCategory>(
       context: context,
-      showDragHandle: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       isScrollControlled: true,
       builder: (sheetContext) =>
           _PreviewCategoryPickerSheet(selected: initialNote.category),
@@ -381,7 +390,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
   Future<void> _editReminder() async {
     final initialNote = widget.noteProvider();
     if (initialNote.reminderAt != null) {
-      final action = await showModalBottomSheet<_PreviewReminderAction>(
+      final action = await showLiquidBottomSheet<_PreviewReminderAction>(
         context: context,
         showDragHandle: true,
         builder: (sheetContext) => _PreviewReminderActionsSheet(
@@ -418,7 +427,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
 
   Future<void> _editAssignee() async {
     final initialNote = widget.noteProvider();
-    final selection = await showModalBottomSheet<AssigneeSelection>(
+    final selection = await showLiquidBottomSheet<AssigneeSelection>(
       context: context,
       isScrollControlled: true,
       constraints: BoxConstraints(
@@ -454,7 +463,7 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
     if (_isSaving) return;
     final note = widget.noteProvider();
     if (note.photoAttachments.isNotEmpty) {
-      final action = await showModalBottomSheet<_PhotoAction>(
+      final action = await showLiquidBottomSheet<_PhotoAction>(
         context: context,
         showDragHandle: true,
         builder: (_) => _PhotoActionsSheet(attachments: note.photoAttachments),
@@ -495,9 +504,8 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
       );
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 
@@ -554,17 +562,13 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                                   _isSaving ? null : _editAttachment,
                                   _inlineEditTarget,
                                   _saveInlineDraft,
+                                  _FloatingPreviewCloseButton(
+                                    isSaving: _isSaving,
+                                    color: cardColor,
+                                    foregroundColor: foregroundColor,
+                                    onClose: () => Navigator.of(context).pop(),
+                                  ),
                                 ),
-                              ),
-                            ),
-                            Positioned(
-                              top: 0,
-                              right: 10,
-                              child: _FloatingPreviewCloseButton(
-                                isSaving: _isSaving,
-                                color: cardColor,
-                                foregroundColor: foregroundColor,
-                                onClose: () => Navigator.of(context).pop(),
                               ),
                             ),
                           ],
@@ -789,6 +793,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   final _checklistSectionKey = GlobalKey();
   late final TextEditingController _titleController;
   late final TextEditingController _authorController;
+  NoteDrawing? _drawing;
   late NoteRichContent _content;
   late List<NoteChecklistItem> _checklist;
   late NoteColor _color;
@@ -810,6 +815,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
       text: capitalizeInitialLetter(note.title),
     );
     _authorController = TextEditingController(text: note.authorName);
+    _drawing = NoteDrawing.decode(note.contentDelta);
     _content = normalizeNoteRichContent(
       NoteRichContent(
         plainText: capitalizeInitialLetter(note.content),
@@ -1045,120 +1051,134 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                                         : null,
                                   ),
                                 ],
-                                const SizedBox(height: 4),
-                                Container(
-                                  key: _contentSectionKey,
-                                  child: _descriptionExpanded
-                                      ? NoteRichTextEditor(
-                                          key: ValueKey(
-                                            widget.isCreating
-                                                ? 'note-content-field'
-                                                : 'quick-edit-content-field',
+                                if (_drawing != null)
+                                  NoteDrawingView(
+                                    drawing: _drawing!,
+                                    backgroundColor: NotePalette.color(_color),
+                                    onTap: _pickDrawing,
+                                  )
+                                else ...[
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    key: _contentSectionKey,
+                                    child: _descriptionExpanded
+                                        ? NoteRichTextEditor(
+                                            key: ValueKey(
+                                              widget.isCreating
+                                                  ? 'note-content-field'
+                                                  : 'quick-edit-content-field',
+                                            ),
+                                            editorKey: ValueKey(
+                                              widget.isCreating
+                                                  ? 'note-content-editor'
+                                                  : 'quick-edit-content-editor',
+                                            ),
+                                            initialPlainText:
+                                                _content.plainText,
+                                            initialDeltaJson:
+                                                _content.deltaJson,
+                                            autoFocus: true,
+                                            minEditorHeight: 76,
+                                            maxEditorHeight: 132,
+                                            foregroundColor: foregroundColor,
+                                            backgroundColor: fieldFill,
+                                            onChanged: (content) =>
+                                                _content = content,
+                                          )
+                                        : Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: TextButton.icon(
+                                              key: const ValueKey(
+                                                'add-description-button',
+                                              ),
+                                              onPressed: _expandDescription,
+                                              style: TextButton.styleFrom(
+                                                foregroundColor: foregroundColor
+                                                    .withValues(alpha: 0.72),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 2,
+                                                      vertical: 8,
+                                                    ),
+                                              ),
+                                              icon: const Icon(
+                                                Icons.notes_rounded,
+                                                size: 18,
+                                              ),
+                                              label: const Text(
+                                                'Agregar descripción',
+                                              ),
+                                            ),
                                           ),
-                                          editorKey: ValueKey(
-                                            widget.isCreating
-                                                ? 'note-content-editor'
-                                                : 'quick-edit-content-editor',
-                                          ),
-                                          initialPlainText: _content.plainText,
-                                          initialDeltaJson: _content.deltaJson,
-                                          autoFocus: true,
-                                          minEditorHeight: 76,
-                                          maxEditorHeight: 132,
-                                          foregroundColor: foregroundColor,
-                                          backgroundColor: fieldFill,
-                                          onChanged: (content) =>
-                                              _content = content,
-                                        )
-                                      : Align(
+                                  ),
+                                  Container(
+                                    key: const ValueKey(
+                                      'description-subtasks-divider',
+                                    ),
+                                    height: 1,
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    color: foregroundColor.withValues(
+                                      alpha: 0.24,
+                                    ),
+                                  ),
+                                  Column(
+                                    key: _checklistSectionKey,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        'Subtareas',
+                                        style: theme.textTheme.labelLarge
+                                            ?.copyWith(
+                                              color: foregroundColor.withValues(
+                                                alpha: 0.72,
+                                              ),
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                      ),
+                                      if (_checklist.isEmpty)
+                                        Align(
                                           alignment: Alignment.centerLeft,
                                           child: TextButton.icon(
                                             key: const ValueKey(
-                                              'add-description-button',
+                                              'add-checklist-item',
                                             ),
-                                            onPressed: _expandDescription,
+                                            onPressed: _openChecklist,
                                             style: TextButton.styleFrom(
-                                              foregroundColor: foregroundColor
-                                                  .withValues(alpha: 0.72),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 2,
-                                                    vertical: 8,
-                                                  ),
+                                              foregroundColor: foregroundColor,
                                             ),
                                             icon: const Icon(
-                                              Icons.notes_rounded,
+                                              Icons.add_rounded,
                                               size: 18,
                                             ),
                                             label: const Text(
-                                              'Agregar descripción',
+                                              'Agregar subtarea',
                                             ),
                                           ),
-                                        ),
-                                ),
-                                Container(
-                                  key: const ValueKey(
-                                    'description-subtasks-divider',
-                                  ),
-                                  height: 1,
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 16,
-                                  ),
-                                  color: foregroundColor.withValues(
-                                    alpha: 0.24,
-                                  ),
-                                ),
-                                Column(
-                                  key: _checklistSectionKey,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Text(
-                                      'Subtareas',
-                                      style: theme.textTheme.labelLarge
-                                          ?.copyWith(
-                                            color: foregroundColor.withValues(
-                                              alpha: 0.72,
-                                            ),
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                    ),
-                                    if (_checklist.isEmpty)
-                                      Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: TextButton.icon(
+                                        )
+                                      else
+                                        SimpleNoteChecklistEditor(
                                           key: const ValueKey(
-                                            'add-checklist-item',
+                                            'quick-edit-checklist-editor',
                                           ),
-                                          onPressed: _openChecklist,
-                                          style: TextButton.styleFrom(
-                                            foregroundColor: foregroundColor,
+                                          items: _checklist,
+                                          foregroundColor: foregroundColor,
+                                          onChanged: (items) => setState(
+                                            () => _checklist = items,
                                           ),
-                                          icon: const Icon(
-                                            Icons.add_rounded,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Agregar subtarea'),
                                         ),
-                                      )
-                                    else
-                                      SimpleNoteChecklistEditor(
-                                        key: const ValueKey(
-                                          'quick-edit-checklist-editor',
-                                        ),
-                                        items: _checklist,
-                                        foregroundColor: foregroundColor,
-                                        onChanged: (items) =>
-                                            setState(() => _checklist = items),
-                                      ),
-                                  ],
-                                ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
                         ),
                       ),
-                      if (_attachments.isNotEmpty &&
+                      if (_drawing == null &&
+                          _attachments.isNotEmpty &&
                           !hidePhotoPreviewForKeyboard) ...[
                         const SizedBox(height: 10),
                         _QuickPhotoStrip(
@@ -1201,13 +1221,15 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                         assignee: _selectedAssignee,
                         attachmentCount: _attachments.length,
                         foregroundColor: foregroundColor,
-                        onStyles: _expandDescription,
-                        onChecklist: _openChecklist,
+                        onDrawing: _pickDrawing,
+                        drawingSelected: _drawing != null,
+                        onStyles: _drawing == null ? _expandDescription : null,
+                        onChecklist: _drawing == null ? _openChecklist : null,
                         onColor: _pickColor,
                         onCategory: _pickCategory,
                         onReminder: _pickReminder,
                         onAssignee: _pickAssignee,
-                        onAttachment: _pickAttachment,
+                        onAttachment: _drawing == null ? _pickAttachment : null,
                       ),
                       const SizedBox(height: 10),
                       Row(
@@ -1332,7 +1354,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   Future<void> _pickColor() async {
-    final color = await showModalBottomSheet<NoteColor>(
+    final color = await showLiquidBottomSheet<NoteColor>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => _PreviewColorPickerSheet(selected: _color),
@@ -1344,7 +1366,9 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   Future<void> _pickCategory() async {
     final category = await showModalBottomSheet<NoteCategory>(
       context: context,
-      showDragHandle: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       isScrollControlled: true,
       builder: (sheetContext) =>
           _PreviewCategoryPickerSheet(selected: _category),
@@ -1363,7 +1387,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
 
   Future<void> _pickReminder() async {
     if (_reminderAt case final reminder?) {
-      final action = await showModalBottomSheet<_PreviewReminderAction>(
+      final action = await showLiquidBottomSheet<_PreviewReminderAction>(
         context: context,
         showDragHandle: true,
         builder: (sheetContext) => _PreviewReminderActionsSheet(
@@ -1394,7 +1418,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
   }
 
   Future<void> _pickAssignee() async {
-    final selection = await showModalBottomSheet<AssigneeSelection>(
+    final selection = await showLiquidBottomSheet<AssigneeSelection>(
       context: context,
       isScrollControlled: true,
       constraints: BoxConstraints(
@@ -1418,7 +1442,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
 
   Future<void> _pickAttachment() async {
     if (_attachments.isNotEmpty) {
-      final action = await showModalBottomSheet<_PhotoAction>(
+      final action = await showLiquidBottomSheet<_PhotoAction>(
         context: context,
         showDragHandle: true,
         builder: (_) => _PhotoActionsSheet(attachments: _attachments),
@@ -1438,10 +1462,47 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
       setState(() => _attachments = [..._attachments, ...attachments]);
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
     }
+  }
+
+  Future<void> _pickDrawing() async {
+    if (_drawing == null &&
+        (_content.plainText.trim().isNotEmpty ||
+            _checklist.isNotEmpty ||
+            _attachments.isNotEmpty)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => LiquidAlertDialog(
+          title: const Text('Convertir en dibujo'),
+          content: const Text(
+            'Se conservará el título. El dibujo reemplazará la descripción, las subtareas y los adjuntos.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    final drawing = await editNoteDrawing(
+      context,
+      _drawing ?? const NoteDrawing([]),
+      noteColor: _color,
+    );
+    if (!mounted || drawing == null) return;
+    setState(() {
+      _drawing = drawing.drawing;
+      _color = drawing.color;
+    });
   }
 
   void _submit() {
@@ -1460,12 +1521,12 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     widget.onSave(
       NoteDraft(
         title: capitalizeInitialLetter(_titleController.text.trim()),
-        content: normalizedContent.plainText,
-        contentDelta: normalizedContent.deltaJson,
+        content: _drawing == null ? normalizedContent.plainText : '',
+        contentDelta: _drawing?.encode() ?? normalizedContent.deltaJson,
         color: _color,
         category: _category,
         checklist: normalizeNoteChecklist(
-          _checklist,
+          _drawing == null ? _checklist : const [],
           trimText: true,
           removeEmpty: true,
         ),
@@ -1476,7 +1537,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
         assigneeUids: _assigneeUids,
         customAssigneeName: _customAssigneeName,
         customAssigneeNames: _customAssigneeNames,
-        attachments: _attachments,
+        attachments: _drawing == null ? _attachments : const [],
         reminderAt: _reminderAt,
         reminderRecurrence: _reminderRecurrence,
       ),
@@ -1493,6 +1554,8 @@ class _QuickEditorTools extends StatelessWidget {
     required this.assignee,
     required this.attachmentCount,
     required this.foregroundColor,
+    required this.onDrawing,
+    required this.drawingSelected,
     required this.onStyles,
     required this.onChecklist,
     required this.onColor,
@@ -1509,13 +1572,15 @@ class _QuickEditorTools extends StatelessWidget {
   final ListCollaborator? assignee;
   final int attachmentCount;
   final Color foregroundColor;
-  final VoidCallback onStyles;
-  final VoidCallback onChecklist;
+  final VoidCallback onDrawing;
+  final bool drawingSelected;
+  final VoidCallback? onStyles;
+  final VoidCallback? onChecklist;
   final VoidCallback onColor;
   final VoidCallback onCategory;
   final VoidCallback onReminder;
   final VoidCallback onAssignee;
-  final VoidCallback onAttachment;
+  final VoidCallback? onAttachment;
 
   @override
   Widget build(BuildContext context) {
@@ -1532,7 +1597,7 @@ class _QuickEditorTools extends StatelessWidget {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            const actionCount = 7;
+            const actionCount = 8;
             const preferredActionExtent = 44.0;
             const minimumSingleRowExtent = 40.0;
             final availableActionExtent = constraints.maxWidth / actionCount;
@@ -1542,6 +1607,14 @@ class _QuickEditorTools extends StatelessWidget {
                 ? math.min(preferredActionExtent, availableActionExtent)
                 : preferredActionExtent;
             final actions = [
+              _PreviewDockAction(
+                key: const ValueKey('quick-editor-drawing-action'),
+                tooltip: 'Dibujar',
+                icon: Icons.draw_outlined,
+                dimension: actionExtent,
+                selected: drawingSelected,
+                onPressed: onDrawing,
+              ),
               _PreviewDockAction(
                 key: const ValueKey('quick-editor-styles-action'),
                 tooltip: 'Editar contenido y estilos',
@@ -2172,16 +2245,15 @@ class _PreviewColorPickerSheet extends StatelessWidget {
           children: [
             Text(
               'Color de la nota',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context).textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 16),
             Wrap(
               spacing: 8,
               runSpacing: 10,
               children: [
-                for (final color in NoteColor.values)
+                for (final color in NotePalette.selectableColors)
                   Tooltip(
                     message: _noteColorName(color),
                     child: InkWell(
@@ -2231,76 +2303,179 @@ class _PreviewCategoryPickerSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 2, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Categoría y fondo',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          key: const ValueKey('preview-category-glass-surface'),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.8,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.55),
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 12,
-              children: [
-                for (final category in NoteCategory.values)
-                  Tooltip(
-                    message: NoteCategoryStyle.label(category),
-                    child: InkWell(
-                      key: ValueKey('preview-category-${category.name}'),
-                      onTap: () => Navigator.pop(context, category),
-                      borderRadius: BorderRadius.circular(18),
-                      child: Container(
-                        width: 58,
-                        height: 58,
-                        decoration: BoxDecoration(
-                          color: NoteCategoryStyle.baseColor(category),
-                          image: NoteCategoryStyle.assetPath(category) == null
-                              ? null
-                              : DecorationImage(
-                                  image: ResizeImage(
-                                    AssetImage(
-                                      NoteCategoryStyle.assetPath(category)!,
-                                    ),
-                                    width: _previewImageCacheWidth(
-                                      context,
-                                      58,
-                                      maximum: 256,
-                                    ),
-                                  ),
-                                  fit: BoxFit.cover,
-                                  colorFilter: ColorFilter.mode(
-                                    Colors.black.withValues(alpha: 0.2),
-                                    BlendMode.darken,
-                                  ),
-                                ),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: category == selected
-                                ? colorScheme.primary
-                                : colorScheme.onSurface.withValues(alpha: 0.14),
-                            width: category == selected ? 3 : 1,
-                          ),
-                        ),
-                        child: Icon(
-                          category == selected
-                              ? Icons.check_rounded
-                              : NoteCategoryStyle.icon(category),
-                          color: NoteCategoryStyle.foregroundColor(category),
-                        ),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colors.surface.withValues(alpha: isDark ? 0.78 : 0.86),
+                colors.surfaceContainerHigh.withValues(
+                  alpha: isDark ? 0.64 : 0.72,
+                ),
+                colors.surface.withValues(alpha: isDark ? 0.84 : 0.9),
+              ],
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 32,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colors.onSurface.withValues(alpha: 0.28),
+                        borderRadius: BorderRadius.circular(99),
                       ),
                     ),
                   ),
-              ],
+                  const SizedBox(height: 22),
+                  Text(
+                    'Categoría y fondo',
+                    style: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 20),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = (constraints.maxWidth / 70).floor().clamp(
+                        1,
+                        6,
+                      );
+                      final width =
+                          (constraints.maxWidth - (columns - 1) * 8) / columns;
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 16,
+                        children: [
+                          for (final category in NoteCategory.values)
+                            SizedBox(
+                              width: width,
+                              child: Semantics(
+                                selected: category == selected,
+                                button: true,
+                                child: InkWell(
+                                  key: ValueKey(
+                                    'preview-category-${category.name}',
+                                  ),
+                                  onTap: () => Navigator.pop(context, category),
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 58,
+                                        height: 58,
+                                        decoration: BoxDecoration(
+                                          color: NoteCategoryStyle.baseColor(
+                                            category,
+                                          ),
+                                          image:
+                                              NoteCategoryStyle.assetPath(
+                                                    category,
+                                                  ) ==
+                                                  null
+                                              ? null
+                                              : DecorationImage(
+                                                  image: ResizeImage(
+                                                    AssetImage(
+                                                      NoteCategoryStyle.assetPath(
+                                                        category,
+                                                      )!,
+                                                    ),
+                                                    width:
+                                                        _previewImageCacheWidth(
+                                                          context,
+                                                          58,
+                                                          maximum: 256,
+                                                        ),
+                                                  ),
+                                                  fit: BoxFit.cover,
+                                                  colorFilter: ColorFilter.mode(
+                                                    Colors.black.withValues(
+                                                      alpha: 0.2,
+                                                    ),
+                                                    BlendMode.darken,
+                                                  ),
+                                                ),
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                          border: Border.all(
+                                            color: category == selected
+                                                ? colors.primary
+                                                : Colors.white.withValues(
+                                                    alpha: 0.18,
+                                                  ),
+                                            width: category == selected
+                                                ? 2.5
+                                                : 1,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          category == selected
+                                              ? Icons.check_rounded
+                                              : NoteCategoryStyle.icon(
+                                                  category,
+                                                ),
+                                          color:
+                                              NoteCategoryStyle.foregroundColor(
+                                                category,
+                                              ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 7),
+                                      Text(
+                                        NoteCategoryStyle.label(category),
+                                        textAlign: TextAlign.center,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              fontSize: 11,
+                                              fontWeight: category == selected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                              color: category == selected
+                                                  ? colors.primary
+                                                  : colors.onSurface.withValues(
+                                                      alpha: 0.68,
+                                                    ),
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -2386,9 +2561,8 @@ class _PreviewReminderActionsSheet extends StatelessWidget {
           children: [
             Text(
               'Recordatorio activo',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context).textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 4),
             Text(

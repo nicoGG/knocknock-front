@@ -1456,7 +1456,9 @@ class CachedNotesRepository
         );
       case ListAccessRemoved(:final listId):
         unawaited(_updateCache(userId, (cache) => _removeList(cache, listId)));
-      case ListKeyShareRequested() || ListKeyEnvelopeUpdated():
+      case ListMembersChanged() ||
+          ListKeyShareRequested() ||
+          ListKeyEnvelopeUpdated():
         break;
       case RealtimeConnectionChanged() ||
           RealtimeConnectionAttemptStarted() ||

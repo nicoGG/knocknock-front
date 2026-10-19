@@ -1,3 +1,6 @@
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -298,7 +301,7 @@ class NoteDetailPage extends StatelessWidget {
     final navigator = Navigator.of(context);
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         title: const Text('¿Eliminar esta nota?'),
         content: Text(
           'Se eliminará “${note.title}” para todos los colaboradores.',
@@ -452,13 +455,22 @@ class _DetailBody extends StatelessWidget {
                             onToggle: onToggle,
                             onSaveTitle: onSaveTitle,
                           ),
-                          _ExpandableContentRow(
-                            key: const ValueKey('detail-content-row'),
-                            note: note,
-                            isSaving: isSaving,
-                            foregroundColor: noteForeground,
-                            onSave: onSaveContent,
-                          ),
+                          if (NoteDrawing.decode(note.contentDelta) != null)
+                            Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: NoteDrawingView(
+                                drawing: NoteDrawing.decode(note.contentDelta)!,
+                                backgroundColor: NotePalette.color(note.color),
+                              ),
+                            )
+                          else
+                            _ExpandableContentRow(
+                              key: const ValueKey('detail-content-row'),
+                              note: note,
+                              isSaving: isSaving,
+                              foregroundColor: noteForeground,
+                              onSave: onSaveContent,
+                            ),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             child: Divider(
@@ -466,16 +478,17 @@ class _DetailBody extends StatelessWidget {
                               color: noteForeground.withValues(alpha: 0.2),
                             ),
                           ),
-                          NoteChecklistDetail(
-                            items: note.checklist,
-                            isSaving: isSaving,
-                            onChanged: onChecklistChanged,
-                            onEdit: onEditChecklist,
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: noteForeground,
-                            dragProxyColor: noteColor,
-                            borderRadius: BorderRadius.zero,
-                          ),
+                          if (NoteDrawing.decode(note.contentDelta) == null)
+                            NoteChecklistDetail(
+                              items: note.checklist,
+                              isSaving: isSaving,
+                              onChanged: onChecklistChanged,
+                              onEdit: onEditChecklist,
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: noteForeground,
+                              dragProxyColor: noteColor,
+                              borderRadius: BorderRadius.zero,
+                            ),
                         ],
                       ),
                     ),
@@ -1182,9 +1195,8 @@ class _CategoryPickerSheet extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
                   'Cambiar categoría',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -1258,9 +1270,8 @@ class _ColorPickerSheet extends StatelessWidget {
           children: [
             Text(
               'Cambiar color',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context).textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(
@@ -1273,7 +1284,7 @@ class _ColorPickerSheet extends StatelessWidget {
             Wrap(
               spacing: 12,
               runSpacing: 12,
-              children: NoteColor.values.map((color) {
+              children: NotePalette.selectableColors.map((color) {
                 final isSelected = color == selected;
                 final noteColor = NotePalette.color(color);
                 return Semantics(

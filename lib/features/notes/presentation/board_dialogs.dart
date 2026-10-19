@@ -31,298 +31,381 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
           orElse: () => widget.initialList,
         );
         final colorScheme = Theme.of(context).colorScheme;
-        return AlertDialog(
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final radius = BorderRadius.circular(30);
+        return Dialog(
           key: const ValueKey('collaborators-dialog'),
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 16,
             vertical: 24,
           ),
-          backgroundColor: Color.alphaBlend(
-            colorScheme.primary.withValues(alpha: 0.1),
-            colorScheme.surfaceContainerHigh,
-          ),
+          backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
-          shadowColor: Colors.black.withValues(alpha: 0.36),
-          elevation: 18,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
-            side: BorderSide(
-              color: colorScheme.onSurface.withValues(alpha: 0.1),
-            ),
-          ),
-          title: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
+          elevation: 0,
+          child: ClipRRect(
+            borderRadius: radius,
+            child: BackdropFilter(
+              key: const ValueKey('collaborators-dialog-glass-blur'),
+              filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
                 decoration: BoxDecoration(
-                  color: colorScheme.primary.withValues(alpha: 0.16),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.diversity_3_rounded,
-                  color: colorScheme.primary,
-                ),
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      list.canInvite
-                          ? 'Comparte esta lista'
-                          : 'Personas de la lista',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      list.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: colorScheme.primary,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: 'Cerrar',
-                onPressed: state.isInviting || state.isRemovingCollaborator
-                    ? null
-                    : () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          colorScheme.primary.withValues(alpha: 0.14),
-                          colorScheme.primary.withValues(alpha: 0.08),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: colorScheme.primary.withValues(alpha: 0.12),
-                      ),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          list.canInvite
-                              ? Icons.auto_awesome_rounded
-                              : Icons.info_outline_rounded,
-                          size: 20,
-                          color: colorScheme.primary,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            list.canInvite
-                                ? 'Invita a otras personas. La lista aparecerá '
-                                      'cuando ingresen con ese correo.'
-                                : 'Aquí puedes ver quiénes participan. Solo la '
-                                      'persona propietaria gestiona los accesos.',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                  height: 1.45,
-                                ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  borderRadius: radius,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.55),
                   ),
-                  if (list.canInvite) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface.withValues(alpha: 0.48),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: colorScheme.onSurface.withValues(alpha: 0.08),
-                        ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colorScheme.surface.withValues(
+                        alpha: isDark ? 0.78 : 0.86,
                       ),
-                      child: Column(
+                      colorScheme.surfaceContainerHigh.withValues(
+                        alpha: isDark ? 0.64 : 0.72,
+                      ),
+                      colorScheme.surface.withValues(
+                        alpha: isDark ? 0.84 : 0.9,
+                      ),
+                    ],
+                  ),
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DefaultTextStyle.merge(
+                      style: Theme.of(context).textTheme.titleLarge,
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Form(
-                            key: _formKey,
-                            child: TextFormField(
-                              key: const ValueKey('collaborator-email-field'),
-                              controller: _emailController,
-                              enabled:
-                                  !state.isInviting &&
-                                  !state.isRemovingCollaborator,
-                              keyboardType: TextInputType.emailAddress,
-                              textInputAction: TextInputAction.send,
-                              autocorrect: false,
-                              autovalidateMode:
-                                  AutovalidateMode.onUserInteraction,
-                              decoration: const InputDecoration(
-                                labelText: 'Correo electrónico',
-                                hintText: 'nombre@correo.com',
-                                prefixIcon: Icon(Icons.alternate_email_rounded),
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary.withValues(
+                                alpha: 0.16,
                               ),
-                              validator: _validateEmail,
-                              onChanged: (_) => setState(() {}),
-                              onFieldSubmitted: (_) => _sendInvitation(),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.diversity_3_rounded,
+                              color: colorScheme.primary,
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              key: const ValueKey('send-invitation-button'),
-                              onPressed:
-                                  state.isInviting ||
-                                      state.isRemovingCollaborator ||
-                                      !_hasValidEmail
-                                  ? null
-                                  : _sendInvitation,
-                              icon: state.isInviting
-                                  ? const SizedBox.square(
-                                      dimension: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  list.canInvite
+                                      ? 'Comparte esta lista'
+                                      : 'Personas de la lista',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.4,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  list.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        color: colorScheme.primary,
+                                        fontWeight: FontWeight.w800,
                                       ),
-                                    )
-                                  : const Icon(Icons.person_add_rounded),
-                              label: Text(
-                                state.isInviting
-                                    ? 'Enviando invitación…'
-                                    : 'Invitar a esta lista',
-                              ),
+                                ),
+                              ],
                             ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed:
+                                state.isInviting || state.isRemovingCollaborator
+                                ? null
+                                : () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 24),
-                  Text(
-                    'PERSONAS CON ACCESO',
-                    style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withValues(alpha: 0.55),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (list.collaborators.isEmpty)
-                    Text(
-                      'Aún no hay personas con acceso a esta lista.',
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    )
-                  else
-                    ...list.collaborators.map(
-                      (person) => ListTile(
-                        key: ValueKey('collaborator-${person.uid}'),
-                        contentPadding: EdgeInsets.zero,
-                        leading: _CollaboratorAvatar(person: person),
-                        title: Text(
-                          person.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(
-                          person.email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: person.role == ListMemberRole.owner
-                            ? Text(
-                                'Propietario',
-                                style: Theme.of(context).textTheme.labelSmall,
-                              )
-                            : list.canInvite
-                            ? IconButton(
-                                key: ValueKey(
-                                  'remove-collaborator-${person.uid}',
-                                ),
-                                tooltip:
-                                    'Quitar a ${person.displayName} de la lista',
-                                onPressed:
-                                    state.isRemovingCollaborator ||
-                                        state.isInviting
-                                    ? null
-                                    : () => _confirmRemoveCollaborator(
-                                        list,
-                                        person,
+                    const SizedBox(height: 20),
+                    Flexible(
+                      child: SizedBox(
+                        width: 560,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      colorScheme.primary.withValues(
+                                        alpha: 0.14,
                                       ),
-                                icon:
-                                    _removingCollaboratorUid == person.uid &&
-                                        state.isRemovingCollaborator
-                                    ? const SizedBox.square(
-                                        dimension: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.person_remove_outlined),
-                              )
-                            : Text(
-                                'Puede editar',
-                                style: Theme.of(context).textTheme.labelSmall,
+                                      colorScheme.primary.withValues(
+                                        alpha: 0.08,
+                                      ),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: colorScheme.primary.withValues(
+                                      alpha: 0.12,
+                                    ),
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      list.canInvite
+                                          ? Icons.auto_awesome_rounded
+                                          : Icons.info_outline_rounded,
+                                      size: 20,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        list.canInvite
+                                            ? 'Invita a otras personas. La lista aparecerá '
+                                                  'cuando ingresen con ese correo.'
+                                            : 'Aquí puedes ver quiénes participan. Solo la '
+                                                  'persona propietaria gestiona los accesos.',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                              height: 1.45,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                      ),
-                    ),
-                  if (list.pendingInvitations.isNotEmpty) ...[
-                    const Divider(height: 28),
-                    const Text(
-                      'INVITACIONES POR ACEPTAR',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...list.pendingInvitations.map(
-                      (invitation) => ListTile(
-                        key: ValueKey('pending-${invitation.email}'),
-                        contentPadding: EdgeInsets.zero,
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.schedule_send_outlined),
-                        ),
-                        title: Text(
-                          invitation.email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: const Text(
-                          'Tendrá acceso cuando inicie sesión',
+                              if (list.canInvite) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.surface.withValues(
+                                      alpha: 0.48,
+                                    ),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: colorScheme.onSurface.withValues(
+                                        alpha: 0.08,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Form(
+                                        key: _formKey,
+                                        child: TextFormField(
+                                          key: const ValueKey(
+                                            'collaborator-email-field',
+                                          ),
+                                          controller: _emailController,
+                                          enabled:
+                                              !state.isInviting &&
+                                              !state.isRemovingCollaborator,
+                                          keyboardType:
+                                              TextInputType.emailAddress,
+                                          textInputAction: TextInputAction.send,
+                                          autocorrect: false,
+                                          autovalidateMode: AutovalidateMode
+                                              .onUserInteraction,
+                                          decoration: const InputDecoration(
+                                            labelText: 'Correo electrónico',
+                                            hintText: 'nombre@correo.com',
+                                            prefixIcon: Icon(
+                                              Icons.alternate_email_rounded,
+                                            ),
+                                          ),
+                                          validator: _validateEmail,
+                                          onChanged: (_) => setState(() {}),
+                                          onFieldSubmitted: (_) =>
+                                              _sendInvitation(),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton.icon(
+                                          key: const ValueKey(
+                                            'send-invitation-button',
+                                          ),
+                                          onPressed:
+                                              state.isInviting ||
+                                                  state
+                                                      .isRemovingCollaborator ||
+                                                  !_hasValidEmail
+                                              ? null
+                                              : _sendInvitation,
+                                          icon: state.isInviting
+                                              ? const SizedBox.square(
+                                                  dimension: 18,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        color: Colors.white,
+                                                      ),
+                                                )
+                                              : const Icon(
+                                                  Icons.person_add_rounded,
+                                                ),
+                                          label: Text(
+                                            state.isInviting
+                                                ? 'Enviando invitación…'
+                                                : 'Invitar a esta lista',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 24),
+                              Text(
+                                'PERSONAS CON ACCESO',
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.55),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (list.collaborators.isEmpty)
+                                Text(
+                                  'Aún no hay personas con acceso a esta lista.',
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                )
+                              else
+                                ...list.collaborators.map(
+                                  (person) => ListTile(
+                                    key: ValueKey('collaborator-${person.uid}'),
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: _CollaboratorAvatar(
+                                      person: person,
+                                    ),
+                                    title: Text(
+                                      person.displayName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      person.email,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    trailing:
+                                        person.role == ListMemberRole.owner
+                                        ? Text(
+                                            'Propietario',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall,
+                                          )
+                                        : list.canInvite
+                                        ? IconButton(
+                                            key: ValueKey(
+                                              'remove-collaborator-${person.uid}',
+                                            ),
+                                            tooltip:
+                                                'Quitar a ${person.displayName} de la lista',
+                                            onPressed:
+                                                state.isRemovingCollaborator ||
+                                                    state.isInviting
+                                                ? null
+                                                : () =>
+                                                      _confirmRemoveCollaborator(
+                                                        list,
+                                                        person,
+                                                      ),
+                                            icon:
+                                                _removingCollaboratorUid ==
+                                                        person.uid &&
+                                                    state.isRemovingCollaborator
+                                                ? const SizedBox.square(
+                                                    dimension: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
+                                                  )
+                                                : const Icon(
+                                                    Icons
+                                                        .person_remove_outlined,
+                                                  ),
+                                          )
+                                        : Text(
+                                            'Puede editar',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall,
+                                          ),
+                                  ),
+                                ),
+                              if (list.pendingInvitations.isNotEmpty) ...[
+                                const Divider(height: 28),
+                                const Text(
+                                  'INVITACIONES POR ACEPTAR',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                ...list.pendingInvitations.map(
+                                  (invitation) => ListTile(
+                                    key: ValueKey(
+                                      'pending-${invitation.email}',
+                                    ),
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const CircleAvatar(
+                                      child: Icon(Icons.schedule_send_outlined),
+                                    ),
+                                    title: Text(
+                                      invitation.email,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: const Text(
+                                      'Tendrá acceso cuando inicie sesión',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -359,7 +442,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
   ) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         key: const ValueKey('remove-collaborator-dialog'),
         title: const Text('Quitar acceso'),
         content: Text(
@@ -405,9 +488,8 @@ class _CollaboratorAvatar extends StatelessWidget {
     final photoUrl = person.photoUrl?.trim();
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
     return CircleAvatar(
-      backgroundColor: Theme.of(
-        context,
-      ).colorScheme.primary.withValues(alpha: 0.13),
+      backgroundColor: Theme.of(context).colorScheme.primary
+          .withValues(alpha: 0.13),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -636,7 +718,7 @@ class _EditListNameDialogState extends State<_EditListNameDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return LiquidAlertDialog(
       title: const Text('Editar nombre de la lista'),
       content: Form(
         key: _formKey,

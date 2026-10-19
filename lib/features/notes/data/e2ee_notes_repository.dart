@@ -1517,6 +1517,7 @@ class E2eeNotesRepository
           if (raw == null) return;
           final key = await _listKeyOrNull(listId);
           if (key != null) await _shareMissingKeys(raw, key);
+        case ListMembersChanged():
         case ListKeyEnvelopeUpdated():
           _events.add(event);
         case NoteRemoved(:final id):

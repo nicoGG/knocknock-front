@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -127,7 +128,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   Future<bool> _confirmSwipeDelete(AppNotification notification) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         key: const ValueKey('swipe-delete-notification-dialog'),
         icon: Icon(
           Icons.delete_sweep_outlined,
@@ -184,7 +185,7 @@ class _NotificationsPageState extends State<NotificationsPage>
     if (count == 0 || widget.controller.isDeletingNotifications) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         icon: Icon(
           Icons.delete_outline_rounded,
           color: Theme.of(dialogContext).colorScheme.error,

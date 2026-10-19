@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -98,51 +99,110 @@ class NoteReactionsBar extends StatelessWidget {
   Future<void> _showPicker(BuildContext context) async {
     final selected = await showModalBottomSheet<String>(
       context: context,
-      showDragHandle: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Reaccionar a la nota',
-                style: Theme.of(
-                  sheetContext,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Toca un emoji para agregarlo o quitar tu reacción.',
-                style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  for (final emoji in supportedNoteReactionEmojis)
-                    _EmojiOption(
-                      emoji: emoji,
-                      selected: note.reactions.any(
-                        (reaction) =>
-                            reaction.emoji == emoji &&
-                            reaction.isSelectedBy(currentUserId),
-                      ),
-                      onPressed: () => Navigator.pop(sheetContext, emoji),
+      builder: (sheetContext) => _ReactionPickerSurface(
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 32,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(sheetContext).colorScheme.onSurface
+                          .withValues(alpha: 0.28),
+                      borderRadius: BorderRadius.circular(99),
                     ),
-                ],
-              ),
-            ],
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Text(
+                  'Reaccionar a la nota',
+                  style: Theme.of(sheetContext).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Toca un emoji para agregarlo o quitar tu reacción.',
+                  style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final emoji in supportedNoteReactionEmojis)
+                      _EmojiOption(
+                        emoji: emoji,
+                        selected: note.reactions.any(
+                          (reaction) =>
+                              reaction.emoji == emoji &&
+                              reaction.isSelectedBy(currentUserId),
+                        ),
+                        onPressed: () => Navigator.pop(sheetContext, emoji),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
     if (selected != null && context.mounted) await onToggle(selected);
+  }
+}
+
+class _ReactionPickerSurface extends StatelessWidget {
+  const _ReactionPickerSurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const radius = BorderRadius.vertical(top: Radius.circular(32));
+    return ClipRRect(
+      borderRadius: radius,
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          key: const ValueKey('reaction-picker-glass-surface'),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.55),
+            ),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colors.surface.withValues(alpha: isDark ? 0.78 : 0.86),
+                colors.surfaceContainerHigh.withValues(
+                  alpha: isDark ? 0.64 : 0.72,
+                ),
+                colors.surface.withValues(alpha: isDark ? 0.84 : 0.9),
+              ],
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
   }
 }
 
@@ -371,41 +431,60 @@ class _EmojiOption extends StatelessWidget {
       selected: selected,
       label: 'Reacción $emoji',
       child: Material(
-        color: selected
-            ? colorScheme.primaryContainer
-            : colorScheme.surfaceContainerHighest,
-        shape: CircleBorder(
-          side: BorderSide(
-            color: selected ? colorScheme.primary : colorScheme.outlineVariant,
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: selected
+                  ? [
+                      colorScheme.primary.withValues(alpha: 0.34),
+                      colorScheme.primary.withValues(alpha: 0.12),
+                    ]
+                  : [
+                      Colors.white.withValues(alpha: 0.18),
+                      colorScheme.surface.withValues(alpha: 0.08),
+                    ],
+            ),
+            border: Border.all(
+              color: selected
+                  ? colorScheme.primary.withValues(alpha: 0.8)
+                  : Colors.white.withValues(alpha: 0.22),
+              width: selected ? 1.5 : 1,
+            ),
           ),
-        ),
-        child: InkWell(
-          key: ValueKey('reaction-option-$emoji'),
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: SizedBox.square(
-            dimension: 54,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                _AnimatedEmojiGlyph(
-                  key: ValueKey('picker-emoji-motion-$emoji'),
-                  id: 'picker-$emoji',
-                  emoji: emoji,
-                  fontSize: 27,
-                  enabled: !MediaQuery.disableAnimationsOf(context),
-                ),
-                if (selected)
-                  Positioned(
-                    right: 3,
-                    bottom: 3,
-                    child: Icon(
-                      Icons.check_circle_rounded,
-                      size: 16,
-                      color: colorScheme.primary,
-                    ),
+          child: InkWell(
+            key: ValueKey('reaction-option-$emoji'),
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: SizedBox.square(
+              dimension: 54,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  _AnimatedEmojiGlyph(
+                    key: ValueKey('picker-emoji-motion-$emoji'),
+                    id: 'picker-$emoji',
+                    emoji: emoji,
+                    fontSize: 27,
+                    enabled: !MediaQuery.disableAnimationsOf(context),
                   ),
-              ],
+                  if (selected)
+                    Positioned(
+                      right: 3,
+                      bottom: 3,
+                      child: Icon(
+                        Icons.check_circle_rounded,
+                        size: 16,
+                        color: colorScheme.primary,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

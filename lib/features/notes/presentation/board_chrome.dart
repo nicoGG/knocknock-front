@@ -234,10 +234,8 @@ class _OfflineSyncNotice extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: color,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(color: color, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 3),
                   Text(
@@ -390,9 +388,8 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(
-                                0xFFE08A24,
-                              ).withValues(alpha: 0.28),
+                              color: const Color(0xFFE08A24)
+                                  .withValues(alpha: 0.28),
                               blurRadius: 6,
                               offset: const Offset(0, 2),
                             ),
@@ -515,8 +512,7 @@ class _ConnectionStatusDialog extends StatelessWidget {
     final Color syncColor;
     if (!isSignedIn) {
       syncStatus = 'Solo en este dispositivo';
-      syncDetail =
-          'Inicia sesión para sincronizar tus listas y notas entre dispositivos.';
+      syncDetail = 'Inicia sesión para sincronizar tus listas y notas entre dispositivos.';
       syncIcon = Icons.phone_android_rounded;
       syncColor = colorScheme.primary;
     } else if (state.syncConflictCount > 0) {
@@ -539,8 +535,7 @@ class _ConnectionStatusDialog extends StatelessWidget {
       syncColor = colorScheme.primary;
     } else if (isConnecting) {
       syncStatus = 'Esperando conexión';
-      syncDetail =
-          'La lista permanece disponible mientras restablecemos el canal en tiempo real.';
+      syncDetail = 'La lista permanece disponible mientras restablecemos el canal en tiempo real.';
       syncIcon = Icons.cloud_sync_outlined;
       syncColor = colorScheme.primary;
     } else if (isSyncing || notesStatus == NotesStatus.loading) {
@@ -567,20 +562,17 @@ class _ConnectionStatusDialog extends StatelessWidget {
     final Color encryptionColor;
     if (!isSignedIn) {
       encryptionStatus = 'Disponible al iniciar sesión';
-      encryptionDetail =
-          'En modo invitado, el contenido permanece guardado localmente en este dispositivo.';
+      encryptionDetail = 'En modo invitado, el contenido permanece guardado localmente en este dispositivo.';
       encryptionIcon = Icons.phonelink_lock_outlined;
       encryptionColor = colorScheme.primary;
     } else if (selectedList == null) {
       encryptionStatus = 'Verificando';
-      encryptionDetail =
-          'El estado de protección aparecerá cuando termine de cargar la lista.';
+      encryptionDetail = 'El estado de protección aparecerá cuando termine de cargar la lista.';
       encryptionIcon = Icons.shield_outlined;
       encryptionColor = colorScheme.primary;
     } else if (isEncrypted) {
       encryptionStatus = 'Activo en esta lista';
-      encryptionDetail =
-          'La lista y el contenido de sus notas se cifran en este dispositivo antes de sincronizarse.';
+      encryptionDetail = 'La lista y el contenido de sus notas se cifran en este dispositivo antes de sincronizarse.';
       encryptionIcon = Icons.enhanced_encryption_outlined;
       encryptionColor = const Color(0xFF2C9B4A);
     } else {
@@ -593,7 +585,7 @@ class _ConnectionStatusDialog extends StatelessWidget {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final dialogMaxHeight = MediaQuery.sizeOf(context).height - 48;
-    final glassBorder = Colors.white.withValues(alpha: isDark ? 0.14 : 0.48);
+    final glassBorder = Colors.white.withValues(alpha: isDark ? 0.22 : 0.55);
 
     return Dialog(
       key: const ValueKey('connection-status-dialog'),
@@ -612,17 +604,13 @@ class _ConnectionStatusDialog extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: isDark
-                    ? [
-                        colorScheme.surface.withValues(alpha: 0.8),
-                        colorScheme.surfaceContainerHigh.withValues(
-                          alpha: 0.66,
-                        ),
-                      ]
-                    : [
-                        Colors.white.withValues(alpha: 0.74),
-                        colorScheme.surface.withValues(alpha: 0.6),
-                      ],
+                colors: [
+                  Colors.white.withValues(alpha: isDark ? 0.12 : 0.38),
+                  colorScheme.surfaceContainerHigh.withValues(
+                    alpha: isDark ? 0.64 : 0.66,
+                  ),
+                  colorScheme.surface.withValues(alpha: isDark ? 0.78 : 0.84),
+                ],
               ),
               borderRadius: BorderRadius.circular(30),
               border: Border.all(color: glassBorder),
@@ -1000,7 +988,7 @@ class _ConnectionStatusRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: colorScheme.surface.withValues(
-                  alpha: isDark ? 0.46 : 0.38,
+                  alpha: isDark ? 0.24 : 0.26,
                 ),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(

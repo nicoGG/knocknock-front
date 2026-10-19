@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -265,7 +266,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _confirmClearLocalData() async {
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => LiquidAlertDialog(
         title: const Text('¿Limpiar los datos locales?'),
         content: const Text(
           'Se eliminarán definitivamente todas las listas y notas creadas '

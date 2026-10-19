@@ -29,6 +29,12 @@ class ListAppearanceChanged extends NotesRealtimeEvent {
   final ListAppearance appearance;
 }
 
+class ListMembersChanged extends NotesRealtimeEvent {
+  const ListMembersChanged(this.listId);
+
+  final String listId;
+}
+
 class ListNameChanged extends NotesRealtimeEvent {
   const ListNameChanged(this.listId, this.name, this.updatedAt);
 

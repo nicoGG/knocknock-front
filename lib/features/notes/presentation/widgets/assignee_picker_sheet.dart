@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'assignee_picker_style.dart';
@@ -47,7 +48,7 @@ class AssigneePickerSheetState extends State<AssigneePickerSheet> {
     var enteredName = '';
     final name = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         title: const Text('Responsable personalizado'),
         content: TextFormField(
           key: ValueKey(widget.nameFieldKey),

@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/presentation/widgets/liquid_bottom_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:intl/intl.dart';
@@ -47,7 +48,7 @@ Future<ReminderScheduleSelection?> showReminderSchedulePicker(
   DateTime Function()? now,
 }) async {
   final currentTime = (now ?? DateTime.now)();
-  final choice = await showModalBottomSheet<_ReminderChoice>(
+  final choice = await showLiquidBottomSheet<_ReminderChoice>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -63,16 +64,11 @@ Future<ReminderScheduleSelection?> showReminderSchedulePicker(
   }
 
   if (choice.isRecurring) {
-    return showModalBottomSheet<ReminderScheduleSelection>(
+    return showLiquidBottomSheet<ReminderScheduleSelection>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-      ),
-      clipBehavior: Clip.antiAlias,
       builder: (sheetContext) => _RecurringReminderSheet(
         now: currentTime,
         currentReminder: currentReminder,

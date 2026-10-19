@@ -554,6 +554,7 @@ extension _BoardPageContent on _BoardPageState {
             editAttachment,
             editTarget,
             saveInline,
+            closeButton,
           ) => BlocBuilder<NotesCubit, NotesState>(
             bloc: cubit,
             buildWhen: (previous, current) {
@@ -601,6 +602,7 @@ extension _BoardPageContent on _BoardPageState {
                   : null;
               final collaboratorPhoto = author?.photoUrl?.trim();
               return PostItCard(
+                topRightOverlay: closeButton,
                 note: note,
                 layout: PostItCardLayout.large,
                 enableHero: false,
@@ -744,7 +746,7 @@ extension _BoardPageContent on _BoardPageState {
           boardId: '',
           title: template.title,
           content: template.content,
-          color: NoteColor.none,
+          color: NoteColor.yellow,
           authorName: authorName,
           category: template.category,
           checklist: [
@@ -808,7 +810,7 @@ extension _BoardPageContent on _BoardPageState {
     if (authRepository.currentUser == null) {
       final openProfile = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => LiquidAlertDialog(
           title: const Text('Inicia sesión para compartir'),
           content: const Text(
             'Conecta tu cuenta de Google para invitar por correo y mantener '
@@ -889,7 +891,7 @@ extension _BoardPageContent on _BoardPageState {
     final isOnlyList = cubit.state.lists.length == 1;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => LiquidAlertDialog(
         title: const Text('Eliminar lista'),
         content: Text(
           'Se eliminará “${list.name}” junto con todas sus notas. '
@@ -949,9 +951,8 @@ extension _BoardPageContent on _BoardPageState {
 
   void _openTrash() {
     final cubit = context.read<NotesCubit>();
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => TrashPage(cubit: cubit)));
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => TrashPage(cubit: cubit)));
   }
 
   void _restoreBoardPreferences([String? listId]) {
@@ -1031,7 +1032,7 @@ extension _BoardPageContent on _BoardPageState {
     if (result == ListProtectionResult.unavailable) {
       await showDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => LiquidAlertDialog(
           title: const Text('Biometría no disponible'),
           content: Text(
             '${listBiometricSetupInstruction(platform)} en los ajustes del '

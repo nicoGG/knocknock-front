@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 
 abstract final class NotePalette {
+  static final selectableColors = NoteColor.values
+      .where((color) => color != NoteColor.none)
+      .toList(growable: false);
+
   static Color color(NoteColor color) => switch (color) {
-    NoteColor.none => const Color(0xFFF7F3EA),
+    NoteColor.none => const Color(0xFFFFE58A),
     NoteColor.yellow => const Color(0xFFFFE58A),
     NoteColor.pink => const Color(0xFFFFB8C6),
     NoteColor.blue => const Color(0xFFACDDF2),

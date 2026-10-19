@@ -79,6 +79,10 @@ class ApiNotesRepository
         'account:aggregate-board-appearance-updated',
         _onAggregateBoardAppearanceChanged,
       )
+      ..on('list:members-updated', (data) {
+        final listId = _asJson(data)?['listId'] as String?;
+        if (listId != null) _events.add(ListMembersChanged(listId));
+      })
       ..on('list:access-removed', (data) {
         final listId = _asJson(data)?['listId'] as String?;
         if (listId != null) _events.add(ListAccessRemoved(listId));

@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/input_formatters/initial_uppercase_text_formatter.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -1061,7 +1062,7 @@ class _NoteChecklistDetailState extends State<NoteChecklistDetail> {
   Future<void> _confirmRemove(NoteChecklistItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         key: ValueKey('delete-detail-checklist-dialog-${item.id}'),
         icon: Icon(
           Icons.delete_outline_rounded,

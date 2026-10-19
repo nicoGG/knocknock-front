@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' as html_parser;
@@ -224,7 +225,7 @@ class _NoteLinkEditorDialogState extends State<_NoteLinkEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return LiquidAlertDialog(
       key: const ValueKey('note-link-dialog'),
       scrollable: true,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),

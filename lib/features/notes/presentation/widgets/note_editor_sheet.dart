@@ -1,4 +1,5 @@
 import 'package:nocknock/features/notes/presentation/widgets/assignee_picker_sheet.dart';
+
 import 'dart:convert';
 import 'dart:ui' as ui;
 
@@ -92,7 +93,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
     _authorController = TextEditingController(
       text: note?.authorName ?? widget.defaultAuthorName,
     );
-    _color = note?.color ?? NoteColor.none;
+    _color = note?.color ?? NoteColor.yellow;
     _category = note?.category ?? NoteCategory.general;
     _checklist = [...?note?.checklist];
     _assigneeUid =
@@ -309,7 +310,7 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
                   Wrap(
                     spacing: 12,
                     runSpacing: 12,
-                    children: NoteColor.values.map((color) {
+                    children: NotePalette.selectableColors.map((color) {
                       final selected = color == _color;
                       return Semantics(
                         label: 'Color ${color.name}',
@@ -490,9 +491,8 @@ class _NoteEditorSheetState extends State<NoteEditorSheet> {
       setState(() => _attachments = [..._attachments, ...attachments]);
     } on NoteAttachmentPickFailure catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 }
@@ -522,9 +522,8 @@ class _NotePhotosField extends StatelessWidget {
             Expanded(
               child: Text(
                 'Adjuntos · ${attachments.length}/$noteAttachmentMaxCount',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
             ),
             if (onAdd != null)

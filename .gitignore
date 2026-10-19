@@ -48,3 +48,9 @@ app.*.map.json
 /android/key.properties
 /android/app/*.jks
 /android/app/*.keystore
+
+# FVM Version Cache
+.fvm/
+
+# Kotlin local build cache
+/android/.kotlin/

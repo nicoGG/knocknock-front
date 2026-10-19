@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -246,7 +247,7 @@ class _ProfileCardState extends State<ProfileCard> {
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         title: const Text('¿Eliminar tu cuenta?'),
         content: const Text(
           'Se eliminarán permanentemente tu acceso, tus listas, notas, '

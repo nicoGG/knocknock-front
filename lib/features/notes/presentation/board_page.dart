@@ -1,3 +1,7 @@
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -277,9 +281,8 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         }
         _scheduleActiveListProtectionSync(state);
         if (state.message != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(state.message!)));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(state.message!)));
         }
       },
       builder: (context, state) {
@@ -338,9 +341,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             ? categoryFilteredNotes
             : categoryFilteredNotes
                   .where(
-                    (note) => noteAssigneeFilterKeys(
-                      note,
-                    ).contains(selectedAssigneeUid),
+                    (note) =>
+                        noteAssigneeFilterKeys(note)
+                            .contains(selectedAssigneeUid),
                   )
                   .toList();
         final isPinnedScope = _scope == _BoardScope.pinned;

@@ -1,3 +1,5 @@
+import 'package:nocknock/features/notes/presentation/widgets/liquid_bottom_sheet.dart';
+
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -26,7 +28,7 @@ Future<List<NoteAttachment>> pickNoteAttachments({
   int remaining = noteAttachmentMaxCount,
 }) async {
   if (remaining <= 0) return const [];
-  final source = await showModalBottomSheet<NoteAttachmentSource>(
+  final source = await showLiquidBottomSheet<NoteAttachmentSource>(
     context: context,
     showDragHandle: true,
     builder: (sheetContext) => SafeArea(

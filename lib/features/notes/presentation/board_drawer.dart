@@ -259,85 +259,82 @@ class _AppDrawer extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: Stack(
+                  child: Column(
                     children: [
-                      Positioned.fill(
-                        child: Scrollbar(
-                          child: ListView.builder(
-                            padding: EdgeInsets.fromLTRB(
-                              10,
-                              2,
-                              10,
-                              112 + MediaQuery.viewPaddingOf(context).bottom,
-                            ),
-                            itemExtent: 60,
-                            itemCount: lists.length,
-                            itemBuilder: (context, index) {
-                              final list = lists[index];
-                              final selected =
-                                  !assignedToMeSelected &&
-                                  !pinnedSelected &&
-                                  !withReminderSelected &&
-                                  list.id == selectedListId;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: _DrawerDestinationTile(
-                                  key: ValueKey('list-${list.id}'),
-                                  selected: selected,
-                                  icon: selected
-                                      ? Icons.folder_rounded
-                                      : Icons.folder_outlined,
-                                  label: list.name,
-                                  trailing: selected
-                                      ? isListProtected(list.id)
-                                            ? Icons.lock_rounded
-                                            : Icons.check_rounded
-                                      : isListProtected(list.id)
-                                      ? Icons.lock_outline_rounded
-                                      : list.isShared
-                                      ? Icons.people_outline_rounded
-                                      : null,
-                                  trailingTooltip: isListProtected(list.id)
-                                      ? 'Lista protegida'
-                                      : list.isShared && !selected
-                                      ? 'Lista compartida'
-                                      : null,
-                                  trailingAction: IconButton(
-                                    tooltip: favoriteListIds.contains(list.id)
-                                        ? 'Quitar de favoritas'
-                                        : 'Agregar a favoritas',
-                                    onPressed: () async {
-                                      final updated = await onToggleFavorite(
-                                        list.id,
-                                      );
-                                      if (!updated && context.mounted) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'Puedes tener hasta 3 favoritas.',
-                                            ),
-                                          ),
+                      Expanded(
+                        child: ScrollEdgeFade(
+                          child: _DrawerListScrollbar(
+                            child: ListView.builder(
+                              primary: true,
+                              padding: const EdgeInsets.fromLTRB(10, 2, 10, 24),
+                              itemExtent: 60,
+                              itemCount: lists.length,
+                              itemBuilder: (context, index) {
+                                final list = lists[index];
+                                final selected =
+                                    !assignedToMeSelected &&
+                                    !pinnedSelected &&
+                                    !withReminderSelected &&
+                                    list.id == selectedListId;
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: _DrawerDestinationTile(
+                                    key: ValueKey('list-${list.id}'),
+                                    selected: selected,
+                                    icon: selected
+                                        ? Icons.folder_rounded
+                                        : Icons.folder_outlined,
+                                    label: list.name,
+                                    trailing: selected
+                                        ? isListProtected(list.id)
+                                              ? Icons.lock_rounded
+                                              : Icons.check_rounded
+                                        : isListProtected(list.id)
+                                        ? Icons.lock_outline_rounded
+                                        : list.isShared
+                                        ? Icons.people_outline_rounded
+                                        : null,
+                                    trailingTooltip: isListProtected(list.id)
+                                        ? 'Lista protegida'
+                                        : list.isShared && !selected
+                                        ? 'Lista compartida'
+                                        : null,
+                                    trailingAction: IconButton(
+                                      tooltip: favoriteListIds.contains(list.id)
+                                          ? 'Quitar de favoritas'
+                                          : 'Agregar a favoritas',
+                                      onPressed: () async {
+                                        final updated = await onToggleFavorite(
+                                          list.id,
                                         );
-                                      }
-                                    },
-                                    icon: Icon(
-                                      favoriteListIds.contains(list.id)
-                                          ? Icons.star_rounded
-                                          : Icons.star_outline_rounded,
-                                      color: favoriteListIds.contains(list.id)
-                                          ? const Color(0xFFE4A528)
-                                          : null,
+                                        if (!updated && context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Puedes tener hasta 3 favoritas.',
+                                                  ),
+                                                ),
+                                              );
+                                        }
+                                      },
+                                      icon: Icon(
+                                        favoriteListIds.contains(list.id)
+                                            ? Icons.star_rounded
+                                            : Icons.star_outline_rounded,
+                                        color: favoriteListIds.contains(list.id)
+                                            ? const Color(0xFFE4A528)
+                                            : null,
+                                      ),
                                     ),
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      onSelectList(list.id);
+                                    },
                                   ),
-                                  onTap: () {
-                                    Navigator.pop(context);
-                                    onSelectList(list.id);
-                                  },
-                                ),
-                              );
-                            },
+                                );
+                              },
+                            ),
                           ),
                         ),
                       ),
@@ -359,6 +356,33 @@ class _AppDrawer extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _DrawerListScrollbar extends StatefulWidget {
+  const _DrawerListScrollbar({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_DrawerListScrollbar> createState() => _DrawerListScrollbarState();
+}
+
+class _DrawerListScrollbarState extends State<_DrawerListScrollbar> {
+  final _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PrimaryScrollController(
+      controller: _controller,
+      child: Scrollbar(controller: _controller, child: widget.child),
     );
   }
 }
@@ -386,18 +410,6 @@ class _DrawerFloatingSettingsButton extends StatelessWidget {
           18,
           10,
           6 + MediaQuery.viewPaddingOf(context).bottom,
-        ),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              colorScheme.surface.withValues(alpha: 0),
-              colorScheme.surface.withValues(alpha: isDark ? 0.94 : 0.97),
-              colorScheme.surface.withValues(alpha: isDark ? 0.98 : 1),
-            ],
-            stops: const [0, 0.34, 1],
-          ),
         ),
         child: DecoratedBox(
           decoration: BoxDecoration(

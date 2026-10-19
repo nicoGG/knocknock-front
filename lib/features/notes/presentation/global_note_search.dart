@@ -1,5 +1,7 @@
 import 'package:nocknock/features/notes/presentation/note_assignee.dart';
+
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/data/notes_repository.dart';
@@ -97,6 +99,8 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const radius = BorderRadius.vertical(top: Radius.circular(30));
     return AnimatedPadding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       duration: MediaQuery.disableAnimationsOf(context)
@@ -105,112 +109,142 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
       curve: Curves.easeOutCubic,
       child: FractionallySizedBox(
         heightFactor: 0.88,
-        child: Material(
-          color: colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(99),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: DecoratedBox(
+              key: const ValueKey('search-liquid-glass-surface'),
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.55),
+                ),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    colorScheme.surface.withValues(alpha: isDark ? 0.78 : 0.86),
+                    colorScheme.surfaceContainerHigh.withValues(
+                      alpha: isDark ? 0.64 : 0.72,
+                    ),
+                    colorScheme.surface.withValues(alpha: isDark ? 0.84 : 0.9),
+                  ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 12, 14),
-                child: Row(
+              child: Material(
+                color: Colors.transparent,
+                child: Column(
                   children: [
-                    Expanded(
-                      child: Text(
-                        'Buscar en NockNock',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.4,
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.28,
+                        ),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 12, 14),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Buscar en NockNock',
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.4,
+                                  ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: TextField(
+                        key: const ValueKey('global-note-search-field'),
+                        controller: _controller,
+                        autofocus: true,
+                        textInputAction: TextInputAction.search,
+                        onChanged: _scheduleSearch,
+                        decoration: InputDecoration(
+                          hintText: 'Título, contenido o subtarea',
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 16,
+                            horizontal: 16,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(
+                              color: colorScheme.primary.withValues(
+                                alpha: 0.65,
+                              ),
+                            ),
+                          ),
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          suffixIcon: _controller.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: 'Limpiar búsqueda',
+                                  onPressed: () {
+                                    _controller.clear();
+                                    _scheduleSearch('');
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                          filled: true,
+                          fillColor: colorScheme.surfaceContainerHighest
+                              .withValues(alpha: isDark ? 0.26 : 0.38),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(22),
+                            borderSide: BorderSide.none,
+                          ),
                         ),
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: TextField(
-                  key: const ValueKey('global-note-search-field'),
-                  controller: _controller,
-                  autofocus: true,
-                  textInputAction: TextInputAction.search,
-                  onChanged: _scheduleSearch,
-                  decoration: InputDecoration(
-                    hintText: 'Título, contenido o subtarea',
-                    contentPadding: const EdgeInsets.symmetric(
-                      vertical: 16,
-                      horizontal: 16,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(
-                        color: colorScheme.primary.withValues(alpha: 0.65),
-                      ),
-                    ),
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _controller.text.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Limpiar búsqueda',
-                            onPressed: () {
-                              _controller.clear();
-                              _scheduleSearch('');
-                            },
-                            icon: const Icon(Icons.close_rounded),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline_rounded,
+                            size: 14,
+                            color: colorScheme.onSurfaceVariant,
                           ),
-                    filled: true,
-                    fillColor: colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.58,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(22),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.lock_outline_rounded,
-                      size: 14,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Tus listas, una búsqueda privada',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Tus listas, una búsqueda privada',
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                          if (!_isLoading && _results.isNotEmpty)
+                            Text(
+                              '${_results.length} resultados',
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(color: colorScheme.primary),
+                            ),
+                        ],
                       ),
                     ),
-                    if (!_isLoading && _results.isNotEmpty)
-                      Text(
-                        '${_results.length} resultados',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: colorScheme.primary),
-                      ),
+                    Expanded(child: _buildBody(context)),
                   ],
                 ),
               ),
-              Expanded(child: _buildBody(context)),
-            ],
+            ),
           ),
         ),
       ),
@@ -234,8 +268,7 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
       return const _SearchMessage(
         icon: Icons.manage_search_rounded,
         title: 'Todo lo que buscas, aquí',
-        message:
-            'Encuentra información en todas tus listas sin enviarla a un buscador externo.',
+        message: 'Encuentra información en todas tus listas sin enviarla a un buscador externo.',
       );
     }
     if (_results.isEmpty) {

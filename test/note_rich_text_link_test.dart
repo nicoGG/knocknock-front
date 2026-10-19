@@ -140,7 +140,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final linkFields = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byKey(const ValueKey('note-link-dialog')),
       matching: find.byType(TextFormField),
     );
     expect(linkFields, findsNWidgets(2));
@@ -194,7 +194,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final fields = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byKey(const ValueKey('note-link-dialog')),
       matching: find.byType(TextFormField),
     );
     expect(fields, findsNWidgets(2));

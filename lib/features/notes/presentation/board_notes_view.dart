@@ -2,16 +2,18 @@ part of 'board_page.dart';
 
 /// Board note layouts, completion transitions, and reordering gestures.
 
-typedef NoteCardBuilder =
-    Widget Function(
-      Note note,
-      PostItCardLayout layout, {
-      bool? completedChecklistExpanded,
-      ValueChanged<bool>? onCompletedChecklistExpansionChanged,
-    });
+typedef NoteCardBuilder = Widget Function(
+  Note note,
+  PostItCardLayout layout, {
+  bool? completedChecklistExpanded,
+  ValueChanged<bool>? onCompletedChecklistExpansionChanged,
+});
 typedef NoteReorderCallback = void Function(List<String> orderedIds);
-typedef NoteCompletionBuilder =
-    Widget Function(BuildContext context, Note note, VoidCallback onToggle);
+typedef NoteCompletionBuilder = Widget Function(
+  BuildContext context,
+  Note note,
+  VoidCallback onToggle,
+);
 
 class _NoteCompletionTransition extends StatefulWidget {
   const _NoteCompletionTransition({
@@ -739,9 +741,8 @@ class _NotesGridState extends State<_NotesGrid> {
         TextPainter(
           text: TextSpan(
             text: note.title,
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            style: Theme.of(context).textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w800),
           ),
           textDirection: textDirection,
           textScaler: textScaler,
@@ -799,10 +800,19 @@ class _NotesGridState extends State<_NotesGrid> {
               (hiddenPendingChecklistCount > 0 ? 22 : 0) +
               (completedChecklistCount > 0 ? 44 : 0);
     final contentHeight =
+        (NoteDrawing.decode(note.contentDelta) != null
+            ? (columnWidth - 32) /
+                  (NoteDrawing.decode(note.contentDelta)!.aspectRatio < 1
+                      ? NoteDrawing.decode(note.contentDelta)!.aspectRatio
+                      : 0.85)
+            : 0) +
         descriptionHeight +
         checklistHeight +
         (note.content.isNotEmpty && note.checklist.isNotEmpty ? 10 : 0);
-    final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
+    final hasBody =
+        note.checklist.isNotEmpty ||
+        note.content.isNotEmpty ||
+        NoteDrawing.decode(note.contentDelta) != null;
     final originListHeight = showOriginList && hasBody ? 35.0 : 0.0;
     final categoryHeight = hasBody
         ? note.category == NoteCategory.general
@@ -830,9 +840,8 @@ class _NotesGridState extends State<_NotesGrid> {
         final titleOnlyPainter = TextPainter(
           text: TextSpan(
             text: note.title,
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            style: Theme.of(context).textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w800),
           ),
           textDirection: textDirection,
           textScaler: textScaler,
@@ -925,8 +934,7 @@ class _DraggableGridNoteState extends State<_DraggableGridNote> {
         curve: Curves.easeOutCubic,
         child: LayoutBuilder(
           builder: (context, constraints) => Semantics(
-            hint:
-                'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
+            hint: 'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
             child: LongPressDraggable<String>(
               data: widget.note.id,
               delay: const Duration(milliseconds: 500),
@@ -1102,8 +1110,7 @@ class _NotesListState extends State<_NotesList> {
         ),
         motionId: note.id,
         child: Semantics(
-          hint:
-              'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
+          hint: 'Toca para abrir; mantén presionada y arrastra para cambiar el orden',
           child: _NoteEntrance(
             index: index,
             motionId: note.id,

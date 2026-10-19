@@ -1,4 +1,9 @@
+import 'package:nocknock/features/notes/domain/note_drawing.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
+import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
 import 'package:nocknock/features/notes/presentation/widgets/animated_note_checkbox.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -28,8 +33,9 @@ enum PostItCardLayout { grid, compact, large }
 enum PostItInlineEditTarget { none, title, description, checklist }
 
 typedef PostItInlineSave = Future<bool> Function(NoteDraft draft);
-typedef NoteAttachmentLoader =
-    Future<NoteAttachment> Function(String attachmentId);
+typedef NoteAttachmentLoader = Future<NoteAttachment> Function(
+  String attachmentId,
+);
 
 const noteMosaicLinkBlue = Color(0xFF64B5F6);
 const noteMosaicLinkBlueOnLight = Color(0xFF1565C0);
@@ -252,9 +258,11 @@ class PostItCard extends StatelessWidget {
     this.inlineEditTarget,
     this.onInlineSave,
     this.attachmentLoader,
+    this.topRightOverlay,
     super.key,
   });
 
+  final Widget? topRightOverlay;
   final Note note;
   final VoidCallback onToggle;
   final VoidCallback onPin;
@@ -532,6 +540,8 @@ class PostItCard extends StatelessWidget {
                 ),
               ),
             ),
+          if (topRightOverlay case final overlay?)
+            Positioned(top: 0, right: 10, child: overlay),
           if (showPin)
             Positioned(
               top: switch (layout) {
@@ -817,7 +827,10 @@ class _NoteBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasBody = note.checklist.isNotEmpty || note.content.isNotEmpty;
+    final hasBody =
+        note.checklist.isNotEmpty ||
+        note.content.isNotEmpty ||
+        NoteDrawing.decode(note.contentDelta) != null;
     final hasGridPhoto =
         isGrid && note.photoAttachments.any((attachment) => attachment.isImage);
     final showGridColorIndicator =
@@ -968,7 +981,18 @@ class _NoteBody extends StatelessWidget {
         ] else if (showMetadata)
           SizedBox(height: isGrid ? 6 : 8),
         Expanded(
-          child: isGrid
+          child: NoteDrawing.decode(note.contentDelta) != null
+              ? FittedBox(
+                  fit: BoxFit.contain,
+                  child: SizedBox(
+                    width: 360,
+                    child: NoteDrawingView(
+                      drawing: NoteDrawing.decode(note.contentDelta)!,
+                      backgroundColor: NotePalette.color(note.color),
+                    ),
+                  ),
+                )
+              : isGrid
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -2202,7 +2226,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     if (_isSaving) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => LiquidAlertDialog(
         title: Text(attachment.isPdf ? '¿Quitar PDF?' : '¿Eliminar imagen?'),
         content: Text(
           '${attachment.isPdf ? 'El PDF' : 'La imagen'} se quitará de esta nota. '
@@ -2235,8 +2259,35 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
     if (!saved) return;
   }
 
+  Future<void> _editDrawing() async {
+    if (_isSaving) return;
+    final drawing = await editNoteDrawing(
+      context,
+      NoteDrawing.decode(widget.note.contentDelta)!,
+      noteColor: widget.note.color,
+    );
+    if (!mounted || drawing == null) return;
+    setState(() => _isSaving = true);
+    try {
+      await widget.onSave(
+        _draft(
+          content: NoteRichContent(
+            plainText: '',
+            deltaJson: drawing.drawing.encode(),
+          ),
+          color: drawing.color,
+          checklist: const [],
+          attachments: const [],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
   NoteDraft _draft({
     String? title,
+    NoteColor? color,
     NoteRichContent? content,
     List<NoteChecklistItem>? checklist,
     List<NoteAttachment>? attachments,
@@ -2246,7 +2297,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
       title: title ?? note.title,
       content: content?.plainText ?? note.content,
       contentDelta: content?.deltaJson ?? note.contentDelta,
-      color: note.color,
+      color: color ?? note.color,
       category: note.category,
       checklist: checklist ?? note.checklist,
       authorName: note.authorName,
@@ -2457,160 +2508,256 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
           const SizedBox(height: 10),
         ],
         Expanded(
-          child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.manual,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_editingDescription) ...[
-                  KeyedSubtree(
-                    key: _descriptionEditorKey,
-                    child: KeyedSubtree(
-                      key: ValueKey(
-                        'inline-description-revision-$_descriptionRevision',
-                      ),
-                      child: NoteRichTextEditor(
-                        key: const ValueKey('quick-edit-content-field'),
-                        editorKey: const ValueKey('quick-edit-content-editor'),
-                        initialPlainText: _content!.plainText,
-                        initialDeltaJson: _content!.deltaJson,
-                        autoFocus: true,
-                        minEditorHeight: 76,
-                        maxEditorHeight: 132,
-                        foregroundColor: foregroundColor,
-                        backgroundColor: fieldFill,
-                        focusNode: _descriptionFocusNode,
-                        onChanged: (content) => _content = content,
-                      ),
-                    ),
-                  ),
-                ] else
-                  Semantics(
-                    button: true,
-                    label: note.content.trim().isEmpty
-                        ? 'Agregar descripción'
-                        : 'Editar descripción',
-                    child: InkWell(
-                      key: ValueKey('inline-description-hit-target-${note.id}'),
-                      onTap: _beginDescriptionEditing,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 6,
-                        ),
-                        child: note.content.trim().isEmpty
-                            ? Row(
-                                children: [
-                                  Icon(
-                                    Icons.notes_rounded,
-                                    size: 18,
-                                    color: foregroundColor.withValues(
-                                      alpha: 0.72,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Agregar descripción',
-                                    style: TextStyle(
-                                      color: foregroundColor.withValues(
-                                        alpha: 0.72,
-                                      ),
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : NoteRichTextViewer(
-                                key: ValueKey(
-                                  'preview-rich-content-${note.id}',
-                                ),
-                                plainText: note.content,
-                                deltaJson: note.contentDelta,
-                                foregroundColor: foregroundColor.withValues(
-                                  alpha: 0.9,
-                                ),
-                                onEditLink: _editDescriptionLink,
-                                onTapOutsideLink: _beginDescriptionEditing,
-                              ),
-                      ),
-                    ),
-                  ),
-                Divider(
-                  key: ValueKey(
-                    'inline-description-subtasks-divider-${note.id}',
-                  ),
-                  height: 26,
-                  color: foregroundColor.withValues(alpha: 0.28),
-                ),
-                if (!_editingChecklist)
-                  Row(
+          child: NoteDrawing.decode(note.contentDelta) != null
+              ? ClipRRect(
+                  key: const ValueKey('drawing-preview-rounded-viewport'),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Stack(
+                    fit: StackFit.expand,
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Subtareas',
-                          style: Theme.of(context).textTheme.labelLarge
-                              ?.copyWith(
-                                color: foregroundColor.withValues(alpha: 0.72),
-                                fontWeight: FontWeight.w800,
-                              ),
+                      ColoredBox(
+                        color: NotePalette.color(note.color),
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(bottom: 64),
+                          child: NoteDrawingView(
+                            drawing: NoteDrawing.decode(note.contentDelta)!,
+                            backgroundColor: NotePalette.color(note.color),
+                            onTap: _isSaving ? null : _editDrawing,
+                          ),
                         ),
                       ),
-                      if (note.checklist.isNotEmpty)
-                        IconButton(
-                          key: const ValueKey('edit-inline-checklist-button'),
-                          tooltip: 'Editar subtareas',
-                          onPressed: _beginChecklistEditing,
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.edit_rounded, size: 18),
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: IconButton(
+                          key: const ValueKey('edit-note-drawing-button'),
+                          tooltip: 'Editar dibujo',
+                          onPressed: _isSaving ? null : _editDrawing,
+                          style: IconButton.styleFrom(
+                            foregroundColor: foregroundColor,
+                            backgroundColor: foregroundColor.withValues(
+                              alpha: 0.08,
+                            ),
+                            side: BorderSide(
+                              color: foregroundColor.withValues(alpha: 0.18),
+                            ),
+                            minimumSize: const Size(44, 44),
+                          ),
+                          icon: const Icon(Icons.draw_outlined, size: 20),
                         ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          key: const ValueKey('drawing-preview-reactions'),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                NotePalette.color(note.color)
+                                    .withValues(alpha: 0),
+                                NotePalette.color(note.color)
+                                    .withValues(alpha: 0.96),
+                                NotePalette.color(note.color),
+                              ],
+                            ),
+                          ),
+                          child: IconTheme.merge(
+                            data: const IconThemeData(color: Color(0xFF292621)),
+                            child: widget.onToggleReaction != null
+                                ? NoteReactionsBar(
+                                    note: note,
+                                    currentUserId: widget.currentUserId,
+                                    reactionAuthorNames:
+                                        widget.reactionAuthorNames,
+                                    isSaving: widget.isSavingReaction,
+                                    onToggle: widget.onToggleReaction!,
+                                  )
+                                : NoteReactionsSummary(
+                                    note: note,
+                                    foregroundColor: const Color(0xFF292621),
+                                  ),
+                          ),
+                        ),
+                      ),
                     ],
-                  )
-                else
-                  const SizedBox(height: 2),
-                if (_editingChecklist) ...[
-                  SimpleNoteChecklistEditor(
-                    key: const ValueKey('quick-edit-checklist-editor'),
-                    editorKey: _checklistEditorKey,
-                    items: _checklist,
-                    foregroundColor: foregroundColor,
-                    initialFocusItemId: _checklistInitialFocusItemId,
-                    onChanged: (items) => setState(() => _checklist = items),
-                    onMutationCommitted: _saveChecklist,
-                    onFieldFocused: () => _revealEditor(_checklistEditorKey),
-                    onFocusChanged: _handleChecklistFocusChanged,
-                    onSubmitted: _saveChecklist,
-                    onDone: _saveChecklist,
                   ),
-                ] else ...[
-                  if (note.checklist.isNotEmpty)
-                    NoteChecklistPreview(
-                      items: note.checklist,
-                      foregroundColor: foregroundColor,
-                      onToggle: widget.onChecklistToggle,
-                      maxItems: 10,
-                      showOpenHint: false,
-                    ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      key: const ValueKey('add-inline-subtask-button'),
-                      onPressed: () => _beginChecklistEditing(appendItem: true),
-                      style: TextButton.styleFrom(
-                        foregroundColor: foregroundColor,
-                      ),
-                      icon: const Icon(Icons.add_rounded, size: 18),
-                      label: Text(
-                        note.checklist.isEmpty
-                            ? 'Agregar subtarea'
-                            : 'Agregar otra subtarea',
-                      ),
+                )
+              : ScrollEdgeFade(
+                  child: SingleChildScrollView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.manual,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_editingDescription) ...[
+                          KeyedSubtree(
+                            key: _descriptionEditorKey,
+                            child: KeyedSubtree(
+                              key: ValueKey(
+                                'inline-description-revision-$_descriptionRevision',
+                              ),
+                              child: NoteRichTextEditor(
+                                key: const ValueKey('quick-edit-content-field'),
+                                editorKey: const ValueKey(
+                                  'quick-edit-content-editor',
+                                ),
+                                initialPlainText: _content!.plainText,
+                                initialDeltaJson: _content!.deltaJson,
+                                autoFocus: true,
+                                minEditorHeight: 76,
+                                maxEditorHeight: 132,
+                                foregroundColor: foregroundColor,
+                                backgroundColor: fieldFill,
+                                focusNode: _descriptionFocusNode,
+                                onChanged: (content) => _content = content,
+                              ),
+                            ),
+                          ),
+                        ] else
+                          Semantics(
+                            button: true,
+                            label: note.content.trim().isEmpty
+                                ? 'Agregar descripción'
+                                : 'Editar descripción',
+                            child: InkWell(
+                              key: ValueKey(
+                                'inline-description-hit-target-${note.id}',
+                              ),
+                              onTap: _beginDescriptionEditing,
+                              borderRadius: BorderRadius.circular(10),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                  vertical: 6,
+                                ),
+                                child: note.content.trim().isEmpty
+                                    ? Row(
+                                        children: [
+                                          Icon(
+                                            Icons.notes_rounded,
+                                            size: 18,
+                                            color: foregroundColor.withValues(
+                                              alpha: 0.72,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Agregar descripción',
+                                            style: TextStyle(
+                                              color: foregroundColor.withValues(
+                                                alpha: 0.72,
+                                              ),
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : NoteRichTextViewer(
+                                        key: ValueKey(
+                                          'preview-rich-content-${note.id}',
+                                        ),
+                                        plainText: note.content,
+                                        deltaJson: note.contentDelta,
+                                        foregroundColor: foregroundColor
+                                            .withValues(alpha: 0.9),
+                                        onEditLink: _editDescriptionLink,
+                                        onTapOutsideLink:
+                                            _beginDescriptionEditing,
+                                      ),
+                              ),
+                            ),
+                          ),
+                        Divider(
+                          key: ValueKey(
+                            'inline-description-subtasks-divider-${note.id}',
+                          ),
+                          height: 26,
+                          color: foregroundColor.withValues(alpha: 0.28),
+                        ),
+                        if (!_editingChecklist)
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Subtareas',
+                                  style: Theme.of(context).textTheme.labelLarge
+                                      ?.copyWith(
+                                        color: foregroundColor.withValues(
+                                          alpha: 0.72,
+                                        ),
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                              ),
+                              if (note.checklist.isNotEmpty)
+                                IconButton(
+                                  key: const ValueKey(
+                                    'edit-inline-checklist-button',
+                                  ),
+                                  tooltip: 'Editar subtareas',
+                                  onPressed: _beginChecklistEditing,
+                                  visualDensity: VisualDensity.compact,
+                                  icon: const Icon(
+                                    Icons.edit_rounded,
+                                    size: 18,
+                                  ),
+                                ),
+                            ],
+                          )
+                        else
+                          const SizedBox(height: 2),
+                        if (_editingChecklist) ...[
+                          SimpleNoteChecklistEditor(
+                            key: const ValueKey('quick-edit-checklist-editor'),
+                            editorKey: _checklistEditorKey,
+                            items: _checklist,
+                            foregroundColor: foregroundColor,
+                            initialFocusItemId: _checklistInitialFocusItemId,
+                            onChanged: (items) =>
+                                setState(() => _checklist = items),
+                            onMutationCommitted: _saveChecklist,
+                            onFieldFocused: () =>
+                                _revealEditor(_checklistEditorKey),
+                            onFocusChanged: _handleChecklistFocusChanged,
+                            onSubmitted: _saveChecklist,
+                            onDone: _saveChecklist,
+                          ),
+                        ] else ...[
+                          if (note.checklist.isNotEmpty)
+                            NoteChecklistPreview(
+                              items: note.checklist,
+                              foregroundColor: foregroundColor,
+                              onToggle: widget.onChecklistToggle,
+                              maxItems: 10,
+                              showOpenHint: false,
+                            ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              key: const ValueKey('add-inline-subtask-button'),
+                              onPressed: () =>
+                                  _beginChecklistEditing(appendItem: true),
+                              style: TextButton.styleFrom(
+                                foregroundColor: foregroundColor,
+                              ),
+                              icon: const Icon(Icons.add_rounded, size: 18),
+                              label: Text(
+                                note.checklist.isEmpty
+                                    ? 'Agregar subtarea'
+                                    : 'Agregar otra subtarea',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                ],
-              ],
-            ),
-          ),
+                ),
         ),
         AnimatedSize(
           duration: MediaQuery.disableAnimationsOf(context)
@@ -2661,8 +2808,9 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                       ),
                       const SizedBox(height: 8),
                     ],
-                    if (widget.onToggleReaction != null ||
-                        widget.onAttachmentTap != null) ...[
+                    if (NoteDrawing.decode(note.contentDelta) == null &&
+                        (widget.onToggleReaction != null ||
+                            widget.onAttachmentTap != null)) ...[
                       Row(
                         key: const ValueKey('preview-reactions-attachment-row'),
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2717,7 +2865,8 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                    ] else if (note.reactions.isNotEmpty) ...[
+                    ] else if (NoteDrawing.decode(note.contentDelta) == null &&
+                        note.reactions.isNotEmpty) ...[
                       NoteReactionsSummary(
                         note: note,
                         foregroundColor: foregroundColor,
@@ -2901,8 +3050,9 @@ class _SimpleNoteChecklistEditorState extends State<SimpleNoteChecklistEditor> {
                       index: index,
                       child: Tooltip(
                         message: 'Arrastrar subtarea',
-                        child: SizedBox.square(
-                          dimension: 34,
+                        child: SizedBox(
+                          width: 26,
+                          height: 34,
                           child: Icon(
                             Icons.drag_indicator_rounded,
                             color: widget.foregroundColor.withValues(
@@ -3869,12 +4019,12 @@ class _AssigneeAvatarStack extends StatelessWidget {
                                   'assignee-avatar-$noteId-${visible[index].uid}',
                                 ),
                           radius: (dimension - 3) / 2,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer,
-                          foregroundColor: Theme.of(
-                            context,
-                          ).colorScheme.onPrimaryContainer,
+                          backgroundColor: Theme.of(context)
+                              .colorScheme
+                              .primaryContainer,
+                          foregroundColor: Theme.of(context)
+                              .colorScheme
+                              .onPrimaryContainer,
                           foregroundImage:
                               visible[index].photoUrl?.trim().isNotEmpty == true
                               ? _avatarImageProvider(
@@ -3888,9 +4038,8 @@ class _AssigneeAvatarStack extends StatelessWidget {
                               ? (_, _) {}
                               : null,
                           child: Text(
-                            _personLabel(
-                              visible[index],
-                            ).characters.first.toUpperCase(),
+                            _personLabel(visible[index]).characters.first
+                                .toUpperCase(),
                             style: TextStyle(
                               fontSize: dimension * .34,
                               fontWeight: FontWeight.w800,
