@@ -1165,15 +1165,10 @@ class _NoteEntranceState extends State<_NoteEntrance> {
   }
 
   @override
-  void didUpdateWidget(covariant _NoteEntrance oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.enabled) _finished = true;
-  }
-
-  @override
   Widget build(BuildContext context) {
+    // Entrance eligibility is captured on mount. A cache/network rebuild must
+    // not interrupt an animation that is already running.
     if (_finished ||
-        !widget.enabled ||
         widget.index >= _maxAnimatedNoteEntrances ||
         MediaQuery.disableAnimationsOf(context)) {
       return widget.child;

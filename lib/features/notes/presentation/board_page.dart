@@ -363,6 +363,13 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
           _scheduleAutomaticUnlock(selectedList);
         }
         final colorScheme = Theme.of(context).colorScheme;
+        final showsEmptyListAction =
+            isListScope &&
+            state.status == NotesStatus.ready &&
+            notes.isEmpty &&
+            _filter == NoteFilter.all &&
+            selectedCategory == null &&
+            selectedAssigneeUid == null;
         return Scaffold(
           extendBodyBehindAppBar: true,
           onDrawerChanged: _handleDrawerChanged,
@@ -407,6 +414,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
           ),
           floatingActionButton:
               isCompact &&
+                  !showsEmptyListAction &&
                   !isAggregateScope &&
                   !selectedListRequiresUnlock &&
                   !selectedListKeyPending
@@ -435,13 +443,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                   controller: widget.listProtectionController,
                 )
               : ListBoardBackground(
+                  // Note refreshes must not replace a known list background.
                   useThemeBackground:
-                      (isAssignedScope && state.isLoadingAssigned) ||
-                      (_scope == _BoardScope.pinned && state.isLoadingPinned) ||
-                      (_scope == _BoardScope.withReminder &&
-                          state.isLoadingReminderNotes) ||
-                      state.status == NotesStatus.loading ||
-                      state.status == NotesStatus.initial,
+                      state.lists.isEmpty &&
+                      (state.status == NotesStatus.loading ||
+                          state.status == NotesStatus.initial),
                   appearance: isListScope
                       ? state.selectedList?.appearance ?? const ListAppearance()
                       : _scope == _BoardScope.assignedToMe

@@ -32,52 +32,76 @@ void main() {
     expect(find.byKey(const ValueKey('preset-background-paper')), findsNothing);
   });
 
-  testWidgets('softly fades and blurs between list backgrounds only', (
-    tester,
-  ) async {
-    Widget board(ListAppearance appearance) => MaterialApp(
-      home: ListBoardBackground(
-        appearance: appearance,
-        child: const ColoredBox(
-          key: ValueKey('board-content'),
-          color: Colors.transparent,
+  testWidgets(
+    'keeps an opaque stable background underneath the entering list',
+    (tester) async {
+      Widget board(ListAppearance appearance) => MaterialApp(
+        home: ListBoardBackground(
+          appearance: appearance,
+          child: const ColoredBox(
+            key: ValueKey('board-content'),
+            color: Colors.transparent,
+          ),
         ),
-      ),
-    );
+      );
 
-    await tester.pumpWidget(board(const ListAppearance()));
-    expect(find.byKey(const ValueKey('preset-background-paper')), findsOne);
-    final transitionBlur = find.byKey(
-      const ValueKey('background-transition-blur'),
-    );
-    expect(transitionBlur, findsNothing);
+      await tester.pumpWidget(board(const ListAppearance()));
+      expect(find.byKey(const ValueKey('preset-background-paper')), findsOne);
+      final transitionOpacity = find.byKey(
+        const ValueKey('background-transition-opacity'),
+      );
 
-    await tester.pumpWidget(
-      board(
-        const ListAppearance(
-          backgroundPreset: ListBackgroundPreset.lavender,
-          backgroundBlur: 6,
+      await tester.pumpWidget(
+        board(
+          const ListAppearance(
+            backgroundPreset: ListBackgroundPreset.lavender,
+            backgroundBlur: 6,
+          ),
         ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 240));
+      );
+      await tester.pump(const Duration(milliseconds: 240));
 
-    expect(find.byKey(const ValueKey('preset-background-paper')), findsOne);
-    expect(find.byKey(const ValueKey('preset-background-lavender')), findsOne);
-    expect(find.byKey(const ValueKey('board-content')), findsOne);
-    expect(transitionBlur, findsNWidgets(2));
-    expect(
-      tester
-          .widgetList<ImageFiltered>(transitionBlur)
-          .every((filter) => filter.enabled),
-      isTrue,
-    );
+      expect(find.byKey(const ValueKey('preset-background-paper')), findsOne);
+      expect(
+        find.byKey(const ValueKey('preset-background-lavender')),
+        findsOne,
+      );
+      expect(find.byKey(const ValueKey('board-content')), findsOne);
+      final outgoingOpacity = tester.widget<Opacity>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('preset-background-paper')),
+          matching: transitionOpacity,
+        ),
+      );
+      expect(outgoingOpacity.opacity, 1);
+      final enteringOpacity = tester.widget<Opacity>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('preset-background-lavender')),
+          matching: transitionOpacity,
+        ),
+      );
+      expect(enteringOpacity.opacity, inExclusiveRange(0, 1));
+      expect(
+        find.byKey(const ValueKey('background-transition-blur')),
+        findsNothing,
+      );
+      expect(find.byType(Transform), findsNothing);
 
-    await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.byKey(const ValueKey('preset-background-paper')), findsNothing);
-    expect(find.byKey(const ValueKey('preset-background-lavender')), findsOne);
-    expect(find.byKey(const ValueKey('board-content')), findsOne);
-    expect(transitionBlur, findsNothing);
-  });
+      expect(
+        find.byKey(const ValueKey('preset-background-paper')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('preset-background-lavender')),
+        findsOne,
+      );
+      expect(find.byKey(const ValueKey('board-content')), findsOne);
+      expect(
+        find.byKey(const ValueKey('background-transition-blur')),
+        findsNothing,
+      );
+    },
+  );
 }

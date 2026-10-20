@@ -66,14 +66,14 @@ class _MessageState extends StatelessWidget {
       child: Center(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
+              constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _EmptyBoardIllustration(icon: icon),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   Text(
                     title,
                     textAlign: TextAlign.center,
@@ -83,7 +83,7 @@ class _MessageState extends StatelessWidget {
                       height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 350),
                     child: Text(
@@ -99,49 +99,43 @@ class _MessageState extends StatelessWidget {
                     const SizedBox(height: 20),
                     FilledButton(
                       onPressed: onAction,
-                      child: Text(actionLabel!),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(192, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.add_rounded, size: 20),
+                          const SizedBox(width: 8),
+                          Text(actionLabel!),
+                        ],
+                      ),
                     ),
                   ],
                   if (templateActions.isNotEmpty) ...[
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
                     Text(
-                      'Empieza con una plantilla',
+                      'O empieza con una plantilla',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: colorScheme.onSurface.withValues(alpha: 0.84),
                       ),
                     ),
                     const SizedBox(height: 10),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 560),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final columnCount = constraints.maxWidth >= 440
-                              ? 3
-                              : 2;
-                          final cardWidth =
-                              (constraints.maxWidth -
-                                  ((columnCount - 1) * 10)) /
-                              columnCount;
-                          return Wrap(
-                            alignment: WrapAlignment.center,
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              for (final template in templateActions)
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _TemplateQuickAction(
-                                    template: template,
-                                    onPressed: onTemplateSelected == null
-                                        ? null
-                                        : () => onTemplateSelected!(template),
-                                  ),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final template in templateActions)
+                          _TemplateQuickAction(
+                            template: template,
+                            onPressed: onTemplateSelected == null
+                                ? null
+                                : () => onTemplateSelected!(template),
+                          ),
+                      ],
                     ),
                   ],
                   if (signInHint != null) ...[
@@ -151,9 +145,8 @@ class _MessageState extends StatelessWidget {
                       child: Text(
                         signInHint!,
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: colorScheme.onSurfaceVariant),
                       ),
                     ),
                   ],
@@ -176,88 +169,94 @@ class _EmptyBoardIllustration extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return ExcludeSemantics(
       child: SizedBox(
-        width: 156,
-        height: 140,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              width: 140,
-              height: 140,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    colors.primary.withValues(alpha: 0.16),
-                    colors.primary.withValues(alpha: 0),
-                  ],
-                ),
-              ),
-            ),
-            Transform.translate(
-              offset: const Offset(-15, -6),
-              child: Transform.rotate(
-                angle: -0.16,
-                child: Container(
-                  width: 86,
-                  height: 96,
+        width: 112,
+        height: 100,
+        child: FittedBox(
+          child: SizedBox(
+            width: 156,
+            height: 140,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 140,
+                  height: 140,
                   decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        colors.primary.withValues(alpha: 0.16),
+                        colors.primary.withValues(alpha: 0),
+                      ],
                     ),
                   ),
                 ),
-              ),
-            ),
-            Transform.rotate(
-              angle: 0.07,
-              child: Container(
-                width: 88,
-                height: 100,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      colors.surfaceContainerHigh,
-                      colors.surfaceContainer,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: colors.primary.withValues(alpha: 0.28),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colors.shadow.withValues(alpha: 0.12),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
+                Transform.translate(
+                  offset: const Offset(-15, -6),
+                  child: Transform.rotate(
+                    angle: -0.16,
+                    child: Container(
+                      width: 86,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: colors.primary.withValues(alpha: 0.2),
+                        ),
+                      ),
                     ),
-                  ],
+                  ),
                 ),
-                child: Icon(icon, size: 42, color: colors.primary),
-              ),
+                Transform.rotate(
+                  angle: 0.07,
+                  child: Container(
+                    width: 88,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          colors.surfaceContainerHigh,
+                          colors.surfaceContainer,
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: colors.primary.withValues(alpha: 0.28),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colors.shadow.withValues(alpha: 0.12),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Icon(icon, size: 42, color: colors.primary),
+                  ),
+                ),
+                Positioned(
+                  right: 15,
+                  top: 14,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: colors.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 16,
+                      color: colors.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            Positioned(
-              right: 15,
-              top: 14,
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: colors.primaryContainer,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 16,
-                  color: colors.onPrimaryContainer,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -279,55 +278,44 @@ class _TemplateQuickAction extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Crear con plantilla: ${template.label}',
-      child: Material(
-        color: Color.lerp(colorScheme.surfaceContainerHigh, accent, 0.22),
-        borderRadius: BorderRadius.circular(18),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: ValueKey('template-action-${template.label}'),
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: BorderRadius.circular(13),
+      child: Tooltip(
+        message: template.description,
+        child: Material(
+          color: colorScheme.surfaceContainer.withValues(alpha: 0.82),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: ValueKey('template-action-${template.label}'),
+            onTap: onPressed,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 14, 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(template.icon, size: 18, color: foreground),
                   ),
-                  child: Icon(template.icon, size: 21, color: foreground),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        template.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: colorScheme.onSurface,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        template.description,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 8),
+                  Text(
+                    template.label,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

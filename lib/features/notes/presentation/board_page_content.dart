@@ -81,7 +81,7 @@ extension _BoardPageContent on _BoardPageState {
                   : 'No hay notas con recordatorio en este filtro',
             _BoardScope.list =>
               isUnfiltered
-                  ? 'Tu lista está lista'
+                  ? 'Tu próxima idea empieza aquí'
                   : 'No hay notas en este filtro',
           },
           detail: switch (_scope) {
@@ -93,7 +93,7 @@ extension _BoardPageContent on _BoardPageState {
               'Agrega un recordatorio a una nota y aparecerá aquí.',
             _BoardScope.list =>
               isUnfiltered
-                  ? 'Crea una nota y empieza a organizar lo que importa.'
+                  ? 'Anota una idea, un pendiente o algo que quieras recordar.'
                   : 'Prueba otro filtro o crea una nota nueva.',
           },
           actionLabel: isFirstListEmpty ? 'Crear una nota' : null,
@@ -108,7 +108,9 @@ extension _BoardPageContent on _BoardPageState {
     } else {
       content = KeyedSubtree(
         key: ValueKey(
-          'board-notes-${_viewMode.name}-${_filter.name}'
+          'board-notes-${_scope.name}-'
+          '${_scope == _BoardScope.list ? state.selectedListId : _scope.name}-'
+          '${_viewMode.name}-${_filter.name}'
           '${selectedCategory == null ? '' : '-${selectedCategory.name}'}'
           '${selectedAssigneeUid == null ? '' : '-assignee-$selectedAssigneeUid'}',
         ),
@@ -419,12 +421,13 @@ extension _BoardPageContent on _BoardPageState {
         _assigneeFilterUid = null;
       });
     }
-    await cubit.selectList(listId);
+    final refresh = cubit.selectList(listId);
     unawaited(_listShortcutsController.recordOpened(listId));
     if (!mounted) return false;
     _restoreBoardPreferences(listId);
     _scheduleActiveListProtectionSync(cubit.state);
-    return true;
+    await refresh;
+    return mounted && cubit.state.selectedListId == listId;
   }
 
   Future<void> _openAssignedToMe() async {

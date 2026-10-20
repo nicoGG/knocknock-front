@@ -48,12 +48,10 @@ class ListBoardBackground extends StatelessWidget {
                   end: Alignment.bottomCenter,
                   stops: const [0, 0.32, 0.6],
                   colors: [
-                    Theme.of(
-                      context,
-                    ).colorScheme.surface.withValues(alpha: 0.38),
-                    Theme.of(
-                      context,
-                    ).colorScheme.surface.withValues(alpha: 0.2),
+                    Theme.of(context).colorScheme.surface
+                        .withValues(alpha: 0.38),
+                    Theme.of(context).colorScheme.surface
+                        .withValues(alpha: 0.2),
                     Colors.transparent,
                   ],
                 ),
@@ -88,7 +86,7 @@ Widget _buildBackgroundSwitcher(
   switchInCurve: Curves.easeOutCubic,
   switchOutCurve: Curves.easeInCubic,
   transitionBuilder: (child, animation) =>
-      _BlurredBackgroundTransition(animation: animation, child: child),
+      _BackgroundTransition(animation: animation, child: child),
   layoutBuilder: (currentChild, previousChildren) => Stack(
     fit: StackFit.expand,
     children: [...previousChildren, ?currentChild],
@@ -223,49 +221,27 @@ class _ThemeBackgroundLayer extends StatelessWidget {
   }
 }
 
-class _BlurredBackgroundTransition extends StatelessWidget {
-  const _BlurredBackgroundTransition({
-    required this.animation,
-    required this.child,
-  });
-
-  static const _maximumBlur = 14.0;
-  static const _maximumScale = 1.018;
+class _BackgroundTransition extends StatelessWidget {
+  const _BackgroundTransition({required this.animation, required this.child});
 
   final Animation<double> animation;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: animation,
-      child: child,
-      builder: (context, child) {
-        final progress = animation.value.clamp(0.0, 1.0).toDouble();
-        if (animation.status == AnimationStatus.completed && progress >= 1) {
-          return child!;
-        }
-        final blur = _maximumBlur * (1 - progress);
-        final scale = 1 + ((_maximumScale - 1) * (1 - progress));
-        return Opacity(
-          opacity: progress,
-          child: Transform.scale(
-            scale: scale,
-            child: ImageFiltered(
-              key: const ValueKey('background-transition-blur'),
-              enabled: blur > 0.01,
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: blur,
-                sigmaY: blur,
-                tileMode: TileMode.clamp,
-              ),
-              child: child,
-            ),
-          ),
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: animation,
+    child: child,
+    builder: (context, child) {
+      // Keep an opaque base under the entering background. Fading both layers
+      // exposes the scaffold; scaling and blurring them also moves the image.
+      final outgoing = animation.status == AnimationStatus.reverse;
+      return Opacity(
+        key: const ValueKey('background-transition-opacity'),
+        opacity: outgoing ? 1 : animation.value,
+        child: child,
+      );
+    },
+  );
 }
 
 class _BackgroundLayer extends StatelessWidget {

@@ -19,6 +19,7 @@ class NotesCubit extends Cubit<NotesState> {
   final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
   int _loadGeneration = 0;
+  final Map<String, NotesPage> _listNotes = {};
   static const _notesPageSize = 40;
   static const _scopeNotesCacheLifetime = Duration(minutes: 5);
   DateTime? _scopeNotesRefreshedAt;
@@ -28,6 +29,7 @@ class NotesCubit extends Cubit<NotesState> {
     unawaited(_refreshOfflineSyncSummary());
     final generation = ++_loadGeneration;
     _scopeNotesRefreshedAt = null;
+    _listNotes.clear();
     emit(
       state.copyWith(
         status: NotesStatus.loading,
@@ -51,6 +53,15 @@ class NotesCubit extends Cubit<NotesState> {
     final cached = await _readCache();
     if (generation != _loadGeneration || isClosed) return;
 
+    // Decode the device cache once per load, rather than once per list switch.
+    for (final entry
+        in cached?.notesByBoard.entries ??
+            const <MapEntry<String, List<Note>>>[]) {
+      _listNotes[entry.key] = NotesPage(
+        items: _cachedInitialNotes(entry.value),
+        nextCursor: null,
+      );
+    }
     var didShowCache = false;
     if (cached != null && cached.lists.isNotEmpty) {
       final cachedListId = _resolveSelectedListId(
@@ -128,33 +139,29 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> selectList(String listId) async {
     if (listId == state.selectedListId) return;
+    // Keep the current version, including edits and pages loaded this session.
+    if (state.status == NotesStatus.ready) {
+      _listNotes[state.selectedListId] = NotesPage(
+        items: state.notes,
+        nextCursor: state.nextNotesCursor,
+      );
+    }
+    final cachedPage = _listNotes[listId];
+    final didShowCache = cachedPage != null;
     final generation = ++_loadGeneration;
     emit(
       state.copyWith(
-        status: NotesStatus.loading,
+        status: didShowCache ? NotesStatus.ready : NotesStatus.loading,
         selectedListId: listId,
-        notes: const [],
+        notes: cachedPage?.items ?? const [],
         isLoadingMoreNotes: false,
-        hasMoreNotes: false,
-        clearNextNotesCursor: true,
+        hasMoreNotes: cachedPage?.hasMore ?? false,
+        nextNotesCursor: cachedPage?.nextCursor,
+        clearNextNotesCursor: cachedPage?.nextCursor == null,
       ),
     );
     unawaited(_rememberSelectedList(listId));
     unawaited(_connectBestEffort(listId));
-
-    var didShowCache = false;
-    final cached = await _readCache();
-    if (generation != _loadGeneration || isClosed) return;
-    final cachedNotes = cached?.notesByBoard[listId];
-    if (cachedNotes != null) {
-      didShowCache = true;
-      emit(
-        state.copyWith(
-          status: NotesStatus.ready,
-          notes: _cachedInitialNotes(cachedNotes),
-        ),
-      );
-    }
 
     try {
       final notesPage = await _fetchNotesPage(listId);
