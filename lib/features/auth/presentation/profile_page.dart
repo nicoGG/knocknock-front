@@ -169,6 +169,8 @@ class AuthAvatar extends StatelessWidget {
             ? Image.network(
                 photoUrl,
                 key: const ValueKey('profile-photo'),
+                // Google avatars may not allow cross-origin canvas reads.
+                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => fallback,
               )

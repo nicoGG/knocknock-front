@@ -16,6 +16,7 @@ class DeviceListBiometricAuthenticator implements ListBiometricAuthenticator {
 
   @override
   Future<ListProtectionResult> authenticate({required String reason}) async {
+    if (kIsWeb) return ListProtectionResult.unavailable;
     try {
       final canCheckBiometrics = await _localAuthentication.canCheckBiometrics;
       if (!canCheckBiometrics) return ListProtectionResult.unavailable;

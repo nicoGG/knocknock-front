@@ -2,6 +2,52 @@
 
 NockNock collaborative post-it reminders and tasks.
 
+## Web
+
+Firebase incluye la aplicación **NockNock Web** en el proyecto
+`nocknock-d8fe9`. Para ejecutar en Chrome:
+
+```sh
+fvm flutter run -d chrome --web-port 7357
+```
+
+Para generar la versión publicable:
+
+```sh
+fvm flutter build web
+```
+
+El resultado queda en `build/web`. El inicio de sesión usa el popup de
+Firebase Auth con Google; `localhost` está autorizado en Firebase Authentication.
+Al publicar en otro dominio, agrégalo en **Authentication → Settings → Authorized
+domains**. El servidor debe servir la app mediante HTTPS (localhost permite HTTP).
+
+En web se usa Analytics, pero no Crashlytics ni notificaciones locales/push
+nativas. La protección biométrica de listas requiere la app móvil. La bandeja
+de notificaciones dentro de la app sigue disponible. El almacenamiento offline
+usa las preferencias del navegador en lugar de SQLite.
+
+## Firebase Hosting
+
+La web se publica en https://nocknock-d8fe9.web.app.
+Cada push a `main` ejecuta `.github/workflows/deploy-firebase-hosting.yml`:
+analiza, prueba, compila Flutter web y despliega únicamente Hosting.
+También se puede iniciar desde **Actions → Publicar web en Firebase Hosting →
+Run workflow**, seleccionando `main`.
+
+GitHub se autentica por Workload Identity Federation con la cuenta
+`github-hosting@nocknock-d8fe9.iam.gserviceaccount.com`, sin claves privadas.
+El proveedor está limitado al ID de este repositorio, su propietario, la rama
+`main` y este workflow. La cuenta tiene permisos de Firebase Hosting y consumo
+de APIs del proyecto.
+
+Para publicar manualmente con una cuenta autorizada:
+
+```sh
+fvm flutter build web --release
+firebase deploy --only hosting --project nocknock-d8fe9
+```
+
 ## Notificaciones push
 
 La app usa Firebase Cloud Messaging y registra una instalación independiente

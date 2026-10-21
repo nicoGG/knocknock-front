@@ -162,8 +162,13 @@ class _CreateNoteDialog extends StatelessWidget {
         mediaQuery.padding.vertical -
         mediaQuery.viewInsets.vertical -
         40;
-    final dialogHeight = math.min(680.0, math.max(300.0, availableHeight));
-    final dialogWidth = math.min(480.0, mediaQuery.size.width - 32);
+    final useWideWebLayout = kIsWeb && mediaQuery.size.width >= 900;
+    final dialogHeight = useWideWebLayout
+        ? math.max(300.0, availableHeight)
+        : math.min(680.0, math.max(300.0, availableHeight));
+    final dialogWidth = useWideWebLayout
+        ? math.min(1100.0, mediaQuery.size.width * 0.75)
+        : math.min(480.0, mediaQuery.size.width - 32);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -532,8 +537,13 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
         mediaQuery.padding.vertical -
         mediaQuery.viewInsets.vertical -
         40;
-    final dialogHeight = math.min(680.0, math.max(300.0, availableHeight));
-    final dialogWidth = math.min(480.0, mediaQuery.size.width - 32);
+    final useWideWebLayout = kIsWeb && mediaQuery.size.width >= 900;
+    final dialogHeight = useWideWebLayout
+        ? math.max(300.0, availableHeight)
+        : math.min(680.0, math.max(300.0, availableHeight));
+    final dialogWidth = useWideWebLayout
+        ? math.min(1100.0, mediaQuery.size.width * 0.75)
+        : math.min(480.0, mediaQuery.size.width - 32);
     final note = widget.noteProvider();
     final cardColor = NoteCategoryStyle.baseColor(note.category);
     final foregroundColor = NoteCategoryStyle.foregroundColor(note.category);

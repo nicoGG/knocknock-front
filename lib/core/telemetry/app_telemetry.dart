@@ -11,12 +11,12 @@ import 'package:package_info_plus/package_info_plus.dart';
 class AppTelemetry {
   AppTelemetry._()
     : _analytics = FirebaseAnalytics.instance,
-      _crashlytics = FirebaseCrashlytics.instance;
+      _crashlytics = kIsWeb ? null : FirebaseCrashlytics.instance;
 
   static final instance = AppTelemetry._();
 
   final FirebaseAnalytics _analytics;
-  final FirebaseCrashlytics _crashlytics;
+  final FirebaseCrashlytics? _crashlytics;
   StreamSubscription<String?>? _userSubscription;
   Future<String?>? _appInstanceId;
   Future<String>? _clientVersion;
@@ -49,9 +49,9 @@ class AppTelemetry {
           'telemetry_schema_version': 1,
         });
       }
-      await _crashlytics.setCrashlyticsCollectionEnabled(_collectionEnabled);
+      await _crashlytics?.setCrashlyticsCollectionEnabled(_collectionEnabled);
       if (_collectionEnabled) {
-        await _crashlytics.setCustomKey('telemetry_schema_version', 1);
+        await _crashlytics?.setCustomKey('telemetry_schema_version', 1);
       }
     } on PlatformException catch (error) {
       initializationFailed = true;
@@ -132,10 +132,10 @@ class AppTelemetry {
     required String requestId,
     required String route,
   }) => _guarded(() async {
-    await _crashlytics.setCustomKey('latest_request_id', requestId);
-    await _crashlytics.setCustomKey('latest_http_method', method);
-    await _crashlytics.setCustomKey('latest_http_route', route);
-    await _crashlytics.log('$method $route request_id=$requestId');
+    await _crashlytics?.setCustomKey('latest_request_id', requestId);
+    await _crashlytics?.setCustomKey('latest_http_method', method);
+    await _crashlytics?.setCustomKey('latest_http_route', route);
+    await _crashlytics?.log('$method $route request_id=$requestId');
   });
 
   Future<void> recordApiFailure({
@@ -156,7 +156,7 @@ class AppTelemetry {
         'status_code': statusCode ?? 0,
       },
     );
-    if (!reportToCrashlytics) return;
+    if (!reportToCrashlytics || _crashlytics == null) return;
 
     await _guarded(() async {
       await _crashlytics.setCustomKey('latest_request_id', requestId);
@@ -180,11 +180,12 @@ class AppTelemetry {
         name: 'auth_state',
         value: normalized == null || normalized.isEmpty ? 'guest' : 'signed_in',
       );
-      await _crashlytics.setUserIdentifier(normalized ?? '');
+      await _crashlytics?.setUserIdentifier(normalized ?? '');
     });
   }
 
   void _installErrorHandlers() {
+    if (_crashlytics == null) return;
     final previousFlutterHandler = FlutterError.onError;
     FlutterError.onError = (details) {
       previousFlutterHandler?.call(details);
@@ -229,7 +230,7 @@ class AppTelemetry {
       // The native plugin may not exist in the currently installed runner.
     }
     try {
-      await _crashlytics.setCrashlyticsCollectionEnabled(false);
+      await _crashlytics?.setCrashlyticsCollectionEnabled(false);
     } catch (_) {
       // The native plugin may not exist in the currently installed runner.
     }

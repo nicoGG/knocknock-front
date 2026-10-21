@@ -54,3 +54,7 @@ app.*.map.json
 
 # Kotlin local build cache
 /android/.kotlin/
+
+# Firebase local cache and ephemeral GitHub Actions credentials
+.firebase/
+gha-creds-*.json
