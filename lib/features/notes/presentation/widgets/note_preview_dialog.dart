@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/presentation/widgets/note_history_sheet.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
@@ -55,6 +56,9 @@ Future<bool> showNotePreviewDialog({
   required NotePreviewAssigneesProvider assigneesProvider,
   required NoteQuickSaveCallback onSave,
   required NotePreviewDeleteCallback onDelete,
+  bool showOpenNoteButton = false,
+  Future<bool> Function(BuildContext)? onHistory,
+  Stream<Object?>? noteChanges,
 }) async {
   final disableAnimations = MediaQuery.disableAnimationsOf(context);
   final shouldOpen = await showGeneralDialog<bool>(
@@ -65,14 +69,19 @@ Future<bool> showNotePreviewDialog({
     transitionDuration: disableAnimations
         ? Duration.zero
         : const Duration(milliseconds: 230),
-    pageBuilder: (dialogContext, animation, _) => _NotePreviewDialog(
-      transitionAnimation: animation,
-      disableAnimations: disableAnimations,
-      cardBuilder: cardBuilder,
-      noteProvider: noteProvider,
-      assigneesProvider: assigneesProvider,
-      onSave: onSave,
-      onDelete: onDelete,
+    pageBuilder: (dialogContext, animation, _) => StreamBuilder<Object?>(
+      stream: noteChanges,
+      builder: (_, _) => _NotePreviewDialog(
+        transitionAnimation: animation,
+        disableAnimations: disableAnimations,
+        cardBuilder: cardBuilder,
+        noteProvider: noteProvider,
+        assigneesProvider: assigneesProvider,
+        onSave: onSave,
+        onDelete: onDelete,
+        showOpenNoteButton: showOpenNoteButton,
+        onHistory: onHistory,
+      ),
     ),
     transitionBuilder: (context, animation, secondaryAnimation, child) => child,
   );
@@ -218,6 +227,8 @@ class _NotePreviewDialog extends StatefulWidget {
     required this.assigneesProvider,
     required this.onSave,
     required this.onDelete,
+    required this.showOpenNoteButton,
+    this.onHistory,
   });
 
   final Animation<double> transitionAnimation;
@@ -227,6 +238,8 @@ class _NotePreviewDialog extends StatefulWidget {
   final NotePreviewAssigneesProvider assigneesProvider;
   final NoteQuickSaveCallback onSave;
   final NotePreviewDeleteCallback onDelete;
+  final bool showOpenNoteButton;
+  final Future<bool> Function(BuildContext)? onHistory;
 
   @override
   State<_NotePreviewDialog> createState() => _NotePreviewDialogState();
@@ -575,6 +588,22 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      if (widget.showOpenNoteButton) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            key: const ValueKey(
+                              'open-note-from-preview-button',
+                            ),
+                            onPressed: _isSaving
+                                ? null
+                                : () => Navigator.pop(context, true),
+                            icon: const Icon(Icons.open_in_new_rounded),
+                            label: const Text('Ir a la nota'),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       _PreviewEditingDock(
                         note: widget.noteProvider(),
                         isSaving: _isSaving,
@@ -588,6 +617,27 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                         onAttachment: _editAttachment,
                         onDelete: _confirmDelete,
                       ),
+                      if (widget.onHistory != null) ...[
+                        const SizedBox(height: 12),
+                        _FloatingNoteHistoryButton(
+                          note: note,
+                          onPressed: _isSaving
+                              ? null
+                              : () async {
+                                  final restored = await widget.onHistory!(
+                                    context,
+                                  );
+                                  if (mounted) {
+                                    setState(() {
+                                      if (restored) {
+                                        _undoHistory.clear();
+                                        _redoHistory.clear();
+                                      }
+                                    });
+                                  }
+                                },
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1834,6 +1884,118 @@ NoteDraft _draftFromNote(
       ? reminderRecurrence
       : note.reminderRecurrence,
 );
+
+class _FloatingNoteHistoryButton extends StatelessWidget {
+  const _FloatingNoteHistoryButton({
+    required this.note,
+    required this.onPressed,
+  });
+  final Note note;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final tint = note.category == NoteCategory.general
+        ? NotePalette.color(note.color)
+        : NoteCategoryStyle.baseColor(note.category);
+    const radius = BorderRadius.all(Radius.circular(20));
+    return Align(
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 300),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: dark ? .10 : .04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: radius,
+            child: BackdropFilter(
+              enabled: theme.platform != TargetPlatform.android,
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Material(
+                color: Colors.transparent,
+                child: Ink(
+                  decoration: BoxDecoration(
+                    borderRadius: radius,
+                    border: Border.all(
+                      color: colors.onSurface.withValues(
+                        alpha: dark ? .07 : .08,
+                      ),
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color.alphaBlend(
+                          tint.withValues(alpha: .04),
+                          colors.surface.withValues(alpha: dark ? .35 : .55),
+                        ),
+                        colors.surface.withValues(alpha: dark ? .22 : .40),
+                      ],
+                    ),
+                  ),
+                  child: Tooltip(
+                    message: 'Ver historial de edición',
+                    child: InkWell(
+                      key: const ValueKey('note-collaboration-history'),
+                      onTap: onPressed,
+                      borderRadius: radius,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 34),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.history_rounded,
+                                size: 15,
+                                color: colors.onSurfaceVariant.withValues(
+                                  alpha: .70,
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text(
+                                  noteEditAttribution(note),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: colors.onSurfaceVariant.withValues(
+                                      alpha: .78,
+                                    ),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _PreviewEditingDock extends StatelessWidget {
   const _PreviewEditingDock({

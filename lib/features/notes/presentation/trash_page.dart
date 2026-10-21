@@ -46,9 +46,8 @@ class _TrashPageState extends State<TrashPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _restoringIds.remove(note.id));
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
     }
   }
 
@@ -74,9 +73,8 @@ class _TrashPageState extends State<TrashPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _deletingIds.remove(note.id));
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
     }
   }
 
@@ -109,9 +107,8 @@ class _TrashPageState extends State<TrashPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _isEmptying = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(notesErrorMessage(error))));
     }
   }
 
@@ -299,7 +296,7 @@ class _TrashPageState extends State<TrashPage> {
                       const SizedBox(height: 6),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: TextButton.icon(
+                        child: OutlinedButton.icon(
                           key: const ValueKey('empty-trash-button'),
                           onPressed:
                               _isEmptying ||
@@ -309,15 +306,73 @@ class _TrashPageState extends State<TrashPage> {
                               : () => _emptyTrash(notes),
                           icon: _isEmptying
                               ? const SizedBox.square(
-                                  dimension: 17,
+                                  dimension: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : const Icon(Icons.delete_forever_rounded),
-                          label: const Text('Vaciar papelera'),
-                          style: TextButton.styleFrom(
+                              : Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.error.withValues(
+                                      alpha: 0.08,
+                                    ),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Icon(
+                                    Icons.delete_sweep_rounded,
+                                    size: 22,
+                                  ),
+                                ),
+                          label: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Vaciar papelera',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Eliminar todas las notas',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                size: 20,
+                                color: colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                            ],
+                          ),
+                          style: OutlinedButton.styleFrom(
                             foregroundColor: colorScheme.error,
+                            backgroundColor: colorScheme.error.withValues(
+                              alpha: 0.035,
+                            ),
+                            side: BorderSide(
+                              color: colorScheme.error.withValues(alpha: 0.12),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
                           ),
                         ),
                       ),
@@ -473,18 +528,16 @@ class _TrashLoadingHeading extends StatelessWidget {
                 'Revisando la papelera…',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 3),
               Text(
                 'Buscando notas que aún puedes recuperar',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: colorScheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -678,6 +731,15 @@ class _TrashNoteCard extends StatelessWidget {
     final title = note.title.trim().isEmpty ? 'Nota sin título' : note.title;
     final summary = _summary();
     final isBusy = isRestoring || isDeleting || isDisabled;
+    final expiresSoon =
+        note.deletedAt != null &&
+        note.deletedAt!
+                .add(const Duration(days: 7))
+                .difference(DateTime.now()) <=
+            const Duration(days: 1);
+    final retentionColor = expiresSoon
+        ? colorScheme.error
+        : colorScheme.onSurfaceVariant;
     return Card(
       key: ValueKey('trash-note-${note.id}'),
       margin: EdgeInsets.zero,
@@ -685,15 +747,27 @@ class _TrashNoteCard extends StatelessWidget {
       color: colorScheme.surfaceContainerLow,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(26),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+        ),
       ),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: noteColor, width: 5)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color.alphaBlend(
+                noteColor.withValues(alpha: 0.11),
+                colorScheme.surfaceContainerLow,
+              ),
+              colorScheme.surfaceContainerLow,
+            ],
+          ),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 15, 12, 12),
+          padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -701,11 +775,21 @@ class _TrashNoteCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 44,
-                    height: 44,
+                    width: 46,
+                    height: 46,
                     decoration: BoxDecoration(
-                      color: noteColor.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(13),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          noteColor.withValues(alpha: 0.28),
+                          noteColor.withValues(alpha: 0.12),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: noteColor.withValues(alpha: 0.16),
+                      ),
                     ),
                     child: Icon(
                       Icons.sticky_note_2_outlined,
@@ -745,7 +829,7 @@ class _TrashNoteCard extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   _TrashMetadataChip(
-                    icon: Icons.folder_outlined,
+                    icon: Icons.folder_rounded,
                     label: listName,
                     foregroundColor: colorScheme.onSurfaceVariant,
                     backgroundColor: colorScheme.surfaceContainerHighest,
@@ -753,14 +837,14 @@ class _TrashNoteCard extends StatelessWidget {
                   _TrashMetadataChip(
                     icon: Icons.schedule_rounded,
                     label: _remainingLabel(note.deletedAt),
-                    foregroundColor: colorScheme.onErrorContainer,
-                    backgroundColor: colorScheme.errorContainer,
+                    foregroundColor: retentionColor,
+                    backgroundColor: expiresSoon
+                        ? colorScheme.error.withValues(alpha: 0.1)
+                        : colorScheme.onSurface.withValues(alpha: 0.06),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Divider(height: 1, color: colorScheme.outlineVariant),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               Align(
                 alignment: Alignment.centerRight,
                 child: Wrap(
@@ -769,8 +853,9 @@ class _TrashNoteCard extends StatelessWidget {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    TextButton.icon(
+                    IconButton(
                       key: ValueKey('delete-note-${note.id}'),
+                      tooltip: 'Eliminar definitivamente',
                       onPressed: isBusy ? null : onDelete,
                       icon: isDeleting
                           ? const SizedBox.square(
@@ -778,9 +863,20 @@ class _TrashNoteCard extends StatelessWidget {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.delete_forever_rounded, size: 19),
-                      label: const Text('Eliminar'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: colorScheme.error,
+                      style: IconButton.styleFrom(
+                        foregroundColor: colorScheme.error.withValues(
+                          alpha: 0.8,
+                        ),
+                        backgroundColor: colorScheme.error.withValues(
+                          alpha: 0.06,
+                        ),
+                        side: BorderSide(
+                          color: colorScheme.error.withValues(alpha: 0.14),
+                        ),
+                        minimumSize: const Size(44, 44),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
                     ),
                     FilledButton.tonalIcon(
@@ -793,6 +889,16 @@ class _TrashNoteCard extends StatelessWidget {
                             )
                           : const Icon(Icons.restore_rounded, size: 19),
                       label: const Text('Restaurar'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -855,10 +961,8 @@ class _TrashMetadataChip extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(color: foregroundColor, fontWeight: FontWeight.w700),
           ),
         ),
       ],

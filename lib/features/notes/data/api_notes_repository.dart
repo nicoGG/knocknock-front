@@ -14,6 +14,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 class ApiNotesRepository
     implements
         NotesRepository,
+        NoteHistoryRepository,
         GuestDataSyncTarget,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
@@ -26,11 +27,14 @@ class ApiNotesRepository
     required String socketBaseUrl,
     required Future<String?> Function() accessTokenProvider,
     AppTelemetry? telemetry,
+    Dio? httpClient,
   }) : _accessTokenProvider = accessTokenProvider,
-       _dio = createTelemetryDio(
-         BaseOptions(baseUrl: apiBaseUrl),
-         telemetry: telemetry,
-       ),
+       _dio =
+           httpClient ??
+           createTelemetryDio(
+             BaseOptions(baseUrl: apiBaseUrl),
+             telemetry: telemetry,
+           ),
        _socket = io.io(
          '$socketBaseUrl/notes',
          io.OptionBuilder()
@@ -124,6 +128,7 @@ class ApiNotesRepository
   }
 
   final Dio _dio;
+  bool _legacyCompletionTimestamp = false;
   final io.Socket _socket;
   final Future<String?> Function() _accessTokenProvider;
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
@@ -441,12 +446,61 @@ class ApiNotesRepository
   }
 
   @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) => updateNote(noteId, changes);
+
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) async {
+    final response = await _dio.get<List<dynamic>>('/notes/$noteId/history');
+    return (response.data ?? const [])
+        .map(
+          (item) =>
+              NoteVersion.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
-    final response = await _dio.patch<Map<String, dynamic>>(
-      '/notes/$id',
-      data: changes,
-    );
-    return Note.fromJson(response.data!);
+    final payload = Map<String, dynamic>.of(changes);
+    if (_legacyCompletionTimestamp) payload.remove('completedAt');
+    late Response<Map<String, dynamic>> response;
+    try {
+      response = await _dio.patch<Map<String, dynamic>>(
+        '/notes/$id',
+        data: payload,
+      );
+    } on DioException catch (error) {
+      // Validation rejects the request before any write. Retry only this exact
+      // old-server incompatibility, retaining revision and mutation identity.
+      final data = error.response?.data;
+      final message = data is Map ? data['message'] : null;
+      final messages = message is List ? message : [message];
+      if (!payload.containsKey('completedAt') ||
+          error.response?.statusCode != 400 ||
+          messages.length != 1 ||
+          messages.single != 'property completedAt should not exist') {
+        rethrow;
+      }
+      _legacyCompletionTimestamp = true;
+      payload.remove('completedAt');
+      response = await _dio.patch<Map<String, dynamic>>(
+        '/notes/$id',
+        data: payload,
+      );
+    }
+    final data = Map<String, dynamic>.of(response.data!);
+    if (data.containsKey('completedAt')) {
+      _legacyCompletionTimestamp = false;
+    } else if (data['isCompleted'] == true &&
+        changes['isCompleted'] == true &&
+        changes['completedAt'] is String) {
+      // Until the server is upgraded, retain the confirmed completion locally.
+      data['completedAt'] = changes['completedAt'];
+    }
+    return Note.fromJson(data);
   }
 
   @override

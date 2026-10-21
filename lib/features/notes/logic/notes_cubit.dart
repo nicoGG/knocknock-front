@@ -26,13 +26,16 @@ class NotesCubit extends Cubit<NotesState> {
   Future<void>? _scopeNotesRefresh;
 
   Future<void> load() async {
-    unawaited(_refreshOfflineSyncSummary());
     final generation = ++_loadGeneration;
     _scopeNotesRefreshedAt = null;
     _listNotes.clear();
     emit(
       state.copyWith(
         status: NotesStatus.loading,
+        syncStateKnown: false,
+        pendingSyncCount: 0,
+        syncConflictCount: 0,
+        isSyncingOfflineChanges: false,
         lists: const [],
         selectedListId: 'home',
         notes: const [],
@@ -48,6 +51,7 @@ class NotesCubit extends Cubit<NotesState> {
         clearNextNotesCursor: true,
       ),
     );
+    unawaited(_refreshOfflineSyncSummary());
     _realtimeSubscription ??= _repository.realtimeEvents.listen(_onRealtime);
     final rememberedListId = await _readRememberedListId();
     final cached = await _readCache();
@@ -122,8 +126,7 @@ class NotesCubit extends Cubit<NotesState> {
         emit(
           state.copyWith(
             status: NotesStatus.ready,
-            message:
-                'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
+            message: 'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
           ),
         );
         return;
@@ -189,8 +192,7 @@ class NotesCubit extends Cubit<NotesState> {
         emit(
           state.copyWith(
             status: NotesStatus.ready,
-            message:
-                'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
+            message: 'Mostrando las notas guardadas. No pudimos actualizar los cambios más recientes.',
           ),
         );
         return;
@@ -771,6 +773,12 @@ class NotesCubit extends Cubit<NotesState> {
     return false;
   }
 
+  Future<Note> createCapturedNote(String listId, NoteDraft draft) async {
+    final note = await _repository.createNote(listId, draft);
+    if (!isClosed) _upsert(note);
+    return note;
+  }
+
   Future<void> createNote(NoteDraft draft) async {
     if (!_acceptAssigneeCount(
       draft.assignedUserIds,
@@ -786,6 +794,33 @@ class NotesCubit extends Cubit<NotesState> {
     } finally {
       emit(state.copyWith(isSaving: false));
     }
+  }
+
+  Future<List<NoteVersion>> loadNoteHistory(String noteId) async {
+    final repository = _repository;
+    if (repository is! NoteHistoryRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteHistoryRepository).fetchNoteHistory(noteId);
+  }
+
+  Future<void> restoreNoteVersion(Note current, NoteVersion version) async {
+    final previous = version.note;
+    final repository = _repository;
+    if (repository is! NoteHistoryRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final restored = await (repository as NoteHistoryRepository)
+        .restoreNoteContent(current.id, {
+          'expectedRevision': current.revision,
+          'title': previous.title,
+          'content': previous.content,
+          'contentDelta': previous.contentDelta,
+          'color': previous.color.name,
+          'category': previous.category.name,
+          'checklist': previous.checklist.map((item) => item.toJson()).toList(),
+        });
+    if (!isClosed) _upsert(restored);
   }
 
   Future<void> editNote(Note note, NoteDraft draft) async {
@@ -1002,12 +1037,20 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> toggleNote(Note note) async {
     if (note.isRecurring) return;
-    final optimistic = note.copyWith(isCompleted: !note.isCompleted);
+    final completedAt = note.isCompleted ? null : DateTime.now();
+    final optimistic = note.copyWith(
+      isCompleted: !note.isCompleted,
+      completedAt: completedAt,
+      clearCompletedAt: completedAt == null,
+    );
     _upsert(optimistic);
     try {
       _upsert(
         await _repository.updateNote(note.id, {
           'isCompleted': optimistic.isCompleted,
+          'completedAt': completedAt == null
+              ? null
+              : reminderDateTimeToJson(completedAt),
         }),
       );
     } catch (error) {
@@ -1167,12 +1210,74 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  /// Returns the saved note or throws, so Today never reports a failed action as done.
+  Future<Note> completeTodayNote(Note note) async {
+    if (note.isRecurring) throw const NotesPersistenceFailure();
+    final updated = await _repository.updateNote(note.id, {
+      'isCompleted': true,
+      'completedAt': reminderDateTimeToJson(DateTime.now()),
+    });
+    _upsert(updated);
+    return updated;
+  }
+
+  Future<Note> undoTodayCompletion(Note note) async {
+    final updated = await _repository.updateNote(note.id, {
+      'isCompleted': false,
+      'completedAt': null,
+    });
+    _upsert(updated);
+    return updated;
+  }
+
+  Future<Note> postponeTodayReminder(Note note, DateTime reminderAt) async {
+    final updated = await _repository.updateNote(note.id, {
+      'reminderAt': reminderDateTimeToJson(reminderAt),
+      // Preserve recurrence explicitly: the server clears it when only the date changes.
+      'reminderRecurrence': note.reminderRecurrence?.toJson(),
+    });
+    _upsert(updated);
+    return updated;
+  }
+
+  /// Reads all lists through the decrypted, offline-aware repository.
+  Future<List<NoteSearchResult>> fetchTodayNotes({
+    required bool Function(String listId) canShowList,
+  }) async {
+    final results = <NoteSearchResult>[];
+    for (final list in state.lists) {
+      if (!canShowList(list.id)) continue;
+      final notes = await _repository.fetchNotes(list.id);
+      if (!canShowList(list.id)) continue;
+      results.addAll(
+        notes
+            .where((note) => note.deletedAt == null)
+            .map((note) => NoteSearchResult(note: note, list: list)),
+      );
+    }
+    return results;
+  }
+
   Future<List<NoteSearchResult>> searchNotes(String query) async {
     final repository = _repository;
     if (repository is! NotesSearchRepository || query.trim().isEmpty) {
       return const [];
     }
     return (repository as NotesSearchRepository).searchNotes(query.trim());
+  }
+
+  Future<List<PendingNoteChange>> fetchPendingChanges() async {
+    final repository = _repository;
+    if (repository is! SyncActivityRepository) return const [];
+    return (repository as SyncActivityRepository).fetchPendingNoteChanges();
+  }
+
+  Future<void> retryPendingChange(String id) async {
+    final repository = _repository;
+    if (repository is SyncActivityRepository) {
+      await (repository as SyncActivityRepository).retryPendingNoteChange(id);
+    }
+    await _refreshOfflineSyncSummary();
   }
 
   Future<List<NoteSyncConflict>> fetchSyncConflicts() async {
@@ -1204,8 +1309,7 @@ class NotesCubit extends Cubit<NotesState> {
       if (!isClosed) {
         emit(
           state.copyWith(
-            message:
-                'No pudimos sincronizar todavía. Tus cambios siguen guardados en este dispositivo.',
+            message: 'No pudimos sincronizar todavía. Tus cambios siguen guardados en este dispositivo.',
           ),
         );
       }
@@ -1214,13 +1318,17 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<void> _refreshOfflineSyncSummary() async {
     final repository = _repository;
-    if (repository is! OfflineSyncRepository) return;
+    if (repository is! OfflineSyncRepository) {
+      if (!isClosed) emit(state.copyWith(syncStateKnown: true));
+      return;
+    }
     try {
       final summary = await (repository as OfflineSyncRepository)
           .offlineSyncSummary();
       if (isClosed) return;
       emit(
         state.copyWith(
+          syncStateKnown: true,
           pendingSyncCount: summary.pendingCount,
           syncConflictCount: summary.conflictCount,
           isSyncingOfflineChanges: summary.isSyncing,
@@ -1342,8 +1450,7 @@ class NotesCubit extends Cubit<NotesState> {
       case GuestDataSyncFailed():
         emit(
           state.copyWith(
-            message:
-                'No pudimos sincronizar tus notas locales. Siguen seguras en este dispositivo y volveremos a intentarlo.',
+            message: 'No pudimos sincronizar tus notas locales. Siguen seguras en este dispositivo y volveremos a intentarlo.',
           ),
         );
       case OfflineSyncStateChanged(
@@ -1353,6 +1460,7 @@ class NotesCubit extends Cubit<NotesState> {
       ):
         emit(
           state.copyWith(
+            syncStateKnown: true,
             pendingSyncCount: pendingCount,
             syncConflictCount: conflictCount,
             isSyncingOfflineChanges: isSyncing,

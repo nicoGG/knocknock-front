@@ -25,6 +25,12 @@
 				<string>com.googleusercontent.apps.987041813192-8dj3bmhful98q6h6q1tc5r3chnb155ce</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleDisplayName</key>
 	<string>NockNock</string>

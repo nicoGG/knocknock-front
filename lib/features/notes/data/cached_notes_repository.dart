@@ -19,12 +19,14 @@ typedef NotesCacheUserIdProvider = String? Function();
 class CachedNotesRepository
     implements
         NotesRepository,
+        NoteHistoryRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         OfflineSyncRepository,
+        SyncActivityRepository,
         NoteAttachmentsRepository,
         TrashNotesRepository,
         PaginatedNotesRepository {
@@ -614,6 +616,35 @@ class CachedNotesRepository
   }
 
   @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) async {
+    final repository = _repository;
+    if (repository is! NoteHistoryRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    // Restoration must be confirmed online; never turn a conflict into a queued success.
+    final restored = await (repository as NoteHistoryRepository)
+        .restoreNoteContent(noteId, changes);
+    final note = _withAttachmentData(
+      restored,
+      _findCachedNote(_userIdProvider(), noteId)?.photoAttachments ?? const [],
+    );
+    await _updateCache(_userIdProvider(), (cache) => _upsertNote(cache, note));
+    return note;
+  }
+
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) async {
+    final repository = _repository;
+    if (repository is! NoteHistoryRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteHistoryRepository).fetchNoteHistory(noteId);
+  }
+
+  @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     final userId = _userIdProvider();
     final current = _findCachedNote(userId, id);
@@ -774,6 +805,48 @@ class CachedNotesRepository
   }
 
   @override
+  Future<List<PendingNoteChange>> fetchPendingNoteChanges() async {
+    final userId = _userIdProvider();
+    if (userId == null || userId.isEmpty) return const [];
+    final mutations = await _mutationStore.listForUser(userId);
+    return mutations
+        .map(
+          (item) => PendingNoteChange(
+            id: item.id,
+            boardId: item.boardId,
+            kind: OfflineMutationKind.values.byName(item.kind.name),
+            createdAt: item.createdAt,
+            needsReview: item.status == StoredMutationStatus.conflict,
+            canCompare: item.remoteNoteJson != null,
+            note: item.localNoteJson == null
+                ? null
+                : Note.fromJson(
+                    Map<String, dynamic>.from(
+                      jsonDecode(item.localNoteJson!) as Map,
+                    ),
+                  ),
+          ),
+        )
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  @override
+  Future<void> retryPendingNoteChange(String id) async {
+    final userId = _userIdProvider();
+    if (userId == null) return;
+    final mutation = (await _mutationStore.listForUser(userId))
+        .where((item) => item.id == id)
+        .firstOrNull;
+    if (mutation == null || mutation.remoteNoteJson != null) return;
+    await _mutationStore.put(
+      mutation.copyWith(status: StoredMutationStatus.pending, clearError: true),
+    );
+    await _emitSyncState();
+    await syncPendingChanges();
+  }
+
+  @override
   Future<OfflineSyncSummary> offlineSyncSummary() async {
     final userId = _userIdProvider();
     if (userId == null || userId.isEmpty) return const OfflineSyncSummary();
@@ -890,9 +963,9 @@ class CachedNotesRepository
   ) async {
     final userId = _userIdProvider();
     if (userId == null || userId.isEmpty) return;
-    final mutation = (await _mutationStore.listForUser(
-      userId,
-    )).where((item) => item.id == mutationId).firstOrNull;
+    final mutation = (await _mutationStore.listForUser(userId))
+        .where((item) => item.id == mutationId)
+        .firstOrNull;
     if (mutation == null) return;
     final remote = mutation.remoteNoteJson == null
         ? null
@@ -908,6 +981,7 @@ class CachedNotesRepository
         _events.add(NoteChanged(remote));
       }
       await _emitSyncState();
+      await syncPendingChanges();
       return;
     }
     if (remote == null) return;
@@ -1144,9 +1218,9 @@ class CachedNotesRepository
     required Note current,
     required Note? remote,
   }) async {
-    final existing = (await _mutationStore.listForUser(
-      userId,
-    )).where((item) => item.entityId == current.id).toList();
+    final existing = (await _mutationStore.listForUser(userId))
+        .where((item) => item.entityId == current.id)
+        .toList();
     if (existing.any((item) => item.kind == StoredMutationKind.create)) {
       for (final item in existing) {
         await _mutationStore.remove(item.id);
@@ -1208,10 +1282,16 @@ class CachedNotesRepository
     }).toList();
   }
 
-  static Note _preserveAttachmentData(Note remote, Note? cached) =>
-      cached == null
-      ? remote
-      : _withAttachmentData(remote, cached.photoAttachments);
+  static Note _preserveAttachmentData(Note remote, Note? cached) {
+    if (cached == null) return remote;
+    // Older servers omit completedAt. Keep an observed completion while the
+    // note remains complete; an authoritative reopening still clears it.
+    final note =
+        remote.isCompleted && cached.isCompleted && remote.completedAt == null
+        ? remote.copyWith(completedAt: cached.completedAt)
+        : remote;
+    return _withAttachmentData(note, cached.photoAttachments);
+  }
 
   static Note _withAttachmentData(
     Note note,
@@ -1292,9 +1372,9 @@ class CachedNotesRepository
       if (error.response?.statusCode != 400) rethrow;
       final remoteNotes = await _repository.fetchNotes(boardId);
       final rebasedIds = _rebaseOrder(remoteNotes, orderedIds);
-      final remoteIds = _sortedNotes(
-        remoteNotes,
-      ).map((note) => note.id).toList();
+      final remoteIds = _sortedNotes(remoteNotes)
+          .map((note) => note.id)
+          .toList();
       if (_sameOrder(remoteIds, rebasedIds)) return remoteNotes;
       return _repository.reorderNotes(boardId, rebasedIds);
     }

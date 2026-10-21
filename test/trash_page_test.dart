@@ -288,7 +288,11 @@ void main() {
       const Offset(0, -600),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(ValueKey('delete-note-${note.id}')));
+    await tester.scrollUntilVisible(
+      find.byKey(ValueKey('delete-note-${note.id}')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('delete-note-${note.id}')));
     await tester.pumpAndSettle();

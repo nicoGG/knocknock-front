@@ -14,6 +14,7 @@ typedef PreferencesLoader = Future<SharedPreferences> Function();
 class LocalNotesRepository
     implements
         NotesRepository,
+        NoteHistoryRepository,
         LocalNotesDataCleaner,
         LocalNotesDataReader,
         AggregateBoardAppearancesRepository,
@@ -34,6 +35,7 @@ class LocalNotesRepository
   SharedPreferences? _preferences;
   List<NoteList>? _lists;
   List<Note>? _notes;
+  final Map<String, List<NoteVersion>> _history = {};
   AggregateBoardAppearances? _aggregateBoardAppearances;
 
   @override
@@ -255,6 +257,9 @@ class LocalNotesRepository
       reminderRecurrence: draft.reminderRecurrence,
       createdAt: now,
       updatedAt: now,
+      revision: 1,
+      lastEditedAt: now,
+      lastEditedByName: draft.authorName,
     );
     _notes!.add(note);
     await _persist();
@@ -278,6 +283,30 @@ class LocalNotesRepository
   }
 
   @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) async {
+    await _ensureLoaded();
+    final current = _notes!
+        .where((note) => note.id == noteId && note.deletedAt == null)
+        .firstOrNull;
+    if (current == null || current.revision != changes['expectedRevision']) {
+      throw const NotesPersistenceFailure();
+    }
+    return updateNote(noteId, changes);
+  }
+
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) async {
+    await _ensureLoaded();
+    if (!_notes!.any((note) => note.id == noteId && note.deletedAt == null)) {
+      throw const NotesPersistenceFailure();
+    }
+    return (_history[noteId] ?? const []).reversed.toList();
+  }
+
+  @override
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     await _ensureLoaded();
     final index = _notes!.indexWhere(
@@ -286,6 +315,10 @@ class LocalNotesRepository
     if (index == -1) throw const NotesPersistenceFailure();
 
     final existing = _notes![index];
+    if (changes['expectedRevision'] != null &&
+        changes['expectedRevision'] != existing.revision) {
+      throw const NotesPersistenceFailure();
+    }
     final reminderRecurrence = changes.containsKey('reminderRecurrence')
         ? changes['reminderRecurrence'] is Map
               ? ReminderRecurrence.fromJson(
@@ -362,6 +395,12 @@ class LocalNotesRepository
       isCompleted: reminderRecurrence == null
           ? changes['isCompleted'] as bool? ?? existing.isCompleted
           : false,
+      completedAt: changes['isCompleted'] == false
+          ? null
+          : changes['isCompleted'] == true && !existing.isCompleted
+          ? DateTime.tryParse(changes['completedAt'] as String? ?? '') ??
+                DateTime.now()
+          : existing.completedAt,
       isPinned: changes['isPinned'] as bool? ?? existing.isPinned,
       sortOrder: (changes['sortOrder'] as num?)?.toInt() ?? existing.sortOrder,
       positionX:
@@ -375,9 +414,42 @@ class LocalNotesRepository
       createdAt: existing.createdAt,
       updatedAt: DateTime.now(),
     );
-    _notes![index] = note;
+    final contentChanged =
+        [
+          'title',
+          'content',
+          'contentDelta',
+          'checklist',
+          'color',
+          'category',
+        ].any(
+          (field) =>
+              changes.containsKey(field) &&
+              jsonEncode(changes[field]) !=
+                  jsonEncode(existing.toJson()[field]),
+        );
+    if (contentChanged) {
+      final versions = _history.putIfAbsent(id, () => []);
+      versions.add(
+        NoteVersion(
+          note: existing.copyWith(attachments: const []),
+          revision: existing.revision,
+          savedAt: existing.lastEditedAt ?? existing.updatedAt,
+          editorName: existing.lastEditedByName,
+        ),
+      );
+      if (versions.length > 10) versions.removeAt(0);
+    }
+    _notes![index] = note.copyWith(
+      revision: existing.revision + 1,
+      lastEditedAt: note.updatedAt,
+      lastEditedByName:
+          changes['authorName'] as String? ??
+          existing.lastEditedByName ??
+          existing.authorName,
+    );
     await _persist();
-    return note;
+    return _notes![index];
   }
 
   @override
@@ -591,6 +663,19 @@ class LocalNotesRepository
               (item) => Note.fromJson(Map<String, dynamic>.from(item as Map)),
             )
             .toList();
+        _history.clear();
+        final storedHistory = json['history'];
+        if (storedHistory is Map) {
+          for (final entry in storedHistory.entries) {
+            _history[entry.key as String] = (entry.value as List)
+                .map(
+                  (item) => NoteVersion.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList();
+          }
+        }
         final rawAggregateBoardAppearances = json['aggregateBoardAppearances'];
         _aggregateBoardAppearances = rawAggregateBoardAppearances is Map
             ? AggregateBoardAppearances.fromJson(
@@ -633,6 +718,13 @@ class LocalNotesRepository
       jsonEncode({
         'lists': _lists!.map((list) => list.toJson()).toList(),
         'notes': _notes!.map((note) => note.toJson()).toList(),
+        'history': {
+          for (final entry in _history.entries)
+            if (_notes!.any((note) => note.id == entry.key))
+              entry.key: entry.value
+                  .map((version) => version.toJson())
+                  .toList(),
+        },
         'aggregateBoardAppearances': _aggregateBoardAppearances!.toJson(),
       }),
     );

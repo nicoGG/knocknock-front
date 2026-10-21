@@ -16,11 +16,13 @@ typedef E2eeUserIdProvider = String? Function();
 class E2eeNotesRepository
     implements
         NotesRepository,
+        NoteHistoryRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         OfflineSyncRepository,
+        SyncActivityRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
         TrashNotesRepository,
@@ -482,9 +484,8 @@ class E2eeNotesRepository
         .where((id) => !_fullyIndexedBoardIds.contains(id))
         .toList();
     if (missingBoardIds.isEmpty) return;
-    final warmup = Future.wait(
-      missingBoardIds.map(_loadBoardIntoSearchIndex),
-    ).then((_) {});
+    final warmup = Future.wait(missingBoardIds.map(_loadBoardIntoSearchIndex))
+        .then((_) {});
     _searchWarmup = warmup;
     try {
       await warmup;
@@ -505,6 +506,42 @@ class E2eeNotesRepository
       _searchIndex.upsert(await _decryptNote(raw, key));
     }
     _fullyIndexedBoardIds.add(boardId);
+  }
+
+  @override
+  Future<List<PendingNoteChange>> fetchPendingNoteChanges() async {
+    final repository = _repository;
+    if (repository is! SyncActivityRepository) return const [];
+    if (_rawLists.isEmpty && repository is NotesCacheReader) await readCache();
+    final raw = await (repository as SyncActivityRepository)
+        .fetchPendingNoteChanges();
+    final clear = <PendingNoteChange>[];
+    for (final change in raw) {
+      final key = await _listKeyOrNull(change.boardId);
+      // Keep only metadata when a list key is unavailable; never show ciphertext.
+      clear.add(
+        PendingNoteChange(
+          id: change.id,
+          boardId: change.boardId,
+          kind: change.kind,
+          createdAt: change.createdAt,
+          needsReview: change.needsReview,
+          canCompare: change.canCompare,
+          note: key == null || change.note == null
+              ? null
+              : await _decryptNote(change.note!, key),
+        ),
+      );
+    }
+    return clear;
+  }
+
+  @override
+  Future<void> retryPendingNoteChange(String id) async {
+    final repository = _repository;
+    if (repository is SyncActivityRepository) {
+      await (repository as SyncActivityRepository).retryPendingNoteChange(id);
+    }
   }
 
   @override
@@ -573,6 +610,49 @@ class E2eeNotesRepository
         attachmentId,
       ),
       key,
+    );
+  }
+
+  @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) async {
+    final repository = _repository;
+    final boardId = _noteBoards[noteId];
+    if (repository is! NoteHistoryRepository || boardId == null) {
+      throw const NotesPersistenceFailure();
+    }
+    final key = await _requireListKey(boardId);
+    final raw = await (repository as NoteHistoryRepository).restoreNoteContent(
+      noteId,
+      await _encryptChanges(changes, key),
+    );
+    final restored = await _decryptNote(raw, key);
+    _searchIndex.upsert(restored);
+    return restored;
+  }
+
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) async {
+    final repository = _repository;
+    final boardId = _noteBoards[noteId];
+    if (repository is! NoteHistoryRepository || boardId == null) {
+      throw const NotesPersistenceFailure();
+    }
+    final key = await _requireListKey(boardId);
+    final versions = await (repository as NoteHistoryRepository)
+        .fetchNoteHistory(noteId);
+    return Future.wait(
+      versions.map(
+        (version) async => NoteVersion(
+          note: await _decryptNote(version.note, key),
+          revision: version.revision,
+          savedAt: version.savedAt,
+          editorName: version.editorName,
+          editorUid: version.editorUid,
+        ),
+      ),
     );
   }
 
@@ -1315,6 +1395,7 @@ class E2eeNotesRepository
     customAssigneeNames: customAssigneeNames,
     attachments: attachments,
     isCompleted: note.isCompleted,
+    completedAt: note.completedAt,
     isPinned: note.isPinned,
     sortOrder: note.sortOrder,
     category: note.category,
@@ -1325,6 +1406,9 @@ class E2eeNotesRepository
     reminderAt: note.reminderAt,
     reminderRecurrence: note.reminderRecurrence,
     revision: note.revision,
+    lastEditedAt: note.lastEditedAt,
+    lastEditedByName: note.lastEditedByName,
+    lastEditedByUid: note.lastEditedByUid,
     deletedAt: note.deletedAt,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,

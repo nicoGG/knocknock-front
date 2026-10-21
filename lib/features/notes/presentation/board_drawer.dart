@@ -20,12 +20,14 @@ class _AppDrawer extends StatelessWidget {
     required this.onOpenProfile,
     required this.onOpenSettings,
     required this.onOpenTrash,
+    required this.onOpenToday,
     required this.favoriteListIds,
     required this.recentListIds,
     required this.onToggleFavorite,
     required this.assignedCount,
     required this.pinnedCount,
     required this.reminderCount,
+    required this.trashCount,
   });
 
   final List<NoteList> lists;
@@ -44,12 +46,14 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenTrash;
+  final VoidCallback onOpenToday;
   final Set<String> favoriteListIds;
   final List<String> recentListIds;
   final Future<bool> Function(String) onToggleFavorite;
   final int assignedCount;
   final int pinnedCount;
   final int reminderCount;
+  final int? trashCount;
 
   @override
   Widget build(BuildContext context) {
@@ -162,6 +166,17 @@ class _AppDrawer extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: _DrawerTodayShortcut(
+                    key: const ValueKey('today-menu-button'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      onOpenToday();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Row(
@@ -339,6 +354,7 @@ class _AppDrawer extends StatelessWidget {
                         ),
                       ),
                       _DrawerFloatingSettingsButton(
+                        trashCount: trashCount,
                         onOpenTrash: () {
                           Navigator.pop(context);
                           onOpenTrash();
@@ -390,10 +406,12 @@ class _DrawerListScrollbarState extends State<_DrawerListScrollbar> {
 class _DrawerFloatingSettingsButton extends StatelessWidget {
   const _DrawerFloatingSettingsButton({
     required this.onOpenTrash,
+    required this.trashCount,
     required this.onOpenSettings,
   });
 
   final VoidCallback onOpenTrash;
+  final int? trashCount;
   final VoidCallback onOpenSettings;
 
   @override
@@ -427,20 +445,39 @@ class _DrawerFloatingSettingsButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _DrawerDestinationTile(
-                key: const ValueKey('trash-menu-button'),
-                icon: Icons.delete_outline_rounded,
-                label: 'Papelera',
-                trailing: Icons.chevron_right_rounded,
-                onTap: onOpenTrash,
-              ),
-              const SizedBox(height: 6),
-              _DrawerDestinationTile(
-                key: const ValueKey('settings-menu-button'),
-                icon: Icons.settings_outlined,
-                label: 'Configuración',
-                trailing: Icons.chevron_right_rounded,
-                onTap: onOpenSettings,
+              Row(
+                children: [
+                  Expanded(
+                    child: IconButton(
+                      key: const ValueKey('trash-menu-button'),
+                      tooltip: trashCount == null
+                          ? 'Papelera'
+                          : trashCount == 0
+                          ? 'Papelera vacía'
+                          : 'Papelera, $trashCount ${trashCount == 1 ? 'nota eliminada' : 'notas eliminadas'}',
+                      onPressed: onOpenTrash,
+                      style: _footerIconStyle(context),
+                      icon: Badge.count(
+                        key: const ValueKey('drawer-trash-count'),
+                        count: trashCount ?? 0,
+                        isLabelVisible: (trashCount ?? 0) > 0,
+                        backgroundColor: colorScheme.primary,
+                        textColor: colorScheme.onPrimary,
+                        child: const Icon(Icons.delete_rounded, size: 23),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: IconButton(
+                      key: const ValueKey('settings-menu-button'),
+                      tooltip: 'Configuración',
+                      onPressed: onOpenSettings,
+                      style: _footerIconStyle(context),
+                      icon: const Icon(Icons.settings_rounded, size: 23),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               const _AppVersionLabel(),
@@ -448,6 +485,22 @@ class _DrawerFloatingSettingsButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  ButtonStyle _footerIconStyle(BuildContext context) {
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    return IconButton.styleFrom(
+      minimumSize: const Size.fromHeight(50),
+      foregroundColor: theme.colorScheme.onSurface,
+      backgroundColor: theme.colorScheme.surface.withValues(
+        alpha: dark ? 0.2 : 0.3,
+      ),
+      side: BorderSide(
+        color: Colors.white.withValues(alpha: dark ? 0.12 : 0.35),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     );
   }
 }
@@ -1394,6 +1447,117 @@ class _DrawerScopeShortcutButton extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerTodayShortcut extends StatelessWidget {
+  const _DrawerTodayShortcut({required this.onTap, super.key});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final radius = BorderRadius.circular(20);
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          border: Border.all(
+            color: colors.primary.withValues(alpha: isDark ? 0.28 : 0.22),
+          ),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colors.primary.withValues(alpha: isDark ? 0.18 : 0.13),
+              colors.surface.withValues(alpha: isDark ? 0.18 : 0.28),
+            ],
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: radius,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                ExcludeSemantics(
+                  child: Container(
+                    width: 42,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(
+                        alpha: isDark ? 0.16 : 0.12,
+                      ),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(
+                        color: colors.primary.withValues(alpha: 0.16),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${DateTime.now().day}',
+                          textScaler: TextScaler.noScaling,
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontSize: 19,
+                            height: 1.1,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hoy',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Tu día, en un vistazo',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: colors.primary,
+                ),
+              ],
             ),
           ),
         ),

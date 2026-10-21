@@ -17,6 +17,92 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('pending activity decrypts only on the device while the queue keeps ciphertext', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final cache = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => 'user-1',
+    );
+    final repository = E2eeNotesRepository(
+      repository: cache,
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    final note = (await repository.fetchNotes('home-user-1')).single;
+    remote.isOffline = true;
+    await repository.updateNote(note.id, {'title': 'Pendiente privado'});
+    expect(
+      (await repository.fetchPendingNoteChanges()).single.note?.title,
+      'Pendiente privado',
+    );
+    expect(
+      (await cache.fetchPendingNoteChanges()).single.note?.title,
+      startsWith(e2eeCiphertextPrefix),
+    );
+    expect(
+      preferences.getString(CachedNotesRepository.storageKey),
+      isNot(contains('Pendiente privado')),
+    );
+    repository.dispose();
+  });
+
+  test('history decrypts on the device and restoring remains encrypted and requires online confirmation', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final cache = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => 'user-1',
+    );
+    final repository = E2eeNotesRepository(
+      repository: cache,
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    await repository.fetchLists();
+    final note = (await repository.fetchNotes('home-user-1')).single;
+    remote.history = [
+      NoteVersion(
+        note: remote.rawNote,
+        revision: remote.rawNote.revision,
+        savedAt: remote.rawNote.updatedAt,
+        editorName: 'Ana',
+        editorUid: 'ana',
+      ),
+    ];
+    await repository.updateNote(note.id, {'title': 'Nuevo título privado'});
+    final versions = await repository.fetchNoteHistory(note.id);
+    expect(versions.single.note.title, 'Comprar pan');
+    expect(versions.single.editorName, 'Ana');
+    expect(remote.history.single.note.title, startsWith(e2eeCiphertextPrefix));
+    remote.isOffline = true;
+    await expectLater(
+      repository.restoreNoteContent(note.id, {
+        'title': versions.single.note.title,
+        'expectedRevision': note.revision,
+      }),
+      throwsA(isA<DioException>()),
+    );
+    expect((await cache.offlineSyncSummary()).pendingCount, 0);
+    remote.isOffline = false;
+    final restored = await repository.restoreNoteContent(note.id, {
+      'title': versions.single.note.title,
+      'expectedRevision': note.revision,
+    });
+    expect(restored.title, 'Comprar pan');
+    expect(remote.rawNote.title, startsWith(e2eeCiphertextPrefix));
+    expect(
+      preferences.getString(CachedNotesRepository.storageKey),
+      isNot(contains('Nuevo título privado')),
+    );
+    repository.dispose();
+  });
+
   test(
     'preserves multiple assignees through encrypted updates and reads',
     () async {
@@ -38,6 +124,8 @@ void main() {
         'title': 'Tarea compartida privada',
         'assigneeUid': 'user-1',
         'assigneeUids': ['user-1', 'user-2'],
+        'isCompleted': true,
+        'completedAt': '2026-10-20T12:00:00.000Z',
       });
       expect(updated.assignedUserIds, ['user-1', 'user-2']);
       expect(remote.rawNote.assignedUserIds, ['user-1', 'user-2']);
@@ -45,6 +133,7 @@ void main() {
       final reloaded = (await repository.fetchNotes('home-user-1')).single;
       expect(reloaded.assignedUserIds, ['user-1', 'user-2']);
       expect(reloaded.title, 'Tarea compartida privada');
+      expect(reloaded.completedAt!.toUtc(), DateTime.utc(2026, 10, 20, 12));
       expect(reloaded.copyWith(isPinned: true).assignedUserIds, [
         'user-1',
         'user-2',
@@ -657,10 +746,19 @@ void main() {
 class _FakeE2eeRemote extends Fake
     implements
         NotesRepository,
+        NoteHistoryRepository,
         E2eeNotesTransport,
         AggregateBoardAppearancesRepository,
         NoteAttachmentsRepository,
         TrashNotesRepository {
+  List<NoteVersion> history = [];
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) async => history;
+  @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) => updateNote(noteId, changes);
   final _events = StreamController<NotesRealtimeEvent>.broadcast();
   final date = DateTime.utc(2026, 8, 10);
   String registeredDeviceId = '';

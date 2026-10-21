@@ -29,6 +29,7 @@ class _MessageState extends StatelessWidget {
     required this.detail,
     this.actionLabel,
     this.onAction,
+    this.onActionLongPress,
     this.templateActions = const [],
     this.onTemplateSelected,
     this.signInHint,
@@ -40,6 +41,7 @@ class _MessageState extends StatelessWidget {
   final String detail;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final VoidCallback? onActionLongPress;
   final List<_NoteTemplate> templateActions;
   final ValueChanged<_NoteTemplate>? onTemplateSelected;
   final String? signInHint;
@@ -99,6 +101,7 @@ class _MessageState extends StatelessWidget {
                     const SizedBox(height: 20),
                     FilledButton(
                       onPressed: onAction,
+                      onLongPress: onActionLongPress,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(192, 48),
                         padding: const EdgeInsets.symmetric(horizontal: 24),

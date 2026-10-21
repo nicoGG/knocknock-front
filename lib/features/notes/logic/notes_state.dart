@@ -27,6 +27,7 @@ class NotesState extends Equatable {
     this.isLoadingMoreNotes = false,
     this.hasMoreNotes = false,
     this.nextNotesCursor,
+    this.syncStateKnown = false,
     this.pendingSyncCount = 0,
     this.syncConflictCount = 0,
     this.isSyncingOfflineChanges = false,
@@ -54,6 +55,7 @@ class NotesState extends Equatable {
   final bool isLoadingMoreNotes;
   final bool hasMoreNotes;
   final String? nextNotesCursor;
+  final bool syncStateKnown;
   final int pendingSyncCount;
   final int syncConflictCount;
   final bool isSyncingOfflineChanges;
@@ -89,6 +91,7 @@ class NotesState extends Equatable {
     bool? hasMoreNotes,
     String? nextNotesCursor,
     bool clearNextNotesCursor = false,
+    bool? syncStateKnown,
     int? pendingSyncCount,
     int? syncConflictCount,
     bool? isSyncingOfflineChanges,
@@ -120,6 +123,7 @@ class NotesState extends Equatable {
     nextNotesCursor: clearNextNotesCursor
         ? null
         : nextNotesCursor ?? this.nextNotesCursor,
+    syncStateKnown: syncStateKnown ?? this.syncStateKnown,
     pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
     syncConflictCount: syncConflictCount ?? this.syncConflictCount,
     isSyncingOfflineChanges:
@@ -150,6 +154,7 @@ class NotesState extends Equatable {
     isLoadingMoreNotes,
     hasMoreNotes,
     nextNotesCursor,
+    syncStateKnown,
     pendingSyncCount,
     syncConflictCount,
     isSyncingOfflineChanges,

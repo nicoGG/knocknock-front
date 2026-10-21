@@ -50,7 +50,7 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
           key: const ValueKey('appbar-menu-button'),
           tooltip: 'Abrir menú',
           onPressed: Scaffold.of(scaffoldContext).openDrawer,
-          icon: const Icon(Icons.menu),
+          icon: const _RoundedMenuIcon(),
         ),
       ),
       flexibleSpace: ValueListenableBuilder<double>(
@@ -160,106 +160,31 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-void _showConnectionStatusDialog(BuildContext context) {
+Future<void> _showConnectionStatusDialog(BuildContext context) async {
   final notesCubit = context.read<NotesCubit>();
   final isSignedIn = context.read<AuthRepository>().currentUser != null;
-  showDialog<void>(
+  final protection = context
+      .findAncestorWidgetOfExactType<BoardPage>()
+      ?.listProtectionController;
+  final openChanges = await showDialog<bool>(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.24),
-    builder: (context) => BlocProvider.value(
+    builder: (dialogContext) => BlocProvider.value(
       value: notesCubit,
-      child: _ConnectionStatusDialog(isSignedIn: isSignedIn),
+      child: _ConnectionStatusDialog(
+        isSignedIn: isSignedIn,
+        protection: protection,
+        onOpenChanges: isSignedIn && protection != null
+            ? () => Navigator.pop(dialogContext, true)
+            : null,
+      ),
     ),
   );
-}
-
-class _OfflineSyncNotice extends StatelessWidget {
-  const _OfflineSyncNotice({
-    required this.conflictCount,
-    required this.isSyncing,
-    this.onReviewConflicts,
-  });
-
-  final int conflictCount;
-  final bool isSyncing;
-  final VoidCallback? onReviewConflicts;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final needsReview = conflictCount > 0;
-    final color = needsReview ? const Color(0xFFE08A24) : colorScheme.primary;
-    final title = needsReview
-        ? conflictCount == 1
-              ? '1 cambio necesita revisión'
-              : '$conflictCount cambios necesitan revisión'
-        : isSyncing
-        ? 'Sincronizando los cambios guardados'
-        : 'Guardado en este dispositivo';
-    final detail = needsReview
-        ? 'Hay cambios hechos en otro dispositivo que requieren tu decisión.'
-        : isSyncing
-        ? 'Tus cambios siguen seguros mientras terminamos de enviarlos.'
-        : 'Se sincronizará automáticamente al reconectar. No necesitas hacer nada.';
-
-    return Semantics(
-      container: true,
-      liveRegion: true,
-      label: '$title. $detail',
-      child: Container(
-        key: const ValueKey('offline-sync-notice'),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: color.withValues(
-            alpha: Theme.of(context).brightness == Brightness.dark ? 0.2 : 0.1,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withValues(alpha: 0.32)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              needsReview
-                  ? Icons.sync_problem_rounded
-                  : isSyncing
-                  ? Icons.sync_rounded
-                  : Icons.cloud_done_outlined,
-              color: color,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(color: color, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    detail,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                      height: 1.3,
-                    ),
-                  ),
-                  if (needsReview && onReviewConflicts != null) ...[
-                    const SizedBox(height: 10),
-                    TextButton.icon(
-                      key: const ValueKey('offline-sync-review-action'),
-                      onPressed: onReviewConflicts,
-                      icon: const Icon(Icons.compare_arrows_rounded, size: 18),
-                      label: const Text('Revisar cambios'),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+  if (openChanges == true && context.mounted && protection != null) {
+    await showSyncActivitySheet(
+      context: context,
+      cubit: notesCubit,
+      protection: protection,
     );
   }
 }
@@ -359,12 +284,12 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
                     color: color,
                     size: 18,
                   ),
-                if (syncConflictCount > 0)
+                if (syncConflictCount > 0 || pendingSyncCount > 0)
                   Positioned(
                     right: -6,
                     top: -6,
                     child: TweenAnimationBuilder<double>(
-                      key: ValueKey(syncConflictCount),
+                      key: ValueKey((syncConflictCount, pendingSyncCount)),
                       tween: Tween(begin: 0.6, end: 1),
                       duration: MediaQuery.disableAnimationsOf(context)
                           ? Duration.zero
@@ -373,14 +298,20 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
                       builder: (context, value, child) =>
                           Transform.scale(scale: value, child: child),
                       child: Container(
-                        key: const ValueKey('connection-conflict-badge'),
+                        key: ValueKey(
+                          syncConflictCount > 0
+                              ? 'connection-conflict-badge'
+                              : 'connection-pending-badge',
+                        ),
                         constraints: const BoxConstraints(
                           minWidth: 17,
                           minHeight: 17,
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE08A24),
+                          color: syncConflictCount > 0
+                              ? const Color(0xFFE08A24)
+                              : Theme.of(context).colorScheme.primary,
                           borderRadius: BorderRadius.circular(9),
                           border: Border.all(
                             color: Theme.of(context).colorScheme.surface,
@@ -397,9 +328,16 @@ class _AnimatedConnectionIndicator extends StatelessWidget {
                         ),
                         alignment: Alignment.center,
                         child: Text(
-                          syncConflictCount > 99 ? '99+' : '$syncConflictCount',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          (syncConflictCount > 0
+                                      ? syncConflictCount
+                                      : pendingSyncCount) >
+                                  99
+                              ? '99+'
+                              : '${syncConflictCount > 0 ? syncConflictCount : pendingSyncCount}',
+                          style: TextStyle(
+                            color: syncConflictCount > 0
+                                ? Colors.white
+                                : Theme.of(context).colorScheme.onPrimary,
                             fontSize: 9,
                             fontWeight: FontWeight.w900,
                             height: 1,
@@ -469,9 +407,15 @@ class _AnimatedEncryptionBadge extends StatelessWidget {
 }
 
 class _ConnectionStatusDialog extends StatelessWidget {
-  const _ConnectionStatusDialog({required this.isSignedIn});
+  const _ConnectionStatusDialog({
+    required this.isSignedIn,
+    this.protection,
+    this.onOpenChanges,
+  });
 
   final bool isSignedIn;
+  final ListProtectionController? protection;
+  final VoidCallback? onOpenChanges;
 
   @override
   Widget build(BuildContext context) => BlocBuilder<NotesCubit, NotesState>(
@@ -514,6 +458,12 @@ class _ConnectionStatusDialog extends StatelessWidget {
       syncStatus = 'Solo en este dispositivo';
       syncDetail = 'Inicia sesión para sincronizar tus listas y notas entre dispositivos.';
       syncIcon = Icons.phone_android_rounded;
+      syncColor = colorScheme.primary;
+    } else if (!state.syncStateKnown) {
+      syncStatus = 'Comprobando cambios';
+      syncDetail =
+          'Estamos comprobando si este dispositivo tiene cambios pendientes.';
+      syncIcon = Icons.sync_rounded;
       syncColor = colorScheme.primary;
     } else if (state.syncConflictCount > 0) {
       syncStatus = 'Necesita revisión';
@@ -788,6 +738,18 @@ class _ConnectionStatusDialog extends StatelessWidget {
                           factsKey: const ValueKey('sync-status-details'),
                           color: syncColor,
                         ),
+                        if (onOpenChanges != null) ...[
+                          const SizedBox(height: 10),
+                          FilledButton.tonalIcon(
+                            key: const ValueKey('open-sync-activity'),
+                            onPressed: onOpenChanges,
+                            icon: const Icon(
+                              Icons.cloud_sync_rounded,
+                              size: 20,
+                            ),
+                            label: const Text('Ver mis cambios'),
+                          ),
+                        ],
                         if (state.syncConflictCount > 0) ...[
                           const SizedBox(height: 10),
                           SizedBox(
@@ -797,6 +759,7 @@ class _ConnectionStatusDialog extends StatelessWidget {
                               onPressed: () => showSyncConflictsSheet(
                                 context: context,
                                 cubit: context.read<NotesCubit>(),
+                                protection: protection,
                               ),
                               icon: const Icon(Icons.compare_arrows_rounded),
                               label: const Text('Revisar cambios'),
@@ -1053,6 +1016,40 @@ class _ConnectionStatusFact extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _RoundedMenuIcon extends StatelessWidget {
+  const _RoundedMenuIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
+    return ExcludeSemantics(
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final width in [22.0, 16.0, 22.0])
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2.1),
+                child: Container(
+                  width: width,
+                  height: 2.6,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

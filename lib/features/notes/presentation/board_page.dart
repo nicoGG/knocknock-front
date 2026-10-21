@@ -1,3 +1,7 @@
+import 'package:nocknock/features/notes/presentation/sync_activity_sheet.dart';
+import 'package:nocknock/features/notes/presentation/widgets/note_history_sheet.dart';
+import 'package:nocknock/features/notes/data/quick_capture_inbox.dart';
+import 'package:nocknock/features/notes/presentation/widgets/quick_capture_sheet.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
@@ -25,6 +29,9 @@ import 'package:nocknock/features/notes/logic/notes_state.dart';
 import 'package:nocknock/features/notes/presentation/board_filter_order_controller.dart';
 import 'package:nocknock/features/notes/presentation/board_view_mode_controller.dart';
 import 'package:nocknock/features/notes/presentation/global_note_search.dart';
+import 'package:nocknock/features/notes/presentation/today_page.dart';
+import 'package:nocknock/features/notes/data/notes_repository.dart'
+    show NoteSearchResult, NotesPersistenceFailure;
 import 'package:nocknock/features/notes/presentation/list_biometric_copy.dart';
 import 'package:nocknock/features/notes/presentation/list_shortcuts_controller.dart';
 import 'package:nocknock/features/notes/presentation/note_category_style.dart';
@@ -89,6 +96,7 @@ class BoardPage extends StatefulWidget {
     required this.viewModeController,
     required this.listProtectionController,
     this.notificationsController,
+    this.captureInbox,
     super.key,
   });
 
@@ -96,12 +104,15 @@ class BoardPage extends StatefulWidget {
   final BoardViewModeController viewModeController;
   final ListProtectionController listProtectionController;
   final NotificationsController? notificationsController;
+  final QuickCaptureInbox? captureInbox;
 
   @override
   State<BoardPage> createState() => _BoardPageState();
 }
 
 class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
+  bool _captureOpen = false;
+  final Set<String> _offeredCaptures = {};
   NoteFilter _filter = NoteFilter.all;
   NoteCategory? _categoryFilter;
   String? _assigneeFilterUid;
@@ -110,6 +121,8 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   bool _completedSectionExpanded = true;
   bool _isEditingListTitle = false;
   late String _activePreferenceListId;
+  int? _trashCount;
+  int _trashCountGeneration = 0;
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
@@ -134,6 +147,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    widget.captureInbox?.addListener(_scheduleCapture);
     final selectedListId = context.read<NotesCubit>().state.selectedListId;
     _activePreferenceListId = selectedListId;
     _filter = widget.viewModeController.filterFor(selectedListId);
@@ -200,6 +214,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    widget.captureInbox?.removeListener(_scheduleCapture);
     widget.viewModeController.removeListener(_restoreBoardPreferences);
     widget.listProtectionController.removeListener(_restoreListProtectionState);
     unawaited(_notificationTapSubscription?.cancel());
@@ -213,6 +228,100 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     _boardScrollController.dispose();
     _appBarScrollProgress.dispose();
     super.dispose();
+  }
+
+  void _scheduleCapture() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _captureOpen ||
+          ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      final pending = widget.captureInbox?.pending
+          .where((item) => !_offeredCaptures.contains(item.id))
+          .firstOrNull;
+      if (pending != null &&
+          context.read<NotesCubit>().state.lists.isNotEmpty) {
+        unawaited(_openQuickCapture(capture: pending));
+      }
+    });
+  }
+
+  Future<void> _openQuickCapture({CapturedText? capture}) async {
+    if (_captureOpen) return;
+    final cubit = context.read<NotesCubit>();
+    final lists = cubit.state.lists
+        .where(
+          (list) =>
+              !list.isEncryptionKeyPending &&
+              widget.listProtectionController.canAccess(list.id),
+        )
+        .toList();
+    if (lists.isEmpty) return;
+    capture ??= widget.captureInbox?.pending.firstOrNull;
+    if (capture != null) _offeredCaptures.add(capture.id);
+    _captureOpen = true;
+    final user = context.read<AuthRepository>().currentUser;
+    final author = user?.displayName ?? 'Invitado';
+    try {
+      final saved = await showQuickCaptureSheet(
+        context: context,
+        lists: lists,
+        selectedListId: cubit.state.selectedListId,
+        authorName: author,
+        initialText: capture?.text ?? '',
+        onSave: (listId, draft) async {
+          if (!await _selectList(listId)) {
+            throw StateError('Desbloquea la lista para guardar.');
+          }
+          await cubit.createCapturedNote(listId, draft);
+        },
+        onMoreOptions: (listId, draft) async {
+          if (!await _selectList(listId) || !mounted) return false;
+          final now = DateTime.now();
+          final expanded = await showCreateNoteDialog(
+            context: context,
+            defaultAuthorName: author,
+            showAuthorField: user == null,
+            assignees: cubit.state.selectedList?.collaborators ?? const [],
+            initialNote: Note(
+              id: 'capture',
+              boardId: listId,
+              title: draft.title,
+              content: draft.content,
+              color: draft.color,
+              authorName: author,
+              isCompleted: false,
+              positionX: 0,
+              positionY: 0,
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+          if (expanded == null) return false;
+          await cubit.createCapturedNote(listId, expanded);
+          return true;
+        },
+      );
+      if (saved == true && capture != null) {
+        await widget.captureInbox?.acknowledge(capture.id);
+      } else if (capture != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Captura pendiente. Mantén pulsado Nueva nota para retomarla.',
+            ),
+            action: SnackBarAction(
+              label: 'Continuar',
+              onPressed: () => _openQuickCapture(capture: capture),
+            ),
+          ),
+        );
+      }
+    } finally {
+      _captureOpen = false;
+      if (mounted) _scheduleCapture();
+    }
   }
 
   void _refreshShortcuts() {
@@ -229,6 +338,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     _drawerScopeRefreshTimer = Timer(const Duration(milliseconds: 360), () {
       if (!mounted) return;
       unawaited(context.read<NotesCubit>().refreshScopeNotesIfStale());
+      unawaited(_refreshTrashCount());
     });
   }
 
@@ -269,6 +379,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    ModalRoute.isCurrentOf(context);
     return BlocConsumer<NotesCubit, NotesState>(
       listenWhen: (previous, current) =>
           (current.message != null && previous.message != current.message) ||
@@ -287,9 +398,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
       },
       builder: (context, state) {
         _scheduleBoardPagination(state);
+        _scheduleCapture();
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
-        final isSignedIn = context.read<AuthRepository>().currentUser != null;
         final rawScopedNotes = switch (_scope) {
           _BoardScope.pinned => state.pinnedNotes,
           _BoardScope.withReminder => state.reminderNotes,
@@ -403,6 +514,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             onOpenProfile: _openProfile,
             onOpenSettings: _openSettings,
             onOpenTrash: _openTrash,
+            onOpenToday: _openToday,
             favoriteListIds: _listShortcutsController.favorites,
             recentListIds: _listShortcutsController.recents,
             onToggleFavorite: _listShortcutsController.toggleFavorite,
@@ -411,6 +523,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             ),
             pinnedCount: _pendingScopeCount(state.pinnedNotes),
             reminderCount: _pendingScopeCount(state.reminderNotes),
+            trashCount: _trashCount,
           ),
           floatingActionButton:
               isCompact &&
@@ -424,6 +537,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                     key: const ValueKey('new-note-fab'),
                     scrollProgress: _appBarScrollProgress,
                     onPressed: state.isSaving ? null : _openNewNoteEditor,
+                    onLongPress: () => _openQuickCapture(),
                     backgroundColor: colorScheme.primary,
                     foregroundColor: colorScheme.onPrimary,
                   ),
@@ -515,6 +629,8 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                                               'board-header-repaint-boundary',
                                             ),
                                             child: _BoardHeader(
+                                              onQuickCapture: () =>
+                                                  _openQuickCapture(),
                                               isEditingTitle:
                                                   _isEditingListTitle,
                                               onEditingTitleChanged:
@@ -637,33 +753,6 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                                       ),
                                     ),
                                   ),
-                                  if (isSignedIn &&
-                                      (state.pendingSyncCount > 0 ||
-                                          state.syncConflictCount > 0))
-                                    SliverPadding(
-                                      padding: EdgeInsets.fromLTRB(
-                                        isCompact ? 18 : 40,
-                                        14,
-                                        isCompact ? 18 : 40,
-                                        0,
-                                      ),
-                                      sliver: SliverToBoxAdapter(
-                                        child: _OfflineSyncNotice(
-                                          conflictCount:
-                                              state.syncConflictCount,
-                                          isSyncing:
-                                              state.isSyncingOfflineChanges,
-                                          onReviewConflicts:
-                                              state.syncConflictCount == 0
-                                              ? null
-                                              : () => showSyncConflictsSheet(
-                                                  context: context,
-                                                  cubit: context
-                                                      .read<NotesCubit>(),
-                                                ),
-                                        ),
-                                      ),
-                                    ),
                                   const SliverToBoxAdapter(
                                     child: SizedBox(height: 26),
                                   ),

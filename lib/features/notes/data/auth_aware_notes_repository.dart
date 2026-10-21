@@ -10,11 +10,13 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 class AuthAwareNotesRepository
     implements
         NotesRepository,
+        NoteHistoryRepository,
         LocalNotesDataCleaner,
         NotesCacheReader,
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         OfflineSyncRepository,
+        SyncActivityRepository,
         NotesSearchRepository,
         NoteAttachmentsRepository,
         TrashNotesRepository,
@@ -212,6 +214,24 @@ class AuthAwareNotesRepository
       });
 
   @override
+  Future<List<PendingNoteChange>> fetchPendingNoteChanges() =>
+      _whenReady((repository) {
+        if (repository is! SyncActivityRepository) {
+          return Future.value(const <PendingNoteChange>[]);
+        }
+        return (repository as SyncActivityRepository).fetchPendingNoteChanges();
+      });
+
+  @override
+  Future<void> retryPendingNoteChange(String id) => _whenReady((
+    repository,
+  ) async {
+    if (repository is SyncActivityRepository) {
+      await (repository as SyncActivityRepository).retryPendingNoteChange(id);
+    }
+  });
+
+  @override
   Future<OfflineSyncSummary> offlineSyncSummary() => _whenReady((repository) {
     if (repository is! OfflineSyncRepository) {
       return Future.value(const OfflineSyncSummary());
@@ -265,6 +285,29 @@ class AuthAwareNotesRepository
           noteId,
           attachmentId,
         );
+      });
+
+  @override
+  Future<Note> restoreNoteContent(
+    String noteId,
+    Map<String, dynamic> changes,
+  ) => _whenReady((repository) {
+    if (repository is! NoteHistoryRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as NoteHistoryRepository).restoreNoteContent(
+      noteId,
+      changes,
+    );
+  });
+
+  @override
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId) =>
+      _whenReady((repository) {
+        if (repository is! NoteHistoryRepository) {
+          throw const NotesPersistenceFailure();
+        }
+        return (repository as NoteHistoryRepository).fetchNoteHistory(noteId);
       });
 
   @override

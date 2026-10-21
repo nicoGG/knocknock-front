@@ -305,7 +305,11 @@ class Note extends Equatable {
     this.reminderRecurrence,
     this.contentDelta,
     this.revision = 0,
+    this.lastEditedAt,
+    this.lastEditedByName,
+    this.lastEditedByUid,
     this.deletedAt,
+    this.completedAt,
   }) : _legacyAttachment = attachment,
        _legacyAssigneeUid = assigneeUid;
 
@@ -358,8 +362,12 @@ class Note extends Equatable {
       positionY: (json['positionY'] as num?)?.toDouble() ?? 0,
       reminderAt: _localDateTimeFromJson(json['reminderAt']),
       reminderRecurrence: reminderRecurrence,
+      lastEditedAt: _localDateTimeFromJson(json['lastEditedAt']),
+      lastEditedByName: json['lastEditedByName'] as String?,
+      lastEditedByUid: json['lastEditedByUid'] as String?,
       revision: (json['revision'] as num?)?.toInt() ?? 0,
       deletedAt: _localDateTimeFromJson(json['deletedAt']),
+      completedAt: _localDateTimeFromJson(json['completedAt']),
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
@@ -398,6 +406,7 @@ class Note extends Equatable {
       : [_legacyAttachment];
   NoteAttachment? get attachment => photoAttachments.firstOrNull;
   final bool isCompleted;
+  final DateTime? completedAt;
   final bool isPinned;
   final int sortOrder;
   final NoteCategory category;
@@ -408,6 +417,9 @@ class Note extends Equatable {
   final DateTime? reminderAt;
   final ReminderRecurrence? reminderRecurrence;
   bool get isRecurring => reminderAt != null && reminderRecurrence != null;
+  final DateTime? lastEditedAt;
+  final String? lastEditedByName;
+  final String? lastEditedByUid;
   final int revision;
   final DateTime? deletedAt;
   final DateTime createdAt;
@@ -427,6 +439,8 @@ class Note extends Equatable {
     'customAssigneeNames': assignedCustomNames,
     'attachments': photoAttachments.map((entry) => entry.toJson()).toList(),
     'isCompleted': isCompleted,
+    if (completedAt != null)
+      'completedAt': reminderDateTimeToJson(completedAt!),
     'isPinned': isPinned,
     'sortOrder': sortOrder,
     'category': category.name,
@@ -437,6 +451,9 @@ class Note extends Equatable {
     if (reminderAt != null) 'reminderAt': reminderDateTimeToJson(reminderAt!),
     if (reminderRecurrence != null)
       'reminderRecurrence': reminderRecurrence!.toJson(),
+    if (lastEditedAt != null) 'lastEditedAt': lastEditedAt!.toIso8601String(),
+    'lastEditedByName': lastEditedByName,
+    'lastEditedByUid': lastEditedByUid,
     'revision': revision,
     if (deletedAt != null) 'deletedAt': reminderDateTimeToJson(deletedAt!),
     'createdAt': createdAt.toIso8601String(),
@@ -445,6 +462,8 @@ class Note extends Equatable {
 
   Note copyWith({
     bool? isCompleted,
+    DateTime? completedAt,
+    bool clearCompletedAt = false,
     bool? isPinned,
     int? sortOrder,
     NoteCategory? category,
@@ -453,6 +472,9 @@ class Note extends Equatable {
     List<NoteAttachment>? attachments,
     DateTime? updatedAt,
     int? revision,
+    DateTime? lastEditedAt,
+    String? lastEditedByName,
+    String? lastEditedByUid,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
   }) => Note(
@@ -471,6 +493,7 @@ class Note extends Equatable {
     isCompleted: reminderRecurrence == null
         ? isCompleted ?? this.isCompleted
         : false,
+    completedAt: clearCompletedAt ? null : completedAt ?? this.completedAt,
     isPinned: isPinned ?? this.isPinned,
     sortOrder: sortOrder ?? this.sortOrder,
     category: category ?? this.category,
@@ -480,6 +503,9 @@ class Note extends Equatable {
     positionY: positionY,
     reminderAt: reminderAt,
     reminderRecurrence: reminderRecurrence,
+    lastEditedAt: lastEditedAt ?? this.lastEditedAt,
+    lastEditedByName: lastEditedByName ?? this.lastEditedByName,
+    lastEditedByUid: lastEditedByUid ?? this.lastEditedByUid,
     revision: revision ?? this.revision,
     deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
     createdAt: createdAt,
@@ -501,6 +527,7 @@ class Note extends Equatable {
     assignedCustomNames,
     photoAttachments,
     isCompleted,
+    completedAt,
     isPinned,
     sortOrder,
     category,
@@ -511,6 +538,9 @@ class Note extends Equatable {
     reminderAt,
     reminderRecurrence,
     revision,
+    lastEditedAt,
+    lastEditedByName,
+    lastEditedByUid,
     deletedAt,
     createdAt,
     updatedAt,
@@ -705,4 +735,33 @@ class NoteDraft extends Equatable {
     positionX,
     positionY,
   ];
+}
+
+class NoteVersion {
+  const NoteVersion({
+    required this.note,
+    required this.revision,
+    required this.savedAt,
+    this.editorName,
+    this.editorUid,
+  });
+  factory NoteVersion.fromJson(Map<String, dynamic> json) => NoteVersion(
+    note: Note.fromJson(Map<String, dynamic>.from(json['note'] as Map)),
+    revision: (json['revision'] as num).toInt(),
+    savedAt: DateTime.parse(json['savedAt'] as String),
+    editorName: json['editorName'] as String?,
+    editorUid: json['editorUid'] as String?,
+  );
+  final Note note;
+  final int revision;
+  final DateTime savedAt;
+  final String? editorName;
+  final String? editorUid;
+  Map<String, dynamic> toJson() => {
+    'note': note.toJson(),
+    'revision': revision,
+    'savedAt': savedAt.toIso8601String(),
+    'editorName': editorName,
+    'editorUid': editorUid,
+  };
 }

@@ -98,6 +98,9 @@ extension _BoardPageContent on _BoardPageState {
           },
           actionLabel: isFirstListEmpty ? 'Crear una nota' : null,
           onAction: isFirstListEmpty ? _openNewNoteEditor : null,
+          onActionLongPress: isFirstListEmpty
+              ? () => _openQuickCapture()
+              : null,
           templateActions: isFirstListEmpty ? _noteTemplates : const [],
           onTemplateSelected: isFirstListEmpty ? _openTemplate : null,
           signInHint: isFirstListEmpty && isGuest
@@ -383,6 +386,44 @@ extension _BoardPageContent on _BoardPageState {
         note.id,
   }.length;
 
+  Future<void> _openToday() async {
+    final cubit = context.read<NotesCubit>();
+    final userId = context.read<AuthRepository>().currentUser?.id;
+    final result = await Navigator.of(context).push<NoteSearchResult>(
+      MaterialPageRoute(
+        builder: (_) => TodayPage(
+          cubit: cubit,
+          protection: widget.listProtectionController,
+          userId: userId,
+          onCreateNote: (editorContext, listId) async {
+            if (!await _selectList(listId) || !editorContext.mounted) return;
+            await _openEditor(editorContext: editorContext);
+          },
+          onPreviewNote: (previewContext, result) async {
+            if (!await _selectList(result.list.id) || !previewContext.mounted) {
+              return false;
+            }
+            return _openNotePreview(
+              result.note,
+              previewContext: previewContext,
+              openDetail: false,
+              showOpenNoteButton: true,
+            );
+          },
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    if (!await _selectList(result.list.id) || !mounted) return;
+    if ((_filter == NoteFilter.pending && result.note.isCompleted) ||
+        (_filter == NoteFilter.completed && !result.note.isCompleted)) {
+      _changeFilter(
+        result.note.isCompleted ? NoteFilter.completed : NoteFilter.pending,
+      );
+    }
+    await _openNotePreview(result.note);
+  }
+
   Future<void> _openGlobalSearch() async {
     _playBoardTapSound();
     final cubit = context.read<NotesCubit>();
@@ -523,7 +564,12 @@ extension _BoardPageContent on _BoardPageState {
     );
   }
 
-  Future<void> _openNotePreview(Note initialNote) async {
+  Future<bool> _openNotePreview(
+    Note initialNote, {
+    BuildContext? previewContext,
+    bool openDetail = true,
+    bool showOpenNoteButton = false,
+  }) async {
     _playBoardTapSound();
     HapticFeedback.lightImpact();
     final cubit = context.read<NotesCubit>();
@@ -538,7 +584,24 @@ extension _BoardPageContent on _BoardPageState {
         initialNote;
 
     final shouldOpen = await showNotePreviewDialog(
-      context: context,
+      context: previewContext ?? context,
+      showOpenNoteButton: showOpenNoteButton,
+      noteChanges: cubit.stream,
+      onHistory: (historyContext) => showNoteHistorySheet(
+        context: historyContext,
+        currentNote: () => latestNote(cubit.state),
+        load: () => cubit.loadNoteHistory(latestNote(cubit.state).id),
+        restore: (current, version) async {
+          if (!widget.listProtectionController.canAccess(current.boardId)) {
+            throw const NotesPersistenceFailure();
+          }
+          await cubit.restoreNoteVersion(current, version);
+        },
+        protectionChanges: widget.listProtectionController,
+        canAccess: () => widget.listProtectionController.canAccess(
+          latestNote(cubit.state).boardId,
+        ),
+      ),
       noteProvider: () => latestNote(cubit.state),
       assigneesProvider: () {
         final note = latestNote(cubit.state);
@@ -647,11 +710,16 @@ extension _BoardPageContent on _BoardPageState {
             },
           ),
     );
-    if (!mounted || !shouldOpen) return;
-    _openNote(latestNote(cubit.state));
+    if (!mounted || !shouldOpen) return false;
+    if (openDetail) _openNote(latestNote(cubit.state));
+    return true;
   }
 
-  Future<void> _openEditor({Note? note, Note? initialNote}) async {
+  Future<void> _openEditor({
+    Note? note,
+    Note? initialNote,
+    BuildContext? editorContext,
+  }) async {
     final currentUser = context.read<AuthRepository>().currentUser;
     final assignees = context
         .read<NotesCubit>()
@@ -666,7 +734,7 @@ extension _BoardPageContent on _BoardPageState {
     final availableAssignees = assignees ?? const <ListCollaborator>[];
     final draft = note == null
         ? await showCreateNoteDialog(
-            context: context,
+            context: editorContext ?? context,
             defaultAuthorName: defaultAuthorName,
             showAuthorField: currentUser == null,
             assignees: availableAssignees,
@@ -952,10 +1020,32 @@ extension _BoardPageContent on _BoardPageState {
     );
   }
 
-  void _openTrash() {
+  Future<void> _refreshTrashCount() async {
+    final generation = ++_trashCountGeneration;
+    final auth = context.read<AuthRepository>();
+    final userId = auth.currentUser?.id;
+    _update(() => _trashCount = null);
+    try {
+      final notes = await context.read<NotesCubit>().fetchTrash();
+      if (!mounted ||
+          generation != _trashCountGeneration ||
+          auth.currentUser?.id != userId) {
+        return;
+      }
+      _update(() => _trashCount = notes.length);
+    } catch (_) {
+      // An unavailable count must not look like an empty trash.
+      if (mounted && generation == _trashCountGeneration) {
+        _update(() => _trashCount = null);
+      }
+    }
+  }
+
+  Future<void> _openTrash() async {
     final cubit = context.read<NotesCubit>();
-    Navigator.of(context)
+    await Navigator.of(context)
         .push(MaterialPageRoute<void>(builder: (_) => TrashPage(cubit: cubit)));
+    if (mounted) await _refreshTrashCount();
   }
 
   void _restoreBoardPreferences([String? listId]) {

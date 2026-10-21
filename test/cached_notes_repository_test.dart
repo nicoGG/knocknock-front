@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:dio/dio.dart';
@@ -136,6 +137,60 @@ void main() {
     },
   );
 
+  test('pending activity stays account scoped and retries an unavailable comparison without losing its payload', () async {
+    final preferences = await SharedPreferences.getInstance();
+    var userId = 'user-1';
+    final remote = _FakeRemoteRepository(
+      lists: [_list()],
+      notes: [_note(title: 'Base', revision: 2)],
+    );
+    final store = InMemoryOfflineMutationStore();
+    await store.put(
+      StoredOfflineMutation(
+        id: 'pending-1',
+        userId: userId,
+        entityId: 'note-1',
+        boardId: 'list-1',
+        kind: StoredMutationKind.update,
+        payload: jsonEncode({'title': 'Mi edición pendiente'}),
+        baseRevision: 2,
+        createdAt: DateTime.utc(2026, 10, 21, 12),
+        status: StoredMutationStatus.conflict,
+        localNoteJson: jsonEncode(
+          _note(title: 'Mi edición pendiente', revision: 2).toJson(),
+        ),
+        errorMessage: 'No disponible',
+      ),
+    );
+    final repository = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => userId,
+      mutationStore: store,
+    );
+    await repository.fetchLists();
+    await repository.fetchNotes('list-1');
+    final change = (await repository.fetchPendingNoteChanges()).single;
+    expect(change.note?.title, 'Mi edición pendiente');
+    expect(change.needsReview, isTrue);
+    expect(change.canCompare, isFalse);
+    userId = 'other-user';
+    expect(await repository.fetchPendingNoteChanges(), isEmpty);
+    await repository.retryPendingNoteChange('pending-1');
+    expect((await store.listForUser('user-1')).length, 1);
+    userId = 'user-1';
+    remote.isOffline = true;
+    await repository.retryPendingNoteChange('pending-1');
+    final pending = (await repository.fetchPendingNoteChanges()).single;
+    expect(pending.note?.title, 'Mi edición pendiente');
+    expect(pending.needsReview, isFalse);
+    remote.isOffline = false;
+    await repository.syncPendingChanges();
+    expect(await repository.fetchPendingNoteChanges(), isEmpty);
+    expect(remote.notes.single.title, 'Mi edición pendiente');
+    repository.dispose();
+  });
+
   test('keeps both versions when an offline edit conflicts', () async {
     final preferences = await SharedPreferences.getInstance();
     final remote = _FakeRemoteRepository(
@@ -159,6 +214,9 @@ void main() {
     expect(conflicts, hasLength(1));
     expect(conflicts.single.localNote.title, 'Mi cambio');
     expect(conflicts.single.remoteNote.title, 'Cambio remoto');
+    final activity = (await repository.fetchPendingNoteChanges()).single;
+    expect(activity.needsReview, isTrue);
+    expect(activity.canCompare, isTrue);
 
     await repository.resolveNoteSyncConflict(
       conflicts.single.mutationId,

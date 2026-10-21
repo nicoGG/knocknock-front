@@ -1,3 +1,4 @@
+import 'package:nocknock/features/notes/data/quick_capture_inbox.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -42,6 +43,7 @@ class NockNockApp extends StatefulWidget {
 }
 
 class _NockNockAppState extends State<NockNockApp> {
+  late final _captureInbox = QuickCaptureInbox(preferences: widget.preferences);
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final AppThemeController _themeController =
       widget.themeController ?? AppThemeController();
@@ -59,6 +61,7 @@ class _NockNockAppState extends State<NockNockApp> {
   @override
   void initState() {
     super.initState();
+    _captureInbox.start();
     if (_ownsThemeController) _themeController.load();
     if (_ownsBoardViewModeController) _boardViewModeController.load();
   }
@@ -68,6 +71,7 @@ class _NockNockAppState extends State<NockNockApp> {
     if (_ownsThemeController) _themeController.dispose();
     if (_ownsBoardViewModeController) _boardViewModeController.dispose();
     if (_ownsListProtectionController) _listProtectionController.dispose();
+    _captureInbox.dispose();
     super.dispose();
   }
 
@@ -127,6 +131,7 @@ class _NockNockAppState extends State<NockNockApp> {
         child: BlocProvider(
           create: (_) => NotesCubit(widget.repository)..load(),
           child: BoardPage(
+            captureInbox: _captureInbox,
             themeController: _themeController,
             viewModeController: _boardViewModeController,
             listProtectionController: _listProtectionController,

@@ -242,6 +242,9 @@ class PostItCard extends StatelessWidget {
     this.authorPhotoUrl,
     this.originListName,
     this.compactSubtitle,
+    this.compactLeading,
+    this.compactTrailing,
+    this.compactTitleMaxLines = 1,
     this.compactReadOnly = false,
     this.compactOpenIndicator = false,
     this.showPin = true,
@@ -273,6 +276,9 @@ class PostItCard extends StatelessWidget {
   final String? authorPhotoUrl;
   final String? originListName;
   final String? compactSubtitle;
+  final Widget? compactLeading;
+  final Widget? compactTrailing;
+  final int compactTitleMaxLines;
   final bool compactReadOnly;
   final bool compactOpenIndicator;
   final bool showPin;
@@ -341,6 +347,9 @@ class PostItCard extends StatelessWidget {
         authorPhotoUrl: authorPhotoUrl,
         originListName: originListName,
         subtitle: compactSubtitle,
+        leading: compactLeading,
+        trailing: compactTrailing,
+        titleMaxLines: compactTitleMaxLines,
         readOnly: compactReadOnly,
         showOpenIndicator: compactOpenIndicator,
         foregroundColor: foregroundColor,
@@ -3551,6 +3560,9 @@ class _CompactNoteBody extends StatelessWidget {
     required this.authorPhotoUrl,
     required this.originListName,
     required this.subtitle,
+    required this.leading,
+    required this.trailing,
+    required this.titleMaxLines,
     required this.readOnly,
     required this.showOpenIndicator,
     required this.foregroundColor,
@@ -3563,6 +3575,9 @@ class _CompactNoteBody extends StatelessWidget {
   final String? authorPhotoUrl;
   final String? originListName;
   final String? subtitle;
+  final Widget? leading;
+  final Widget? trailing;
+  final int titleMaxLines;
   final bool readOnly;
   final bool showOpenIndicator;
   final Color foregroundColor;
@@ -3571,7 +3586,9 @@ class _CompactNoteBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        if (note.isRecurring)
+        if (leading != null)
+          leading!
+        else if (note.isRecurring)
           Semantics(
             label: 'Recordatorio recurrente',
             image: true,
@@ -3648,7 +3665,7 @@ class _CompactNoteBody extends StatelessWidget {
                         Expanded(
                           child: Text(
                             note.title,
-                            maxLines: 1,
+                            maxLines: titleMaxLines,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(
@@ -3660,7 +3677,9 @@ class _CompactNoteBody extends StatelessWidget {
                                 ),
                           ),
                         ),
-                        if (readOnly) ...[
+                        if (readOnly &&
+                            MediaQuery.textScalerOf(context).scale(1) <
+                                1.4) ...[
                           const SizedBox(width: 8),
                           Container(
                             key: ValueKey('compact-note-category-${note.id}'),
@@ -3719,7 +3738,10 @@ class _CompactNoteBody extends StatelessWidget {
             assignees: assignees,
           ),
         ],
-        if (showOpenIndicator) ...[
+        if (trailing != null) ...[
+          const SizedBox(width: 4),
+          trailing!,
+        ] else if (showOpenIndicator) ...[
           const SizedBox(width: 8),
           Icon(
             Icons.chevron_right_rounded,

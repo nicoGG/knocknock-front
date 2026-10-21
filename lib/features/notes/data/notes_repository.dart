@@ -391,3 +391,32 @@ abstract interface class NotesRepository {
 
   void dispose();
 }
+
+abstract interface class NoteHistoryRepository {
+  Future<List<NoteVersion>> fetchNoteHistory(String noteId);
+  Future<Note> restoreNoteContent(String noteId, Map<String, dynamic> changes);
+}
+
+class PendingNoteChange {
+  const PendingNoteChange({
+    required this.id,
+    required this.boardId,
+    required this.kind,
+    required this.createdAt,
+    required this.needsReview,
+    this.canCompare = false,
+    this.note,
+  });
+  final String id;
+  final String boardId;
+  final OfflineMutationKind kind;
+  final DateTime createdAt;
+  final bool needsReview;
+  final bool canCompare;
+  final Note? note;
+}
+
+abstract interface class SyncActivityRepository {
+  Future<List<PendingNoteChange>> fetchPendingNoteChanges();
+  Future<void> retryPendingNoteChange(String id);
+}

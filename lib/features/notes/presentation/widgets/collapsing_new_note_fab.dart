@@ -7,11 +7,13 @@ class CollapsingNewNoteFab extends StatelessWidget {
   const CollapsingNewNoteFab({
     required this.scrollProgress,
     required this.onPressed,
+    this.onLongPress,
     this.backgroundColor,
     this.foregroundColor,
     super.key,
   });
 
+  final VoidCallback? onLongPress;
   final ValueListenable<double> scrollProgress;
   final VoidCallback? onPressed;
   final Color? backgroundColor;
@@ -34,7 +36,7 @@ class CollapsingNewNoteFab extends StatelessWidget {
         enabled: onPressed != null,
         label: 'Nueva nota',
         child: Tooltip(
-          message: 'Nueva nota',
+          message: 'Nueva nota · Mantén pulsado para captura rápida',
           excludeFromSemantics: true,
           child: _GlassNewNoteSurface(
             keyPrefix: 'new-note-fab',
@@ -42,6 +44,7 @@ class CollapsingNewNoteFab extends StatelessWidget {
             foregroundColor: foregroundColor ?? colorScheme.onPrimary,
             borderRadius: radius,
             onPressed: onPressed,
+            onLongPress: onLongPress,
             padding: EdgeInsetsDirectional.only(
               start: 16,
               end: 16 + (4 * expandedProgress),
@@ -82,12 +85,14 @@ class CollapsingNewNoteFab extends StatelessWidget {
 class GlassNewNoteButton extends StatelessWidget {
   const GlassNewNoteButton({
     required this.onPressed,
+    this.onLongPress,
     required this.backgroundColor,
     required this.foregroundColor,
     super.key,
   });
 
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
   final Color backgroundColor;
   final Color foregroundColor;
 
@@ -105,6 +110,7 @@ class GlassNewNoteButton extends StatelessWidget {
         foregroundColor: foregroundColor,
         borderRadius: BorderRadius.circular(22),
         onPressed: onPressed,
+        onLongPress: onLongPress,
         minHeight: 52,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: const Row(
@@ -130,8 +136,10 @@ class _GlassNewNoteSurface extends StatelessWidget {
     required this.padding,
     required this.child,
     this.minHeight = 56,
+    this.onLongPress,
   });
 
+  final VoidCallback? onLongPress;
   final String keyPrefix;
   final Color backgroundColor;
   final Color foregroundColor;
@@ -180,6 +188,7 @@ class _GlassNewNoteSurface extends StatelessWidget {
               ),
               child: InkWell(
                 onTap: onPressed,
+                onLongPress: onPressed == null ? null : onLongPress,
                 enableFeedback: false,
                 borderRadius: borderRadius,
                 child: Padding(

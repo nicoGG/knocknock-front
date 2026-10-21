@@ -21,6 +21,7 @@ class _BoardHeader extends StatelessWidget {
     required this.filterOrderController,
     required this.onViewModeChanged,
     required this.onAdd,
+    required this.onQuickCapture,
     required this.onShare,
     required this.onCustomizeBackground,
     required this.onRenameList,
@@ -49,6 +50,7 @@ class _BoardHeader extends StatelessWidget {
   final BoardFilterOrderController filterOrderController;
   final ValueChanged<BoardViewMode> onViewModeChanged;
   final VoidCallback? onAdd;
+  final VoidCallback onQuickCapture;
   final VoidCallback? onShare;
   final VoidCallback? onCustomizeBackground;
   final VoidCallback? onRenameList;
@@ -133,6 +135,7 @@ class _BoardHeader extends StatelessWidget {
                     ),
                   if (showAddButton)
                     GlassNewNoteButton(
+                      onLongPress: onQuickCapture,
                       key: const ValueKey('new-note-button'),
                       onPressed: onAdd,
                       backgroundColor: colorScheme.primary,
@@ -456,9 +459,8 @@ class _FilterDragPreview extends StatelessWidget {
           color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: Theme.of(
-              context,
-            ).colorScheme.primary.withValues(alpha: 0.58),
+            color: Theme.of(context).colorScheme.primary
+                .withValues(alpha: 0.58),
           ),
           boxShadow: [
             BoxShadow(
@@ -1268,27 +1270,27 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
                             label: widget.hasInvitedCollaborators
                                 ? 'Personas de la lista'
                                 : 'Invitar personas',
-                            onTap: () => Navigator.of(
-                              context,
-                            ).pop(_ListMenuAction.share),
+                            onTap: () =>
+                                Navigator.of(context)
+                                    .pop(_ListMenuAction.share),
                           ),
                         _GlassListMenuTile(
                           key: const ValueKey('customize-background-menu-item'),
                           icon: Icons.wallpaper_rounded,
                           label: 'Cambiar fondo',
                           enabled: widget.backgroundEnabled,
-                          onTap: () => Navigator.of(
-                            context,
-                          ).pop(_ListMenuAction.background),
+                          onTap: () =>
+                              Navigator.of(context)
+                                  .pop(_ListMenuAction.background),
                         ),
                         if (widget.showRename)
                           _GlassListMenuTile(
                             key: const ValueKey('rename-list-menu-item'),
                             icon: Icons.edit_outlined,
                             label: 'Editar nombre',
-                            onTap: () => Navigator.of(
-                              context,
-                            ).pop(_ListMenuAction.rename),
+                            onTap: () =>
+                                Navigator.of(context)
+                                    .pop(_ListMenuAction.rename),
                           ),
                         if (widget.showProtection)
                           _GlassListMenuTile(
@@ -1299,9 +1301,9 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
                             label: widget.isListProtected
                                 ? 'Quitar protección biométrica'
                                 : 'Proteger con ${listBiometricMethodLabel(platform)}',
-                            onTap: () => Navigator.of(
-                              context,
-                            ).pop(_ListMenuAction.protection),
+                            onTap: () =>
+                                Navigator.of(context)
+                                    .pop(_ListMenuAction.protection),
                           ),
                         if (widget.showDelete)
                           _GlassListMenuTile(
@@ -1309,9 +1311,9 @@ class _GlassListMenuEntryState extends State<_GlassListMenuEntry> {
                             icon: Icons.delete_outline_rounded,
                             label: 'Eliminar lista',
                             color: colorScheme.error,
-                            onTap: () => Navigator.of(
-                              context,
-                            ).pop(_ListMenuAction.delete),
+                            onTap: () =>
+                                Navigator.of(context)
+                                    .pop(_ListMenuAction.delete),
                           ),
                       ],
                     ),
