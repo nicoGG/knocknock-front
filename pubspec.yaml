@@ -2,7 +2,7 @@ name: nocknock
 description: "NockNock collaborative post-it reminders and tasks."
 publish_to: "none"
 
-version: 1.1.0+527
+version: 1.2.0+528
 
 environment:
   sdk: ^3.13.5

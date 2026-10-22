@@ -148,3 +148,61 @@ Configura estos secretos en el repositorio de GitHub antes del primer merge a
 - `ANDROID_KEY_PASSWORD`: contrasena de la clave.
 - `PLAY_SERVICE_ACCOUNT_JSON`: JSON completo de una cuenta de servicio con
   permiso para publicar NockNock en Play Console.
+
+## Widgets de inicio (Android y iOS)
+
+La galería del sistema incluye **Mis pendientes** y **Captura rápida**. En
+**Configuración → Widgets de inicio** se elige “Hoy” o una lista, el destino de
+las capturas y si se oculta el contenido. Los ajustes se guardan por cuenta en
+este dispositivo y se aplican a todas las instancias del widget.
+
+- “Hoy” muestra notas atrasadas, con recordatorio para hoy y asignadas al usuario
+  sin fecha. Una lista elegida muestra sus notas pendientes. Se comparten como
+  máximo cinco títulos; el tamaño del widget determina cuántos caben.
+- Tocar una nota abre su vista previa. Nueva nota abre el editor compacto y
+  permite cambiar la lista de destino antes de guardar.
+- Las listas protegidas con biometría se excluyen incluso si están desbloqueadas
+  en la app. También se excluyen listas cuya llave de cifrado sigue pendiente.
+  No se comparten cuerpos, adjuntos ni credenciales con el widget. Los títulos
+  visibles se guardan en almacenamiento privado del dispositivo para que el
+  sistema pueda mostrarlos con la app cerrada.
+- En Android y iOS 17 o posterior se pueden marcar tareas no recurrentes desde
+  el widget. La acción se conserva en una cola nativa con cuenta, revisión e ID
+  de mutación; se entrega al repositorio al abrir o reanudar NockNock. Si falla
+  la escritura, permanece en cola. El repositorio mantiene sus mecanismos de
+  sincronización offline y conflictos. No se confirma la sincronización remota
+  desde el widget. Las tareas recurrentes y iOS 15/16 abren la nota en la app.
+- El contenido se actualiza al usar la app y recibir cambios del repositorio.
+  La fecha de actualización y las acciones por sincronizar se muestran en el
+  widget. No se realiza polling de la API desde la extensión del sistema.
+
+Android usa `AppWidgetProvider` y almacenamiento privado. iOS usa WidgetKit y
+el App Group existente `group.cl.nocknock.app`, con el target
+`NockNockWidgets` embebido en Runner. El target hereda la versión de Flutter
+mediante `Widgets.xcconfig`, sin enlazar los plugins de Runner. Para distribuir
+se necesita un perfil de firma para `cl.nocknock.app.NockNockWidgets` con ese
+App Group habilitado.
+
+## Listas financieras
+
+Al crear una lista puedes elegir **Normal**, **Gastos**, **Cotizaciones**,
+**Cuentas por cobrar** o **Financiera personalizada**. Esta última permite dar
+nombre al tipo y reutilizar los nombres personalizados de tus listas accesibles.
+Las listas existentes conservan el tipo Normal y su interfaz habitual.
+
+Las listas financieras muestran un formulario de concepto, monto, moneda,
+persona/proveedor, fecha y estado, con boletas, capturas y PDF usando los adjuntos
+existentes (hasta dos archivos). CLP usa pesos enteros; USD y EUR, dos decimales.
+Los montos se guardan como unidades enteras, independientemente del título.
+Los estados distinguen por pagar/pagado, por cobrar/cobrado o cotización
+pendiente/aceptada/descartada. Se incluyen iconos por tipo y moneda, las
+superficies de vidrio del resto de la app, búsqueda y filtros por estado.
+
+Los resúmenes usan todos los registros de la lista, separan las monedas y no
+incluyen notas sin datos financieros ni registros eliminados. El listado muestra
+hasta cuarenta registros inicialmente y permite ver más, sin limitar el total.
+Se conservan invitaciones, edición colaborativa, comprobantes, historial,
+papelera y sincronización offline. El nombre del tipo personalizado y los datos
+financieros se cifran antes de enviarse o guardarse en la caché de la cuenta.
+
+Requiere publicar primero la actualización correspondiente del backend.

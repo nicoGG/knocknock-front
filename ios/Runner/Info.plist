@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Elige una foto para usarla como fondo de tus listas.</string>
+	<string>Elige fotos para fondos o adjunta boletas y capturas a tus notas.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Usa Face ID para desbloquear las listas que decidas proteger.</string>
 	<key>NSAppTransportSecurity</key>
@@ -29,6 +29,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+				<string>nocknock</string>
 			</array>
 		</dict>
 	</array>

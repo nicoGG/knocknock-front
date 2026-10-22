@@ -1,0 +1,4 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="16dp" android:orientation="vertical" android:gravity="center" android:background="@drawable/widget_background">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="NockNock" android:textSize="14sp" android:textStyle="bold" android:textColor="#756751" android:gravity="center" />
+    <TextView android:id="@+id/widget_capture" android:layout_width="match_parent" android:layout_height="match_parent" android:text="＋\nNueva nota" android:textSize="20sp" android:textStyle="bold" android:textColor="#73551B" android:gravity="center" android:contentDescription="Capturar una nueva nota" />
+</LinearLayout>

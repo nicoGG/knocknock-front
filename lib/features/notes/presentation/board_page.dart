@@ -1,3 +1,9 @@
+import 'package:nocknock/features/finance/financial_style.dart';
+import 'package:nocknock/features/finance/list_configuration.dart';
+import 'package:nocknock/features/finance/financial_entry_editor.dart';
+import 'package:nocknock/features/finance/financial_list_board.dart';
+import 'package:nocknock/features/home_widgets/home_widget_controller.dart';
+import 'package:nocknock/features/home_widgets/home_widget_settings_page.dart';
 import 'package:nocknock/features/notes/presentation/sync_activity_sheet.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_history_sheet.dart';
 import 'package:nocknock/features/notes/data/quick_capture_inbox.dart';
@@ -97,6 +103,7 @@ class BoardPage extends StatefulWidget {
     required this.listProtectionController,
     this.notificationsController,
     this.captureInbox,
+    this.homeWidgets,
     super.key,
   });
 
@@ -105,6 +112,7 @@ class BoardPage extends StatefulWidget {
   final ListProtectionController listProtectionController;
   final NotificationsController? notificationsController;
   final QuickCaptureInbox? captureInbox;
+  final HomeWidgetController? homeWidgets;
 
   @override
   State<BoardPage> createState() => _BoardPageState();
@@ -148,6 +156,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     widget.captureInbox?.addListener(_scheduleCapture);
+    widget.homeWidgets?.addListener(_scheduleWidgetAction);
     final selectedListId = context.read<NotesCubit>().state.selectedListId;
     _activePreferenceListId = selectedListId;
     _filter = widget.viewModeController.filterFor(selectedListId);
@@ -215,6 +224,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     widget.captureInbox?.removeListener(_scheduleCapture);
+    widget.homeWidgets?.removeListener(_scheduleWidgetAction);
     widget.viewModeController.removeListener(_restoreBoardPreferences);
     widget.listProtectionController.removeListener(_restoreListProtectionState);
     unawaited(_notificationTapSubscription?.cancel());
@@ -228,6 +238,46 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     _boardScrollController.dispose();
     _appBarScrollProgress.dispose();
     super.dispose();
+  }
+
+  bool _widgetActionOpen = false;
+  void _scheduleWidgetAction() {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted ||
+          _widgetActionOpen ||
+          _captureOpen ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          context.read<NotesCubit>().state.status != NotesStatus.ready) {
+        return;
+      }
+      final action = widget.homeWidgets?.takeAction();
+      if (action == null) return;
+      _widgetActionOpen = true;
+      try {
+        switch (action['action']) {
+          case 'capture':
+            final target = action['boardId'];
+            await _openQuickCapture(
+              preferredListId: target == null || target.isEmpty ? null : target,
+            );
+          case 'note':
+            await _handleNotificationData({
+              'boardId': action['boardId'] ?? '',
+              'noteId': action['noteId'] ?? '',
+            });
+          default:
+            final board = action['boardId'];
+            if (board != null && board.isNotEmpty) {
+              await _handleNotificationData({'boardId': board});
+            } else {
+              await _openToday();
+            }
+        }
+      } finally {
+        _widgetActionOpen = false;
+        if (mounted) _scheduleWidgetAction();
+      }
+    });
   }
 
   void _scheduleCapture() {
@@ -247,9 +297,25 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     });
   }
 
-  Future<void> _openQuickCapture({CapturedText? capture}) async {
+  Future<void> _openQuickCapture({
+    CapturedText? capture,
+    String? preferredListId,
+  }) async {
     if (_captureOpen) return;
     final cubit = context.read<NotesCubit>();
+    final target = cubit.state.lists
+        .where(
+          (list) => list.id == (preferredListId ?? cubit.state.selectedListId),
+        )
+        .firstOrNull;
+    if (capture == null &&
+        target?.isFinancial == true &&
+        widget.captureInbox?.pending.isNotEmpty != true) {
+      if (await _selectList(target!.id) && mounted) {
+        await _openFinancialEditor();
+      }
+      return;
+    }
     final lists = cubit.state.lists
         .where(
           (list) =>
@@ -267,7 +333,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
       final saved = await showQuickCaptureSheet(
         context: context,
         lists: lists,
-        selectedListId: cubit.state.selectedListId,
+        selectedListId: preferredListId ?? cubit.state.selectedListId,
         authorName: author,
         initialText: capture?.text ?? '',
         onSave: (listId, draft) async {
@@ -399,6 +465,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
       builder: (context, state) {
         _scheduleBoardPagination(state);
         _scheduleCapture();
+        _scheduleWidgetAction();
         final width = MediaQuery.sizeOf(context).width;
         final isCompact = width < 720;
         final rawScopedNotes = switch (_scope) {

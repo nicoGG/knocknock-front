@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/financial_entry.dart';
 import 'package:equatable/equatable.dart';
 
 enum NoteColor {
@@ -304,6 +305,7 @@ class Note extends Equatable {
     this.reminderAt,
     this.reminderRecurrence,
     this.contentDelta,
+    this.financialData,
     this.revision = 0,
     this.lastEditedAt,
     this.lastEditedByName,
@@ -324,6 +326,7 @@ class Note extends Equatable {
       title: json['title'] as String,
       content: json['content'] as String? ?? '',
       contentDelta: json['contentDelta'] as String?,
+      financialData: json['financialData'] as String?,
       color: NoteColor.values.firstWhere(
         (color) => color.name == json['color'],
         orElse: () => NoteColor.yellow,
@@ -378,6 +381,8 @@ class Note extends Equatable {
   final String title;
   final String content;
   final String? contentDelta;
+  final String? financialData;
+  FinancialEntry? get financialEntry => FinancialEntry.tryDecode(financialData);
   final NoteColor color;
   final String authorName;
   final String? _legacyAssigneeUid;
@@ -431,6 +436,7 @@ class Note extends Equatable {
     'title': title,
     'content': content,
     if (contentDelta != null) 'contentDelta': contentDelta,
+    if (financialData != null) 'financialData': financialData,
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
@@ -483,6 +489,7 @@ class Note extends Equatable {
     title: title,
     content: content,
     contentDelta: contentDelta,
+    financialData: financialData,
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
@@ -519,6 +526,7 @@ class Note extends Equatable {
     title,
     content,
     contentDelta,
+    financialData,
     color,
     authorName,
     assigneeUid,
@@ -564,6 +572,7 @@ class NoteDraft extends Equatable {
     this.reminderAt,
     this.reminderRecurrence,
     this.contentDelta,
+    this.financialData,
     this.clientNoteId,
     this.clientMutationId,
     this.isCompleted = false,
@@ -578,6 +587,7 @@ class NoteDraft extends Equatable {
     title: json['title'] as String,
     content: json['content'] as String? ?? '',
     contentDelta: json['contentDelta'] as String?,
+    financialData: json['financialData'] as String?,
     color: NoteColor.values.firstWhere(
       (color) => color.name == json['color'],
       orElse: () => NoteColor.yellow,
@@ -620,6 +630,8 @@ class NoteDraft extends Equatable {
   final String title;
   final String content;
   final String? contentDelta;
+  final String? financialData;
+  FinancialEntry? get financialEntry => FinancialEntry.tryDecode(financialData);
   final NoteColor color;
   final String authorName;
   final String? _legacyAssigneeUid;
@@ -666,6 +678,7 @@ class NoteDraft extends Equatable {
     title: title,
     content: content,
     contentDelta: contentDelta,
+    financialData: financialData,
     color: color,
     authorName: authorName,
     assigneeUid: assigneeUid,
@@ -690,6 +703,7 @@ class NoteDraft extends Equatable {
     'title': title,
     'content': content,
     if (contentDelta != null) 'contentDelta': contentDelta,
+    if (financialData != null) 'financialData': financialData,
     'color': color.name,
     'authorName': authorName,
     if (assigneeUid != null) 'assigneeUid': assigneeUid,
@@ -716,6 +730,7 @@ class NoteDraft extends Equatable {
     title,
     content,
     contentDelta,
+    financialData,
     color,
     authorName,
     assigneeUid,

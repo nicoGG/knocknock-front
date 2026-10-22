@@ -1,0 +1,11 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="16dp" android:background="@drawable/widget_background">
+    <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Hoy" android:textSize="20sp" android:textStyle="bold" android:textColor="#28251F" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:text="Mis pendientes" android:id="@+id/widget_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="#756751" android:layout_marginBottom="6dp" />
+    <LinearLayout android:id="@+id/widget_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+    <TextView android:text="Tus pendientes aparecerán aquí" android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="14sp" android:textColor="#756751" android:paddingVertical="8dp" />
+    <Space android:layout_width="1dp" android:layout_height="0dp" android:layout_weight="1" />
+    <TextView android:id="@+id/widget_updated" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="#756751" android:maxLines="2" />
+    <TextView android:id="@+id/widget_capture" android:layout_width="match_parent" android:layout_height="40dp" android:gravity="center_vertical" android:text="＋ Nueva nota" android:textSize="15sp" android:textStyle="bold" android:textColor="#73551B" android:contentDescription="Capturar una nueva nota" />
+</LinearLayout>

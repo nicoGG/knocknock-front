@@ -10,6 +10,9 @@ class SceneDelegate: FlutterSceneDelegate {
   override func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
                      options connectionOptions: UIScene.ConnectionOptions) {
     super.scene(scene, willConnectTo: session, options: connectionOptions)
+    for item in connectionOptions.urlContexts {
+      _ = (UIApplication.shared.delegate as? AppDelegate)?.handleWidgetURL(item.url)
+    }
     for item in connectionOptions.urlContexts where isShare(item.url) {
       _ = SwiftShareHandlerIosPlatform.instance.application(
         UIApplication.shared, didFinishLaunchingWithOptions: [UIApplication.LaunchOptionsKey.url: item.url])
@@ -20,7 +23,9 @@ class SceneDelegate: FlutterSceneDelegate {
     for item in URLContexts where isShare(item.url) {
       _ = SwiftShareHandlerIosPlatform.instance.application(UIApplication.shared, open: item.url)
     }
-    let remaining = Set(URLContexts.filter { !isShare($0.url) })
+    let remaining = Set(URLContexts.filter {
+      !isShare($0.url) && !((UIApplication.shared.delegate as? AppDelegate)?.handleWidgetURL($0.url) ?? false)
+    })
     if !remaining.isEmpty { super.scene(scene, openURLContexts: remaining) }
   }
 }

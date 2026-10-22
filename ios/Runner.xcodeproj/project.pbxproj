@@ -14,7 +14,10 @@
 		31C5A53BB2917F5892B4E0AC /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = EF34E72269E6AA1B732998A0 /* GoogleService-Info.plist */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
+		3DC6923D189160A023E86993 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3CD521CB593BF79C0DD9C934 /* Foundation.framework */; };
+		4842FC77F0EB1F228B290F63 /* NockNockWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC9AEE191AF2E016A872994 /* NockNockWidgets.swift */; };
 		4AB82D1235EC9CBC9B7405DD /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08282D09C773669DC5CFA7D3 /* ShareViewController.swift */; };
+		722091DCAEB449FC0259B99D /* HomeWidgetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E492F98D19EAE29F57C522 /* HomeWidgetStore.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
@@ -22,7 +25,9 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		9A1A5B86800CEB797F2618F4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3CD521CB593BF79C0DD9C934 /* Foundation.framework */; };
+		B08AB0C035E8DA5B67623395 /* HomeWidgetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E492F98D19EAE29F57C522 /* HomeWidgetStore.swift */; };
 		D35591AF83D3CE91B882D94B /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6BA5FA932AAAF0CD6EE8A0AA /* Pods_Runner.framework */; };
+		EF08D922BA58CF6F027F1084 /* NockNockWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 65ED558386FD19D72387F70E /* NockNockWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +37,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 97C146ED1CF9000F007C117D;
 			remoteInfo = Runner;
+		};
+		4A130617649D6B355C0633A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8C97444FF6A5B778A4AFA02F;
+			remoteInfo = NockNockWidgets;
 		};
 		FEB74D2863BF5E55D7D25355 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -50,6 +62,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				1A4024FB913815C23F548950 /* ShareExtension.appex in Embed App Extensions */,
+				EF08D922BA58CF6F027F1084 /* NockNockWidgets.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -72,14 +85,17 @@
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		28674CF9701C79EFB1581758 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		29E492F98D19EAE29F57C522 /* HomeWidgetStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeWidgetStore.swift; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		340C7A648F4F21B55A722806 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
+		34277A87E3A613FF3E71319B /* Widgets.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Widgets.xcconfig; sourceTree = "<group>"; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		3CD521CB593BF79C0DD9C934 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		45AE7105E20AF92229A24209 /* Pods_ShareExtension.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ShareExtension.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		49C0A9B22BFEAEC93EAA73C5 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		591A215BF809D1AEE3FC948E /* Pods-ShareExtension.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ShareExtension.profile.xcconfig"; path = "Target Support Files/Pods-ShareExtension/Pods-ShareExtension.profile.xcconfig"; sourceTree = "<group>"; };
+		65ED558386FD19D72387F70E /* NockNockWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NockNockWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6892A18D4C19609CAE9B2E87 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		6A516DA056D852B7D2C4DC21 /* Debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		6BA5FA932AAAF0CD6EE8A0AA /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -100,10 +116,13 @@
 		9F4F626BA62127E173FC34E3 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		A1F4C9E12E529E0200FC0001 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		A6A8699DFDD20DA93EC94438 /* Release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		A96A5DD19A721231FA21D9FA /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		ABC9AEE191AF2E016A872994 /* NockNockWidgets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NockNockWidgets.swift; sourceTree = "<group>"; };
 		AEAE1B4627B4FA72558765EA /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		B960542BFE4BC7174E023376 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		BF7E7EA81EB964CBB8C16916 /* Pods-ShareExtension.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ShareExtension.debug.xcconfig"; path = "Target Support Files/Pods-ShareExtension/Pods-ShareExtension.debug.xcconfig"; sourceTree = "<group>"; };
 		D473E6A25F6907126009E922 /* Pods-ShareExtension.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ShareExtension.release.xcconfig"; path = "Target Support Files/Pods-ShareExtension/Pods-ShareExtension.release.xcconfig"; sourceTree = "<group>"; };
+		E68B03C14AF213953152ADC1 /* NockNockWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = NockNockWidgets.entitlements; sourceTree = "<group>"; };
 		EF34E72269E6AA1B732998A0 /* GoogleService-Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = "GoogleService-Info.plist"; path = "Runner/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		FD0071EAC92889A38AD42C18 /* Profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Profile.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -124,6 +143,14 @@
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				D35591AF83D3CE91B882D94B /* Pods_Runner.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C5BEFA0417B6066939E5FCE1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3DC6923D189160A023E86993 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -219,6 +246,8 @@
 				8E6329C4FAA44600BA7677E9 /* Pods */,
 				6A84DF026078D4836FC14034 /* Frameworks */,
 				697C5C365221F3F0D0D366D0 /* ShareExtension */,
+				986AB6FDBD1B08179FC32DC0 /* NockNockWidgets */,
+				E40311CC001D858EF1FD122D /* Shared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -228,6 +257,7 @@
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
 				28674CF9701C79EFB1581758 /* ShareExtension.appex */,
+				65ED558386FD19D72387F70E /* NockNockWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -247,6 +277,27 @@
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
+			sourceTree = "<group>";
+		};
+		986AB6FDBD1B08179FC32DC0 /* NockNockWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				ABC9AEE191AF2E016A872994 /* NockNockWidgets.swift */,
+				A96A5DD19A721231FA21D9FA /* Info.plist */,
+				E68B03C14AF213953152ADC1 /* NockNockWidgets.entitlements */,
+				34277A87E3A613FF3E71319B /* Widgets.xcconfig */,
+			);
+			name = NockNockWidgets;
+			path = NockNockWidgets;
+			sourceTree = "<group>";
+		};
+		E40311CC001D858EF1FD122D /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				29E492F98D19EAE29F57C522 /* HomeWidgetStore.swift */,
+			);
+			name = Shared;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -271,6 +322,23 @@
 			productReference = 331C8081294A63A400263BE5 /* RunnerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		8C97444FF6A5B778A4AFA02F /* NockNockWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 13CECABECE1919F2FCC33778 /* Build configuration list for PBXNativeTarget "NockNockWidgets" */;
+			buildPhases = (
+				153D797BED98CC3EF0F39CEF /* Sources */,
+				C5BEFA0417B6066939E5FCE1 /* Frameworks */,
+				2B62DF42C14DBCB327D74571 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NockNockWidgets;
+			productName = NockNockWidgets;
+			productReference = 65ED558386FD19D72387F70E /* NockNockWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		97C146ED1CF9000F007C117D /* Runner */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
@@ -290,6 +358,7 @@
 			);
 			dependencies = (
 				C9D974949B65F5C24A293AB0 /* PBXTargetDependency */,
+				7EE57FC1D1DF88C021032338 /* PBXTargetDependency */,
 			);
 			name = Runner;
 			packageProductDependencies = (
@@ -371,11 +440,19 @@
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
 				D35AA7D6205F34A2D63460B9 /* ShareExtension */,
+				8C97444FF6A5B778A4AFA02F /* NockNockWidgets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		2B62DF42C14DBCB327D74571 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		331C807F294A63A400263BE5 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -542,6 +619,15 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		153D797BED98CC3EF0F39CEF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4842FC77F0EB1F228B290F63 /* NockNockWidgets.swift in Sources */,
+				722091DCAEB449FC0259B99D /* HomeWidgetStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		331C807D294A63A400263BE5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -565,6 +651,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
+				B08AB0C035E8DA5B67623395 /* HomeWidgetStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -575,6 +662,12 @@
 			isa = PBXTargetDependency;
 			target = 97C146ED1CF9000F007C117D /* Runner */;
 			targetProxy = 331C8085294A63A400263BE5 /* PBXContainerItemProxy */;
+		};
+		7EE57FC1D1DF88C021032338 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NockNockWidgets;
+			target = 8C97444FF6A5B778A4AFA02F /* NockNockWidgets */;
+			targetProxy = 4A130617649D6B355C0633A6 /* PBXContainerItemProxy */;
 		};
 		C9D974949B65F5C24A293AB0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -604,6 +697,34 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		19682B2ECD4F4C2179D8877C /* Profile */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 34277A87E3A613FF3E71319B /* Widgets.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = NockNockWidgets/NockNockWidgets.entitlements;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = 9C7J5H723S;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NockNockWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cl.nocknock.app.NockNockWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Profile;
+		};
 		249021D3217E4FDB00AE95B9 /* Profile */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -949,9 +1070,74 @@
 			};
 			name = Debug;
 		};
+		BE6040FF86347668203A0A3F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 34277A87E3A613FF3E71319B /* Widgets.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = NockNockWidgets/NockNockWidgets.entitlements;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = 9C7J5H723S;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NockNockWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cl.nocknock.app.NockNockWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CDB0F5F59F77F6BA13592BDA /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 34277A87E3A613FF3E71319B /* Widgets.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = NockNockWidgets/NockNockWidgets.entitlements;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = 9C7J5H723S;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NockNockWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cl.nocknock.app.NockNockWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		13CECABECE1919F2FCC33778 /* Build configuration list for PBXNativeTarget "NockNockWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CDB0F5F59F77F6BA13592BDA /* Release */,
+				BE6040FF86347668203A0A3F /* Debug */,
+				19682B2ECD4F4C2179D8877C /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

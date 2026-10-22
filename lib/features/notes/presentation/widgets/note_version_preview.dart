@@ -45,6 +45,20 @@ class NoteVersionPreview extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium
                 ?.copyWith(fontWeight: FontWeight.w700, color: foreground),
           ),
+          if (note.financialEntry case final entry?) ...[
+            const SizedBox(height: 10),
+            Text(
+              entry.formattedAmount,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: foreground,
+              ),
+            ),
+            if (entry.counterparty.isNotEmpty)
+              Text(entry.counterparty, style: TextStyle(color: foreground)),
+            Text(entry.statusLabel, style: TextStyle(color: foreground)),
+          ],
           if (drawing != null) ...[
             const SizedBox(height: 10),
             NoteDrawingView(drawing: drawing, backgroundColor: colors.surface),

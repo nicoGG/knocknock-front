@@ -1,4 +1,5 @@
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -20,6 +21,7 @@ class SettingsPage extends StatefulWidget {
     required this.onClearLocalData,
     this.notificationsController,
     this.onOpenNotifications,
+    this.onOpenHomeWidgets,
     super.key,
   });
 
@@ -28,6 +30,7 @@ class SettingsPage extends StatefulWidget {
   final Future<bool> Function() onClearLocalData;
   final NotificationsController? notificationsController;
   final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenHomeWidgets;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -142,6 +145,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         isLoadingPreferences: _isLoadingPreferences,
                         notificationsController: widget.notificationsController,
                         onOpenProfile: widget.onOpenProfile,
+                        onOpenHomeWidgets: widget.onOpenHomeWidgets,
                         onOpenNotifications: widget.onOpenNotifications,
                         onToggleNotificationPreviews:
                             _setNotificationPreviewsEnabled,
@@ -226,10 +230,8 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Text(
               'Privacidad y seguridad',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.5,
-              ),
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w900, letterSpacing: -0.5),
             ),
             const SizedBox(height: 8),
             Text(
@@ -240,22 +242,19 @@ class _SettingsPageState extends State<SettingsPage> {
             const _PrivacyDetail(
               icon: Icons.lock_outline_rounded,
               title: 'Cuenta conectada',
-              description:
-                  'Las listas y notas se cifran en tu dispositivo antes de sincronizarse.',
+              description: 'Las listas y notas se cifran en tu dispositivo antes de sincronizarse.',
             ),
             const SizedBox(height: 18),
             const _PrivacyDetail(
               icon: Icons.phone_android_rounded,
               title: 'Modo invitado',
-              description:
-                  'Las notas permanecen solo en este dispositivo hasta que las elimines.',
+              description: 'Las notas permanecen solo en este dispositivo hasta que las elimines.',
             ),
             const SizedBox(height: 18),
             const _PrivacyDetail(
               icon: Icons.visibility_off_outlined,
               title: 'Avisos discretos',
-              description:
-                  'Puedes ocultar títulos y contenido en las notificaciones del sistema.',
+              description: 'Puedes ocultar títulos y contenido en las notificaciones del sistema.',
             ),
           ],
         ),
@@ -321,6 +320,7 @@ class _SettingsContent extends StatelessWidget {
     required this.onToggleNotificationPreviews,
     required this.onClearLocalData,
     required this.onShowPrivacy,
+    this.onOpenHomeWidgets,
   });
 
   final AppUser? user;
@@ -334,6 +334,7 @@ class _SettingsContent extends StatelessWidget {
   final ValueChanged<bool> onToggleNotificationPreviews;
   final VoidCallback onClearLocalData;
   final VoidCallback onShowPrivacy;
+  final VoidCallback? onOpenHomeWidgets;
 
   @override
   Widget build(BuildContext context) {
@@ -373,6 +374,20 @@ class _SettingsContent extends StatelessWidget {
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: onOpenProfile,
               ),
+              if (onOpenHomeWidgets != null) ...[
+                const _SettingsDivider(),
+                _SettingsTile(
+                  key: const ValueKey('settings-home-widgets'),
+                  leading: const _SettingsIcon(
+                    icon: Icons.widgets_outlined,
+                    tone: _SettingsIconTone.primary,
+                  ),
+                  title: 'Widgets de inicio',
+                  subtitle: 'Pendientes y captura rápida desde tu pantalla de inicio.',
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: onOpenHomeWidgets,
+                ),
+              ],
               if (notificationsController != null &&
                   onOpenNotifications != null) ...[
                 const _SettingsDivider(),
@@ -944,9 +959,8 @@ class _SettingsSectionTitle extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: Theme.of(
-            context,
-          ).colorScheme.onSurface.withValues(alpha: 0.56),
+          color: Theme.of(context).colorScheme.onSurface
+              .withValues(alpha: 0.56),
           fontSize: 11,
           fontWeight: FontWeight.w900,
           letterSpacing: 1.25,
@@ -1102,9 +1116,8 @@ class _SettingsDivider extends StatelessWidget {
       height: 1,
       indent: 76,
       endIndent: 16,
-      color: Theme.of(
-        context,
-      ).colorScheme.outlineVariant.withValues(alpha: 0.35),
+      color: Theme.of(context).colorScheme.outlineVariant
+          .withValues(alpha: 0.35),
     );
   }
 }

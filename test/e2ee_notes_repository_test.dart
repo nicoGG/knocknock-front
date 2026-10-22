@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+import 'package:nocknock/features/finance/financial_entry.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
 
 import 'dart:async';
@@ -16,6 +18,78 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('custom financial lists and offline amounts remain encrypted in transport and cache', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final remote = _FakeE2eeRemote();
+    final cache = CachedNotesRepository(
+      repository: remote,
+      preferences: preferences,
+      userIdProvider: () => 'user-1',
+    );
+    final repository = E2eeNotesRepository(
+      repository: cache,
+      userIdProvider: () => 'user-1',
+      keyStore: E2eeKeyStore(storage: _MemorySecureStore()),
+    );
+    final list = await repository.createTypedList(
+      'Fondo familiar privado',
+      const ListConfiguration(
+        type: NoteListType.custom,
+        customTypeName: 'Vacaciones privadas',
+        currency: 'USD',
+      ),
+    );
+    expect(list.configuration.label, 'Vacaciones privadas');
+    expect(
+      remote.rawList.configuration.customTypeName,
+      startsWith(e2eeCiphertextPrefix),
+    );
+    await repository.fetchLists();
+    final entry = FinancialEntry(
+      amountMinor: 12345,
+      currency: 'USD',
+      counterparty: 'Persona privada',
+      date: DateTime(2026, 10, 22),
+    );
+    final note = await repository.createNote(
+      list.id,
+      NoteDraft(
+        title: 'Compra privada',
+        content: '',
+        color: NoteColor.green,
+        authorName: 'Nico',
+        category: NoteCategory.finance,
+        financialData: entry.encoded,
+      ),
+    );
+    expect(note.financialEntry, entry);
+    expect(remote.rawNote.financialData, startsWith(e2eeCiphertextPrefix));
+    remote.isOffline = true;
+    final paid = FinancialEntry(
+      amountMinor: 12345,
+      currency: 'USD',
+      counterparty: 'Persona privada',
+      date: DateTime(2026, 10, 22),
+      status: 'paid',
+    );
+    final optimistic = await repository.updateNote(note.id, {
+      'financialData': paid.encoded,
+    });
+    expect(optimistic.financialEntry?.status, 'paid');
+    expect((await cache.offlineSyncSummary()).pendingCount, 1);
+    final persisted = preferences.getString(CachedNotesRepository.storageKey)!;
+    for (final secret in [
+      'Vacaciones privadas',
+      'Fondo familiar privado',
+      'Persona privada',
+      'amountMinor',
+    ]) {
+      expect(persisted, isNot(contains(secret)));
+    }
+    repository.dispose();
+  });
 
   test('pending activity decrypts only on the device while the queue keeps ciphertext', () async {
     SharedPreferences.setMockInitialValues({});
@@ -748,6 +822,7 @@ class _FakeE2eeRemote extends Fake
         NotesRepository,
         NoteHistoryRepository,
         E2eeNotesTransport,
+        TypedEncryptedListsTransport,
         AggregateBoardAppearancesRepository,
         NoteAttachmentsRepository,
         TrashNotesRepository {
@@ -824,6 +899,30 @@ class _FakeE2eeRemote extends Fake
 
   @override
   Future<List<NoteList>> fetchLists() async => [rawList];
+
+  @override
+  Future<NoteList> createTypedEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+    required ListConfiguration configuration,
+  }) async {
+    rawList = rawList.copyWith(
+      name: encryptedName,
+      configuration: configuration,
+      encryption: ListEncryption(version: 1, keyEnvelopes: [keyEnvelope]),
+    );
+    return rawList;
+  }
+
+  @override
+  Future<Note> createNote(String boardId, NoteDraft draft) async {
+    rawNote = Note.fromJson({
+      ...rawNote.toJson(),
+      ...draft.toJson(),
+      'boardId': boardId,
+    });
+    return rawNote;
+  }
 
   @override
   Future<NoteList> updateList(String listId, String name) async {
@@ -954,11 +1053,17 @@ class _FakeE2eeRemote extends Fake
   Future<NoteList> enableListEncryption({
     required String listId,
     required String encryptedName,
+    String? encryptedCustomTypeName,
     required String? encryptedCustomBackgroundImage,
     required ListKeyEnvelope keyEnvelope,
   }) async {
     rawList = rawList.copyWith(
       name: encryptedName,
+      configuration: ListConfiguration(
+        type: rawList.configuration.type,
+        currency: rawList.configuration.currency,
+        customTypeName: encryptedCustomTypeName,
+      ),
       encryption: ListEncryption(version: 1, keyEnvelopes: [keyEnvelope]),
     );
     return rawList;

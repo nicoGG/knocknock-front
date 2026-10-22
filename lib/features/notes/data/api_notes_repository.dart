@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
@@ -14,9 +15,11 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 class ApiNotesRepository
     implements
         NotesRepository,
+        TypedListsRepository,
         NoteHistoryRepository,
         GuestDataSyncTarget,
         E2eeNotesTransport,
+        TypedEncryptedListsTransport,
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         NoteAttachmentsRepository,
@@ -190,6 +193,36 @@ class ApiNotesRepository
   }
 
   @override
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  ) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/lists',
+      data: {'name': name, ...configuration.toJson()},
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
+  Future<NoteList> createTypedEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+    required ListConfiguration configuration,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/lists',
+      data: {
+        'name': encryptedName,
+        'encryptionVersion': 1,
+        'keyEnvelope': keyEnvelope.toJson(),
+        ...configuration.toJson(),
+      },
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
   Future<void> registerEncryptionDevice({
     required String deviceId,
     required String publicKey,
@@ -220,6 +253,7 @@ class ApiNotesRepository
   Future<NoteList> enableListEncryption({
     required String listId,
     required String encryptedName,
+    String? encryptedCustomTypeName,
     required String? encryptedCustomBackgroundImage,
     required ListKeyEnvelope keyEnvelope,
   }) async {
@@ -228,6 +262,7 @@ class ApiNotesRepository
       data: {
         'name': encryptedName,
         'customBackgroundImage': ?encryptedCustomBackgroundImage,
+        'customTypeName': ?encryptedCustomTypeName,
         'keyEnvelope': keyEnvelope.toJson(),
       },
     );
@@ -548,6 +583,7 @@ class ApiNotesRepository
         'lists': snapshot.lists
             .map(
               (list) => {
+                ...list.configuration.toJson(),
                 'localId': list.id,
                 'name': list.name,
                 'encryptionVersion': list.encryption.version,
@@ -567,6 +603,8 @@ class ApiNotesRepository
                 'localBoardId': note.boardId,
                 'title': note.title,
                 'content': note.content,
+                if (note.financialData != null)
+                  'financialData': note.financialData,
                 if (note.contentDelta != null)
                   'contentDelta': note.contentDelta,
                 'color': note.color.name,

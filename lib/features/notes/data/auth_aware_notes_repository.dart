@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'dart:async';
 
 import 'package:nocknock/features/auth/data/auth_repository.dart';
@@ -10,6 +12,7 @@ import 'package:nocknock/features/notes/domain/note_list.dart';
 class AuthAwareNotesRepository
     implements
         NotesRepository,
+        TypedListsRepository,
         NoteHistoryRepository,
         LocalNotesDataCleaner,
         NotesCacheReader,
@@ -76,6 +79,20 @@ class AuthAwareNotesRepository
   @override
   Future<NoteList> createList(String name) =>
       _whenReady((repository) => repository.createList(name));
+
+  @override
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  ) => _whenReady((repository) {
+    if (repository is! TypedListsRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    return (repository as TypedListsRepository).createTypedList(
+      name,
+      configuration,
+    );
+  });
 
   @override
   Future<NoteList> updateList(String listId, String name) =>

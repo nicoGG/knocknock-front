@@ -296,7 +296,11 @@ class _AppDrawer extends StatelessWidget {
                                   child: _DrawerDestinationTile(
                                     key: ValueKey('list-${list.id}'),
                                     selected: selected,
-                                    icon: selected
+                                    icon: list.isFinancial
+                                        ? FinancialStyle.typeIcon(
+                                            list.configuration.type,
+                                          )
+                                        : selected
                                         ? Icons.folder_rounded
                                         : Icons.folder_outlined,
                                     label: list.name,

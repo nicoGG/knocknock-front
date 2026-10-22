@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
@@ -290,6 +291,7 @@ abstract interface class E2eeNotesTransport {
   Future<NoteList> enableListEncryption({
     required String listId,
     required String encryptedName,
+    String? encryptedCustomTypeName,
     required String? encryptedCustomBackgroundImage,
     required ListKeyEnvelope keyEnvelope,
   });
@@ -419,4 +421,20 @@ class PendingNoteChange {
 abstract interface class SyncActivityRepository {
   Future<List<PendingNoteChange>> fetchPendingNoteChanges();
   Future<void> retryPendingNoteChange(String id);
+}
+
+/// Additional capability so existing normal-list integrations remain compatible.
+abstract interface class TypedListsRepository {
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  );
+}
+
+abstract interface class TypedEncryptedListsTransport {
+  Future<NoteList> createTypedEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+    required ListConfiguration configuration,
+  });
 }

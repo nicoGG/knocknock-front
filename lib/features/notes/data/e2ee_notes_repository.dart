@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -16,6 +18,7 @@ typedef E2eeUserIdProvider = String? Function();
 class E2eeNotesRepository
     implements
         NotesRepository,
+        TypedListsRepository,
         NoteHistoryRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
@@ -147,7 +150,18 @@ class E2eeNotesRepository
   }
 
   @override
-  Future<NoteList> createList(String name) async {
+  Future<NoteList> createList(String name) => _createList(name);
+
+  @override
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  ) => _createList(name, configuration);
+
+  Future<NoteList> _createList(
+    String name, [
+    ListConfiguration? configuration,
+  ]) async {
     final identity = await _ensureIdentity(register: true);
     await _ensureAccountRecoveryIdentityBestEffort(register: true);
     final key = await _cipher.newListKey();
@@ -156,14 +170,40 @@ class E2eeNotesRepository
       deviceId: identity.deviceId,
       envelope: await _cipher.wrapListKey(key, publicKey),
     );
-    final raw = await _transport.createEncryptedList(
-      encryptedName: await _cipher.encryptString(
-        name.trim(),
-        key,
-        field: _listNameField,
-      ),
-      keyEnvelope: envelope,
+    final encryptedName = await _cipher.encryptString(
+      name.trim(),
+      key,
+      field: _listNameField,
     );
+    final typedTransport = _repository;
+    final NoteList raw;
+    if (configuration == null || !configuration.isFinancial) {
+      raw = await _transport.createEncryptedList(
+        encryptedName: encryptedName,
+        keyEnvelope: envelope,
+      );
+    } else {
+      if (typedTransport is! TypedEncryptedListsTransport) {
+        throw const NotesPersistenceFailure();
+      }
+      final encryptedConfiguration = ListConfiguration(
+        type: configuration.type,
+        currency: configuration.currency,
+        customTypeName: configuration.customTypeName == null
+            ? null
+            : await _cipher.encryptString(
+                configuration.customTypeName!,
+                key,
+                field: 'list:custom-type:v1',
+              ),
+      );
+      raw = await (typedTransport as TypedEncryptedListsTransport)
+          .createTypedEncryptedList(
+            encryptedName: encryptedName,
+            keyEnvelope: envelope,
+            configuration: encryptedConfiguration,
+          );
+    }
     await _rememberListKey(raw.id, key);
     _rawLists[raw.id] = raw;
     await _shareMissingKeys(raw, key);
@@ -798,6 +838,17 @@ class E2eeNotesRepository
       encryptedLists.add(
         NoteList(
           id: localList.id,
+          configuration: ListConfiguration(
+            type: localList.configuration.type,
+            currency: localList.configuration.currency,
+            customTypeName: localList.configuration.customTypeName == null
+                ? null
+                : await _cipher.encryptString(
+                    localList.configuration.customTypeName!,
+                    key,
+                    field: 'list:custom-type:v1',
+                  ),
+          ),
           name: await _cipher.encryptString(
             localList.name,
             key,
@@ -932,6 +983,7 @@ class E2eeNotesRepository
           title: note.title,
           content: note.content,
           contentDelta: note.contentDelta,
+          financialData: note.financialData,
           authorName: note.authorName,
           customAssigneeName: note.customAssigneeName,
           customAssigneeNames: note.assignedCustomNames,
@@ -948,6 +1000,13 @@ class E2eeNotesRepository
     final publicKey = await identity.publicKeyEncoded();
     final migrated = await _transport.enableListEncryption(
       listId: raw.id,
+      encryptedCustomTypeName: raw.configuration.customTypeName == null
+          ? null
+          : await _encryptIfNeeded(
+              raw.configuration.customTypeName!,
+              key,
+              field: 'list:custom-type:v1',
+            ),
       encryptedName: await _encryptIfNeeded(
         raw.name,
         key,
@@ -1053,6 +1112,10 @@ class E2eeNotesRepository
     final key = await _listKeyOrNull(raw.id);
     if (raw.encryption.version != 1 || key == null) {
       return raw.copyWith(
+        configuration: ListConfiguration(
+          type: raw.configuration.type,
+          currency: raw.configuration.currency,
+        ),
         name: raw.encryption.version == 0
             ? 'Lista pendiente de cifrado'
             : 'Recuperando lista cifrada',
@@ -1066,6 +1129,17 @@ class E2eeNotesRepository
     final customBackground = raw.appearance.customBackgroundImage;
     return raw.copyWith(
       name: await _cipher.decryptString(raw.name, key, field: _listNameField),
+      configuration: ListConfiguration(
+        type: raw.configuration.type,
+        currency: raw.configuration.currency,
+        customTypeName: raw.configuration.customTypeName == null
+            ? null
+            : await _cipher.decryptString(
+                raw.configuration.customTypeName!,
+                key,
+                field: 'list:custom-type:v1',
+              ),
+      ),
       appearance: ListAppearance(
         backgroundPreset: raw.appearance.backgroundPreset,
         backgroundBlur: raw.appearance.backgroundBlur,
@@ -1099,6 +1173,13 @@ class E2eeNotesRepository
                 draft.contentDelta!,
                 key,
                 field: _noteDeltaField,
+              ),
+        financialData: draft.financialData == null
+            ? null
+            : await _cipher.encryptString(
+                draft.financialData!,
+                key,
+                field: 'note:financial-data:v1',
               ),
         color: draft.color,
         authorName: await _cipher.encryptString(
@@ -1164,6 +1245,7 @@ class E2eeNotesRepository
       'title': _noteTitleField,
       'content': _noteContentField,
       'contentDelta': _noteDeltaField,
+      'financialData': 'note:financial-data:v1',
       'authorName': _noteAuthorField,
       'customAssigneeName': _noteCustomAssigneeField,
     }.entries) {
@@ -1223,6 +1305,13 @@ class E2eeNotesRepository
     Note note,
     SecretKey key,
   ) async => {
+    'financialData': note.financialData == null
+        ? null
+        : await _encryptIfNeeded(
+            note.financialData!,
+            key,
+            field: 'note:financial-data:v1',
+          ),
     'title': await _encryptIfNeeded(note.title, key, field: _noteTitleField),
     'content': await _encryptIfNeeded(
       note.content,
@@ -1279,6 +1368,7 @@ class E2eeNotesRepository
       title: changes['title'] as String,
       content: changes['content'] as String,
       contentDelta: changes['contentDelta'] as String?,
+      financialData: changes['financialData'] as String?,
       authorName: changes['authorName'] as String,
       customAssigneeName: changes['customAssigneeName'] as String?,
       customAssigneeNames: (changes['customAssigneeNames'] as List)
@@ -1317,6 +1407,13 @@ class E2eeNotesRepository
     }
     return _copyNote(
       raw,
+      financialData: raw.financialData == null
+          ? null
+          : await _cipher.decryptString(
+              raw.financialData!,
+              key,
+              field: 'note:financial-data:v1',
+            ),
       title: await _cipher.decryptString(
         raw.title,
         key,
@@ -1376,6 +1473,7 @@ class E2eeNotesRepository
     required String title,
     required String content,
     required String? contentDelta,
+    required String? financialData,
     required String authorName,
     required String? customAssigneeName,
     required List<String> customAssigneeNames,
@@ -1387,6 +1485,7 @@ class E2eeNotesRepository
     title: title,
     content: content,
     contentDelta: contentDelta,
+    financialData: financialData,
     color: note.color,
     authorName: authorName,
     assigneeUid: note.assigneeUid,

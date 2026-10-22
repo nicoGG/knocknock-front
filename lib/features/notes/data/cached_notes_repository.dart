@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -19,10 +21,12 @@ typedef NotesCacheUserIdProvider = String? Function();
 class CachedNotesRepository
     implements
         NotesRepository,
+        TypedListsRepository,
         NoteHistoryRepository,
         NotesCacheReader,
         GuestDataSyncTarget,
         E2eeNotesTransport,
+        TypedEncryptedListsTransport,
         AggregateBoardAppearancesRepository,
         AssignedNotesRepository,
         OfflineSyncRepository,
@@ -126,6 +130,49 @@ class CachedNotesRepository
     return list;
   }
 
+  @override
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  ) async {
+    final repository = _repository;
+    if (repository is! TypedListsRepository) {
+      throw const NotesPersistenceFailure();
+    }
+    final user = _userIdProvider();
+    final list = await (repository as TypedListsRepository).createTypedList(
+      name,
+      configuration,
+    );
+    await _updateCache(user, (cache) {
+      if (cache.lists.isNotEmpty) cache.lists.add(list);
+    });
+    return list;
+  }
+
+  @override
+  Future<NoteList> createTypedEncryptedList({
+    required String encryptedName,
+    required ListKeyEnvelope keyEnvelope,
+    required ListConfiguration configuration,
+  }) async {
+    final repository = _repository;
+    if (repository is! TypedEncryptedListsTransport) {
+      throw const NotesPersistenceFailure();
+    }
+    final user = _userIdProvider();
+    final list = await (repository as TypedEncryptedListsTransport)
+        .createTypedEncryptedList(
+          encryptedName: encryptedName,
+          keyEnvelope: keyEnvelope,
+          configuration: configuration,
+        );
+    await _updateCache(user, (cache) {
+      if (cache.lists.isNotEmpty) cache.lists.add(list);
+    });
+    return list;
+  }
+
   E2eeNotesTransport get _e2eeTransport {
     final repository = _repository;
     if (repository is! E2eeNotesTransport) {
@@ -173,6 +220,7 @@ class CachedNotesRepository
   Future<NoteList> enableListEncryption({
     required String listId,
     required String encryptedName,
+    String? encryptedCustomTypeName,
     required String? encryptedCustomBackgroundImage,
     required ListKeyEnvelope keyEnvelope,
   }) async {
@@ -181,6 +229,7 @@ class CachedNotesRepository
       listId: listId,
       encryptedName: encryptedName,
       encryptedCustomBackgroundImage: encryptedCustomBackgroundImage,
+      encryptedCustomTypeName: encryptedCustomTypeName,
       keyEnvelope: keyEnvelope,
     );
     unawaited(_updateCache(userId, (cache) => _replaceList(cache, list)));
@@ -552,6 +601,7 @@ class CachedNotesRepository
         title: synchronizedDraft.title,
         content: synchronizedDraft.content,
         contentDelta: synchronizedDraft.contentDelta,
+        financialData: synchronizedDraft.financialData,
         color: synchronizedDraft.color,
         authorName: synchronizedDraft.authorName,
         assigneeUid: synchronizedDraft.assigneeUid,

@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -16,6 +18,7 @@ class NotesCubit extends Cubit<NotesState> {
       super(const NotesState());
 
   final NotesRepository _repository;
+  Set<String> _financialListIds = {};
   final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
   int _loadGeneration = 0;
@@ -29,6 +32,7 @@ class NotesCubit extends Cubit<NotesState> {
     final generation = ++_loadGeneration;
     _scopeNotesRefreshedAt = null;
     _listNotes.clear();
+    _financialListIds.clear();
     emit(
       state.copyWith(
         status: NotesStatus.loading,
@@ -57,10 +61,18 @@ class NotesCubit extends Cubit<NotesState> {
     final cached = await _readCache();
     if (generation != _loadGeneration || isClosed) return;
 
+    _financialListIds = {
+      for (final list in cached?.lists ?? <NoteList>[])
+        if (list.isFinancial) list.id,
+    };
     // Decode the device cache once per load, rather than once per list switch.
     for (final entry
         in cached?.notesByBoard.entries ??
             const <MapEntry<String, List<Note>>>[]) {
+      if (_financialListIds.contains(entry.key) &&
+          !(cached?.fullyLoadedBoardIds.contains(entry.key) ?? false)) {
+        continue;
+      }
       _listNotes[entry.key] = NotesPage(
         items: _cachedInitialNotes(entry.value),
         nextCursor: null,
@@ -73,7 +85,9 @@ class NotesCubit extends Cubit<NotesState> {
         rememberedListId,
       );
       final cachedNotes = cached.notesByBoard[cachedListId];
-      if (cachedNotes != null) {
+      if (cachedNotes != null &&
+          (!_financialListIds.contains(cachedListId) ||
+              cached.fullyLoadedBoardIds.contains(cachedListId))) {
         didShowCache = true;
         emit(
           state.copyWith(
@@ -98,6 +112,10 @@ class NotesCubit extends Cubit<NotesState> {
     try {
       final lists = await _repository.fetchLists();
       if (generation != _loadGeneration || isClosed) return;
+      _financialListIds = {
+        for (final list in lists)
+          if (list.isFinancial) list.id,
+      };
       final selectedListId = _resolveSelectedListId(lists, rememberedListId);
       unawaited(_rememberSelectedList(selectedListId));
       unawaited(_connectBestEffort(selectedListId));
@@ -392,10 +410,22 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
-  Future<void> createList(String name) async {
+  Future<void> createList(
+    String name, {
+    ListConfiguration configuration = const ListConfiguration(),
+  }) async {
     emit(state.copyWith(isSavingList: true));
     try {
-      final list = await _repository.createList(name);
+      final repository = _repository;
+      final list = configuration.isFinancial
+          ? await (repository is TypedListsRepository
+                ? (repository as TypedListsRepository).createTypedList(
+                    name,
+                    configuration,
+                  )
+                : Future<NoteList>.error(const NotesPersistenceFailure()))
+          : await repository.createList(name);
+      if (list.isFinancial) _financialListIds.add(list.id);
       final lists = [...state.lists, list];
       emit(
         state.copyWith(
@@ -723,6 +753,16 @@ class NotesCubit extends Cubit<NotesState> {
 
   Future<NotesPage> _fetchNotesPage(String boardId) async {
     final repository = _repository;
+    if (_financialListIds.contains(boardId)) {
+      final notes = await repository.fetchNotes(boardId);
+      if (repository is NotesCacheReader) {
+        final cached = await (repository as NotesCacheReader).readCache();
+        if (cached != null && !cached.fullyLoadedBoardIds.contains(boardId)) {
+          throw const NotesPersistenceFailure();
+        }
+      }
+      return NotesPage(items: notes, nextCursor: null);
+    }
     if (repository is PaginatedNotesRepository) {
       return (repository as PaginatedNotesRepository).fetchNotesPage(
         boardId,
@@ -737,7 +777,10 @@ class NotesCubit extends Cubit<NotesState> {
 
   List<Note> _cachedInitialNotes(List<Note> notes) {
     final sorted = _sortedNotes(notes);
-    if (_repository is! PaginatedNotesRepository) return sorted;
+    if (_repository is! PaginatedNotesRepository ||
+        (notes.isNotEmpty && _financialListIds.contains(notes.first.boardId))) {
+      return sorted;
+    }
     return sorted.take(_notesPageSize).toList();
   }
 
@@ -804,6 +847,33 @@ class NotesCubit extends Cubit<NotesState> {
     return (repository as NoteHistoryRepository).fetchNoteHistory(noteId);
   }
 
+  Future<void> deleteFinancialEntry(Note note) async {
+    await _repository.deleteNote(note.id, expectedRevision: note.revision);
+    if (!isClosed) _remove(note.id);
+  }
+
+  Future<void> saveFinancialEntry(
+    String listId,
+    NoteDraft draft, {
+    Note? existing,
+  }) async {
+    final note = existing == null
+        ? await _repository.createNote(listId, draft)
+        : await _repository.updateNote(existing.id, {
+            'expectedRevision': existing.revision,
+            'title': draft.title,
+            'content': draft.content,
+            'contentDelta': draft.contentDelta,
+            'financialData': draft.financialData,
+            'category': draft.category.name,
+            if (!listEquals(draft.photoAttachments, existing.photoAttachments))
+              'attachments': draft.photoAttachments
+                  .map((attachment) => attachment.toJson())
+                  .toList(),
+          });
+    if (!isClosed) _upsert(note);
+  }
+
   Future<void> restoreNoteVersion(Note current, NoteVersion version) async {
     final previous = version.note;
     final repository = _repository;
@@ -815,6 +885,7 @@ class NotesCubit extends Cubit<NotesState> {
           'expectedRevision': current.revision,
           'title': previous.title,
           'content': previous.content,
+          'financialData': version.note.financialData,
           'contentDelta': previous.contentDelta,
           'color': previous.color.name,
           'category': previous.category.name,
@@ -835,6 +906,7 @@ class NotesCubit extends Cubit<NotesState> {
       _upsert(
         await _repository.updateNote(note.id, {
           'title': draft.title,
+          if (draft.financialData != null) 'financialData': draft.financialData,
           'content': draft.content,
           'contentDelta': draft.contentDelta,
           'color': draft.color.name,

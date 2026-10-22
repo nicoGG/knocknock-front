@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -14,6 +16,7 @@ typedef PreferencesLoader = Future<SharedPreferences> Function();
 class LocalNotesRepository
     implements
         NotesRepository,
+        TypedListsRepository,
         NoteHistoryRepository,
         LocalNotesDataCleaner,
         LocalNotesDataReader,
@@ -54,11 +57,19 @@ class LocalNotesRepository
   }
 
   @override
-  Future<NoteList> createList(String name) async {
+  Future<NoteList> createList(String name) =>
+      createTypedList(name, const ListConfiguration());
+
+  @override
+  Future<NoteList> createTypedList(
+    String name,
+    ListConfiguration configuration,
+  ) async {
     await _ensureLoaded();
     final now = DateTime.now();
     final list = NoteList(
       id: 'local-list-${uuid.v4()}',
+      configuration: configuration,
       name: name.trim(),
       createdAt: now,
       updatedAt: now,
@@ -240,6 +251,7 @@ class LocalNotesRepository
       title: draft.title,
       content: draft.content,
       contentDelta: draft.contentDelta,
+      financialData: draft.financialData,
       color: draft.color,
       category: draft.category,
       checklist: draft.checklist,
@@ -333,6 +345,9 @@ class LocalNotesRepository
       boardId: existing.boardId,
       title: changes['title'] as String? ?? existing.title,
       content: changes['content'] as String? ?? existing.content,
+      financialData: changes.containsKey('financialData')
+          ? changes['financialData'] as String?
+          : existing.financialData,
       contentDelta: changes.containsKey('contentDelta')
           ? changes['contentDelta'] as String?
           : existing.contentDelta,
@@ -419,6 +434,7 @@ class LocalNotesRepository
           'title',
           'content',
           'contentDelta',
+          'financialData',
           'checklist',
           'color',
           'category',

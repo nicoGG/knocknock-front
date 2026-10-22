@@ -1,3 +1,4 @@
+import 'package:nocknock/features/home_widgets/home_widget_controller.dart';
 import 'package:nocknock/features/notes/data/quick_capture_inbox.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -58,10 +59,17 @@ class _NockNockAppState extends State<NockNockApp> {
   late final bool _ownsListProtectionController =
       widget.listProtectionController == null;
 
+  late final _homeWidgets = HomeWidgetController(
+    repository: widget.repository,
+    auth: widget.authRepository,
+    protection: _listProtectionController,
+  );
+
   @override
   void initState() {
     super.initState();
     _captureInbox.start();
+    _homeWidgets.start();
     if (_ownsThemeController) _themeController.load();
     if (_ownsBoardViewModeController) _boardViewModeController.load();
   }
@@ -70,6 +78,7 @@ class _NockNockAppState extends State<NockNockApp> {
   void dispose() {
     if (_ownsThemeController) _themeController.dispose();
     if (_ownsBoardViewModeController) _boardViewModeController.dispose();
+    _homeWidgets.dispose();
     if (_ownsListProtectionController) _listProtectionController.dispose();
     _captureInbox.dispose();
     super.dispose();
@@ -132,6 +141,7 @@ class _NockNockAppState extends State<NockNockApp> {
           create: (_) => NotesCubit(widget.repository)..load(),
           child: BoardPage(
             captureInbox: _captureInbox,
+            homeWidgets: _homeWidgets,
             themeController: _themeController,
             viewModeController: _boardViewModeController,
             listProtectionController: _listProtectionController,

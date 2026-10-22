@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:equatable/equatable.dart';
 
 enum ListMemberRole { owner, editor }
@@ -255,9 +256,11 @@ class NoteList extends Equatable {
     this.appearance = const ListAppearance(),
     this.encryption = const ListEncryption(),
     this.isEncryptionKeyPending = false,
+    this.configuration = const ListConfiguration(),
   });
 
   factory NoteList.fromJson(Map<String, dynamic> json) => NoteList(
+    configuration: ListConfiguration.fromJson(json),
     id: json['id'] as String,
     name: json['name'] as String,
     createdAt: DateTime.parse(json['createdAt'] as String),
@@ -303,12 +306,15 @@ class NoteList extends Equatable {
   final ListAppearance appearance;
   final ListEncryption encryption;
   final bool isEncryptionKeyPending;
+  final ListConfiguration configuration;
+  bool get isFinancial => configuration.isFinancial;
 
   bool get canInvite => currentUserRole == ListMemberRole.owner;
   bool get isShared =>
       collaborators.length > 1 || pendingInvitations.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
+    ...configuration.toJson(),
     'id': id,
     'name': name,
     'createdAt': createdAt.toIso8601String(),
@@ -329,8 +335,10 @@ class NoteList extends Equatable {
     ListAppearance? appearance,
     ListEncryption? encryption,
     bool? isEncryptionKeyPending,
+    ListConfiguration? configuration,
   }) => NoteList(
     id: id,
+    configuration: configuration ?? this.configuration,
     name: name ?? this.name,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -355,5 +363,6 @@ class NoteList extends Equatable {
     appearance,
     encryption,
     isEncryptionKeyPending,
+    configuration,
   ];
 }

@@ -522,7 +522,8 @@ class _CollaboratorAvatar extends StatelessWidget {
 }
 
 class _CreateListDialog extends StatefulWidget {
-  const _CreateListDialog();
+  const _CreateListDialog({this.customTypes = const []});
+  final List<String> customTypes;
 
   @override
   State<_CreateListDialog> createState() => _CreateListDialogState();
@@ -531,10 +532,14 @@ class _CreateListDialog extends StatefulWidget {
 class _CreateListDialogState extends State<_CreateListDialog> {
   final _formKey = GlobalKey<FormState>();
   final _controller = TextEditingController();
+  final _customType = TextEditingController();
+  NoteListType _type = NoteListType.normal;
+  String _currency = 'CLP';
 
   @override
   void dispose() {
     _controller.dispose();
+    _customType.dispose();
     super.dispose();
   }
 
@@ -597,86 +602,176 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                   padding: const EdgeInsets.fromLTRB(30, 28, 30, 26),
                   child: Form(
                     key: _formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Nueva lista',
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(height: 24),
-                        TextFormField(
-                          key: const ValueKey('list-name-field'),
-                          controller: _controller,
-                          autofocus: true,
-                          maxLength: 50,
-                          textCapitalization: TextCapitalization.sentences,
-                          inputFormatters: const [
-                            InitialUppercaseTextFormatter(),
-                          ],
-                          decoration: InputDecoration(
-                            labelText: 'Nombre de la lista',
-                            hintText: 'Ej. Trabajo, Viaje o Casa',
-                            filled: true,
-                            fillColor: colorScheme.surface.withValues(
-                              alpha: isDark ? 0.28 : 0.34,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.24),
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide(
-                                color: Colors.white.withValues(
-                                  alpha: isDark ? 0.22 : 0.48,
-                                ),
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary,
-                                width: 2,
-                              ),
-                            ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Nueva lista',
+                            style: Theme.of(context).textTheme.headlineMedium
+                                ?.copyWith(fontWeight: FontWeight.w900),
                           ),
-                          validator: (value) =>
-                              value == null || value.trim().isEmpty
-                              ? 'Escribe un nombre para la lista'
-                              : null,
-                          onFieldSubmitted: (_) => _submit(),
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Cancelar'),
-                            ),
-                            const SizedBox(width: 12),
-                            FilledButton(
-                              key: const ValueKey('create-list-confirm-button'),
-                              style: FilledButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 16,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(18),
+                          const SizedBox(height: 24),
+                          TextFormField(
+                            key: const ValueKey('list-name-field'),
+                            controller: _controller,
+                            autofocus: true,
+                            maxLength: 50,
+                            textCapitalization: TextCapitalization.sentences,
+                            inputFormatters: const [
+                              InitialUppercaseTextFormatter(),
+                            ],
+                            decoration: InputDecoration(
+                              labelText: 'Nombre de la lista',
+                              hintText: 'Ej. Trabajo, Viaje o Casa',
+                              filled: true,
+                              fillColor: colorScheme.surface.withValues(
+                                alpha: isDark ? 0.28 : 0.34,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.24),
                                 ),
                               ),
-                              onPressed: _submit,
-                              child: const Text('Crear lista'),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(
+                                  color: Colors.white.withValues(
+                                    alpha: isDark ? 0.22 : 0.48,
+                                  ),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(
+                                  color: colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            validator: (value) =>
+                                value == null || value.trim().isEmpty
+                                ? 'Escribe un nombre para la lista'
+                                : null,
+                            onFieldSubmitted: (_) => _submit(),
+                          ),
+                          const SizedBox(height: 14),
+                          DropdownButtonFormField<NoteListType>(
+                            key: const ValueKey('list-type-field'),
+                            initialValue: _type,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Tipo de lista',
+                              prefixIcon: Icon(Icons.category_outlined),
+                            ),
+                            items: NoteListType.values
+                                .map(
+                                  (type) => DropdownMenuItem(
+                                    value: type,
+                                    child: FinancialOptionLabel(
+                                      icon: FinancialStyle.typeIcon(type),
+                                      label: ListConfiguration(type: type)
+                                          .label,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (type) => setState(() => _type = type!),
+                          ),
+                          if (_type != NoteListType.normal) ...[
+                            const SizedBox(height: 12),
+                            if (_type == NoteListType.custom)
+                              TextFormField(
+                                key: const ValueKey('list-custom-type-field'),
+                                controller: _customType,
+                                maxLength: 50,
+                                decoration: const InputDecoration(
+                                  labelText: 'Nombre del tipo personalizado',
+                                  hintText: 'Ej. Fondo del viaje, presupuestos o ventas',
+                                ),
+                                validator: (value) =>
+                                    value?.trim().isEmpty != false
+                                    ? 'Escribe el nombre del tipo'
+                                    : null,
+                              ),
+                            DropdownButtonFormField<String>(
+                              key: const ValueKey('list-currency-field'),
+                              initialValue: _currency,
+                              decoration: const InputDecoration(
+                                labelText: 'Moneda',
+                                prefixIcon: Icon(
+                                  Icons.currency_exchange_rounded,
+                                ),
+                              ),
+                              items: ListConfiguration.currencies
+                                  .map(
+                                    (currency) => DropdownMenuItem(
+                                      value: currency,
+                                      child: FinancialOptionLabel(
+                                        icon: FinancialStyle.currencyIcon(
+                                          currency,
+                                        ),
+                                        label: FinancialStyle.currencyLabel(
+                                          currency,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (currency) =>
+                                  setState(() => _currency = currency!),
+                            ),
+                            const SizedBox(height: 12),
+                            if (_type == NoteListType.custom &&
+                                widget.customTypes.isNotEmpty)
+                              Wrap(
+                                spacing: 6,
+                                children: widget.customTypes
+                                    .map(
+                                      (name) => ActionChip(
+                                        label: Text(name),
+                                        onPressed: () => setState(
+                                          () => _customType.text = name,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            const Text(
+                              'Incluye montos, estados, comprobantes y totales. Podrás invitar a otras personas igual que en una lista normal.',
                             ),
                           ],
-                        ),
-                      ],
+                          const SizedBox(height: 14),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Cancelar'),
+                              ),
+                              const SizedBox(width: 12),
+                              FilledButton(
+                                key: const ValueKey(
+                                  'create-list-confirm-button',
+                                ),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 16,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                                onPressed: _submit,
+                                child: const Text('Crear lista'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -690,9 +785,27 @@ class _CreateListDialogState extends State<_CreateListDialog> {
 
   void _submit() {
     if (_formKey.currentState!.validate()) {
-      Navigator.pop(context, capitalizeInitialLetter(_controller.text.trim()));
+      Navigator.pop(
+        context,
+        _CreateListResult(
+          capitalizeInitialLetter(_controller.text.trim()),
+          ListConfiguration(
+            type: _type,
+            currency: _currency,
+            customTypeName: _type == NoteListType.custom
+                ? _customType.text.trim()
+                : null,
+          ),
+        ),
+      );
     }
   }
+}
+
+class _CreateListResult {
+  const _CreateListResult(this.name, this.configuration);
+  final String name;
+  final ListConfiguration configuration;
 }
 
 class _EditListNameDialog extends StatefulWidget {

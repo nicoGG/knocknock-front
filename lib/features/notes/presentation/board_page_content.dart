@@ -45,6 +45,17 @@ extension _BoardPageContent on _BoardPageState {
         ),
       );
     }
+    if (_scope == _BoardScope.list && state.selectedList?.isFinancial == true) {
+      return SliverToBoxAdapter(
+        child: FinancialListBoard(
+          key: ValueKey('financial-board-${state.selectedListId}'),
+          list: state.selectedList!,
+          notes: state.notes,
+          onEdit: (note) => _openFinancialEditor(note: note),
+          onAdd: () => _openFinancialEditor(),
+        ),
+      );
+    }
     final Widget content;
     if (notes.isEmpty) {
       final isUnfiltered =
@@ -570,6 +581,18 @@ extension _BoardPageContent on _BoardPageState {
     bool openDetail = true,
     bool showOpenNoteButton = false,
   }) async {
+    final financialList = context
+        .read<NotesCubit>()
+        .state
+        .lists
+        .where((list) => list.id == initialNote.boardId)
+        .firstOrNull;
+    if (financialList?.isFinancial == true) {
+      if (await _selectList(financialList!.id) && mounted) {
+        await _openFinancialEditor(note: initialNote);
+      }
+      return false;
+    }
     _playBoardTapSound();
     HapticFeedback.lightImpact();
     final cubit = context.read<NotesCubit>();
@@ -720,6 +743,10 @@ extension _BoardPageContent on _BoardPageState {
     Note? initialNote,
     BuildContext? editorContext,
   }) async {
+    if (context.read<NotesCubit>().state.selectedList?.isFinancial == true) {
+      await _openFinancialEditor(note: note, editorContext: editorContext);
+      return;
+    }
     final currentUser = context.read<AuthRepository>().currentUser;
     final assignees = context
         .read<NotesCubit>()
@@ -754,6 +781,48 @@ extension _BoardPageContent on _BoardPageState {
     } else {
       await cubit.editNote(note, draft);
     }
+  }
+
+  Future<void> _openFinancialEditor({
+    Note? note,
+    BuildContext? editorContext,
+  }) async {
+    final cubit = context.read<NotesCubit>();
+    final list = cubit.state.selectedList;
+    if (list == null ||
+        !widget.listProtectionController.canAccess(list.id) ||
+        list.isEncryptionKeyPending) {
+      return;
+    }
+    await showFinancialEntryEditor(
+      context: editorContext ?? context,
+      list: list,
+      author:
+          context.read<AuthRepository>().currentUser?.displayName ?? 'Invitado',
+      note: note,
+      attachmentLoader: note == null
+          ? null
+          : (id) => cubit.loadAttachment(note, id),
+      onDelete: note == null ? null : () => cubit.deleteFinancialEntry(note),
+      onHistory: note == null
+          ? null
+          : () => showNoteHistorySheet(
+              context: editorContext ?? context,
+              currentNote: () =>
+                  cubit.state.notes
+                      .where((item) => item.id == note.id)
+                      .firstOrNull ??
+                  note,
+              load: () => cubit.loadNoteHistory(note.id),
+              restore: (current, version) =>
+                  cubit.restoreNoteVersion(current, version),
+              protectionChanges: widget.listProtectionController,
+              canAccess: () =>
+                  widget.listProtectionController.canAccess(list.id),
+            ),
+      onSave: (draft) =>
+          cubit.saveFinancialEntry(list.id, draft, existing: note),
+    );
   }
 
   void _openNewNoteEditor() {
@@ -839,15 +908,33 @@ extension _BoardPageContent on _BoardPageState {
   }
 
   Future<void> _createList() async {
-    final name = await showDialog<String>(
+    final result = await showDialog<_CreateListResult>(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.4),
-      builder: (_) => const _CreateListDialog(),
+      builder: (_) => _CreateListDialog(
+        customTypes: context
+            .read<NotesCubit>()
+            .state
+            .lists
+            .where(
+              (list) =>
+                  list.configuration.type == NoteListType.custom &&
+                  !list.isEncryptionKeyPending &&
+                  widget.listProtectionController.canAccess(list.id),
+            )
+            .map((list) => list.configuration.customTypeName)
+            .whereType<String>()
+            .toSet()
+            .toList(),
+      ),
     );
-    if (name == null || !mounted) return;
+    if (result == null || !mounted) return;
     widget.listProtectionController.lockAll();
-    await context.read<NotesCubit>().createList(name);
+    await context.read<NotesCubit>().createList(
+      result.name,
+      configuration: result.configuration,
+    );
     if (mounted && (_categoryFilter != null || _assigneeFilterUid != null)) {
       _update(() {
         _categoryFilter = null;
@@ -1010,6 +1097,18 @@ extension _BoardPageContent on _BoardPageState {
         builder: (_) => SettingsPage(
           authRepository: authRepository,
           onOpenProfile: _openProfile,
+          onOpenHomeWidgets: widget.homeWidgets?.supported == true
+              ? () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => HomeWidgetSettingsPage(
+                        controller: widget.homeWidgets!,
+                        lists: notesCubit.state.lists,
+                      ),
+                    ),
+                  );
+                }
+              : null,
           onClearLocalData: notesCubit.clearLocalData,
           notificationsController: widget.notificationsController,
           onOpenNotifications: widget.notificationsController == null

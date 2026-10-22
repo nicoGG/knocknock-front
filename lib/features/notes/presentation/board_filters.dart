@@ -175,86 +175,96 @@ class _BoardHeader extends StatelessWidget {
             color: colorScheme.primary,
           ),
         ],
-        SizedBox(height: isCompact ? 16 : 24),
-        if (isCompact)
-          _CompactBoardControls(
-            filter: filter,
-            viewMode: viewMode,
-            onFilterChanged: onFilterChanged,
-            onViewModeChanged: onViewModeChanged,
-          )
-        else
-          Wrap(
-            spacing: 16,
-            runSpacing: 18,
-            children: [
-              SizedBox(
-                width: 480,
-                child: _BoardControlGroup<NoteFilter>(
-                  key: const ValueKey('note-filter-selector'),
-                  keyPrefix: 'desktop-filter-mode',
-                  selected: filter,
-                  selectedColor: colorScheme.primary,
-                  onChanged: onFilterChanged,
-                  options: const [
-                    _BoardControlOption(
-                      value: NoteFilter.all,
-                      label: 'Todas',
-                      icon: Icons.dashboard_outlined,
-                    ),
-                    _BoardControlOption(
-                      value: NoteFilter.pending,
-                      label: 'Pendientes',
-                      icon: Icons.schedule_rounded,
-                    ),
-                    _BoardControlOption(
-                      value: NoteFilter.completed,
-                      label: 'Completadas',
-                      icon: Icons.check_circle_outline_rounded,
-                    ),
-                  ],
-                  showIcons: true,
-                ),
-              ),
-              SizedBox(
-                width: 430,
-                child: _BoardControlGroup<BoardViewMode>(
-                  key: const ValueKey('view-mode-selector'),
-                  keyPrefix: 'desktop-view-mode',
-                  selected: viewMode,
-                  selectedColor: colorScheme.primary,
-                  onChanged: onViewModeChanged,
-                  options: const [
-                    _BoardControlOption(
-                      value: BoardViewMode.grid,
-                      label: 'Cuadrícula',
-                      icon: Icons.grid_view_rounded,
-                      tooltip: 'Vista en cuadrícula',
-                    ),
-                    _BoardControlOption(
-                      value: BoardViewMode.list,
-                      label: 'Lista',
-                      icon: Icons.view_list_rounded,
-                      tooltip: 'Vista de lista compacta',
-                    ),
-                  ],
-                  showIcons: true,
-                ),
-              ),
-            ],
-          ),
-        if (categoryCounts.isNotEmpty || assigneeFilters.isNotEmpty) ...[
+        if (list?.isFinancial == true) ...[
           const SizedBox(height: 12),
-          _CategoryFilterBar(
-            counts: categoryCounts,
-            selected: selectedCategory,
-            onChanged: onCategoryChanged,
-            assignees: assigneeFilters,
-            selectedAssigneeUid: selectedAssigneeUid,
-            onAssigneeChanged: onAssigneeChanged,
-            onClear: onClearFilters,
-            orderController: filterOrderController,
+          _BoardMetaChip(
+            icon: FinancialStyle.typeIcon(list!.configuration.type),
+            label: list!.configuration.label,
+            color: colorScheme.primary,
           ),
+        ],
+        if (list?.isFinancial != true) ...[
+          SizedBox(height: isCompact ? 16 : 24),
+          if (isCompact)
+            _CompactBoardControls(
+              filter: filter,
+              viewMode: viewMode,
+              onFilterChanged: onFilterChanged,
+              onViewModeChanged: onViewModeChanged,
+            )
+          else
+            Wrap(
+              spacing: 16,
+              runSpacing: 18,
+              children: [
+                SizedBox(
+                  width: 480,
+                  child: _BoardControlGroup<NoteFilter>(
+                    key: const ValueKey('note-filter-selector'),
+                    keyPrefix: 'desktop-filter-mode',
+                    selected: filter,
+                    selectedColor: colorScheme.primary,
+                    onChanged: onFilterChanged,
+                    options: const [
+                      _BoardControlOption(
+                        value: NoteFilter.all,
+                        label: 'Todas',
+                        icon: Icons.dashboard_outlined,
+                      ),
+                      _BoardControlOption(
+                        value: NoteFilter.pending,
+                        label: 'Pendientes',
+                        icon: Icons.schedule_rounded,
+                      ),
+                      _BoardControlOption(
+                        value: NoteFilter.completed,
+                        label: 'Completadas',
+                        icon: Icons.check_circle_outline_rounded,
+                      ),
+                    ],
+                    showIcons: true,
+                  ),
+                ),
+                SizedBox(
+                  width: 430,
+                  child: _BoardControlGroup<BoardViewMode>(
+                    key: const ValueKey('view-mode-selector'),
+                    keyPrefix: 'desktop-view-mode',
+                    selected: viewMode,
+                    selectedColor: colorScheme.primary,
+                    onChanged: onViewModeChanged,
+                    options: const [
+                      _BoardControlOption(
+                        value: BoardViewMode.grid,
+                        label: 'Cuadrícula',
+                        icon: Icons.grid_view_rounded,
+                        tooltip: 'Vista en cuadrícula',
+                      ),
+                      _BoardControlOption(
+                        value: BoardViewMode.list,
+                        label: 'Lista',
+                        icon: Icons.view_list_rounded,
+                        tooltip: 'Vista de lista compacta',
+                      ),
+                    ],
+                    showIcons: true,
+                  ),
+                ),
+              ],
+            ),
+          if (categoryCounts.isNotEmpty || assigneeFilters.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _CategoryFilterBar(
+              counts: categoryCounts,
+              selected: selectedCategory,
+              onChanged: onCategoryChanged,
+              assignees: assigneeFilters,
+              selectedAssigneeUid: selectedAssigneeUid,
+              onAssigneeChanged: onAssigneeChanged,
+              onClear: onClearFilters,
+              orderController: filterOrderController,
+            ),
+          ],
         ],
       ],
     );
