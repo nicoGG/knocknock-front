@@ -30,7 +30,6 @@ Future<String?> saveNoteAttachmentToDevice(
   customMimeType: attachment.mimeType,
 );
 
-@visibleForTesting
 String noteAttachmentDownloadName(NoteAttachment attachment) {
   final leafName = attachment.name.trim().split(RegExp(r'[/\\]')).last;
   final sanitized = leafName

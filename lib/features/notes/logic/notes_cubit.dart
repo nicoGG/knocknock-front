@@ -865,6 +865,10 @@ class NotesCubit extends Cubit<NotesState> {
             'content': draft.content,
             'contentDelta': draft.contentDelta,
             'financialData': draft.financialData,
+            'reminderAt': draft.reminderAt == null
+                ? null
+                : reminderDateTimeToJson(draft.reminderAt!),
+            'reminderRecurrence': draft.reminderRecurrence?.toJson(),
             'category': draft.category.name,
             if (!listEquals(draft.photoAttachments, existing.photoAttachments))
               'attachments': draft.photoAttachments

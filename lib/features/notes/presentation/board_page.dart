@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/financial_budget_dialog.dart';
+import 'package:nocknock/features/finance/list_templates.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:nocknock/features/finance/financial_entry_editor.dart';

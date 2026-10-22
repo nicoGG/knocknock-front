@@ -535,6 +535,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
   final _customType = TextEditingController();
   NoteListType _type = NoteListType.normal;
   String _currency = 'CLP';
+  FinancialListTemplate? _template;
 
   @override
   void dispose() {
@@ -613,6 +614,40 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                                 ?.copyWith(fontWeight: FontWeight.w900),
                           ),
                           const SizedBox(height: 24),
+                          DropdownButtonFormField<FinancialListTemplate>(
+                            key: const ValueKey('list-template'),
+                            initialValue: _template,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Empezar con una plantilla (opcional)',
+                              prefixIcon: Icon(Icons.auto_awesome_outlined),
+                            ),
+                            items: FinancialListTemplate.values
+                                .map(
+                                  (template) => DropdownMenuItem(
+                                    value: template,
+                                    child: FinancialOptionLabel(
+                                      icon: template.icon,
+                                      label: template.name,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (template) => setState(() {
+                              _template = template;
+                              if (template != null) {
+                                _type = template.type;
+                                _controller.text = template.name;
+                                _customType.clear();
+                              }
+                            }),
+                          ),
+                          if (_template != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Text(_template!.description),
+                            ),
+                          const SizedBox(height: 12),
                           TextFormField(
                             key: const ValueKey('list-name-field'),
                             controller: _controller,

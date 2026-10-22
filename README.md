@@ -206,3 +206,33 @@ papelera y sincronización offline. El nombre del tipo personalizado y los datos
 financieros se cifran antes de enviarse o guardarse en la caché de la cuenta.
 
 Requiere publicar primero la actualización correspondiente del backend.
+
+### Finanzas: abonos, presupuestos y rendiciones
+
+- Los registros financieros admiten hasta 50 abonos con fecha, referencia y
+  comprobante asociado. El saldo usa unidades enteras (pesos CLP o centavos
+  USD/EUR); no permite abonos superiores al monto. Al completar el pago se
+  cancela la alerta de ese registro.
+- Vencimiento y recordatorio se configuran por separado. El tablero permite
+  filtrar vencidos y meses; los totales siempre usan todos los registros del
+  período y mantienen cada moneda separada.
+- Los presupuestos se configuran por moneda para toda la lista o para un mes.
+  Suman montos registrados, sin descartados ni transferencias. Se guardan como
+  registros de control cifrados en la misma lista: reutilizan permisos,
+  sincronización, historial, recuperación y protección existentes.
+- Gastos compartidos: participantes por nombre (incluye sugerencias de miembros),
+  quién pagó y reparto igualitario exacto. Los saldos consideran importes pagados
+  y transferencias registradas entre personas; nunca convierten monedas. Usa
+  nombres consistentes para la misma persona. Registrar una transferencia es
+  anotar un pago realizado, no ejecutar una operación bancaria.
+- Cotizaciones: precio, proveedor, plazo en días, validez, adjuntos y estado.
+  El comparador ordena por moneda y precio y destaca propuestas elegidas.
+- Exportación local del período: PDF, Excel `.xlsx` con hojas de registros,
+  abonos y reparto, o ZIP con ambos informes y comprobantes originales. Requiere
+  conexión si los adjuntos aún no están descargados. Los archivos exportados
+  contienen la información legible solicitada por el usuario.
+- Plantillas al crear listas: hogar, viaje compartido, remodelación, cobros y
+  comparación de proveedores. Configuran nombre y tipo sin agregar gastos
+  ficticios; la moneda se puede elegir antes de crear.
+- El JSON financiero versión 2 agrega campos opcionales sobre el transporte
+  cifrado existente; el lector mantiene compatibilidad con registros versión 1.

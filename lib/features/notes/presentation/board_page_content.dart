@@ -51,6 +51,11 @@ extension _BoardPageContent on _BoardPageState {
           key: ValueKey('financial-board-${state.selectedListId}'),
           list: state.selectedList!,
           notes: state.notes,
+          onSave: (draft, note) => context
+              .read<NotesCubit>()
+              .saveFinancialEntry(state.selectedListId, draft, existing: note),
+          loadAttachment: (note, id) =>
+              context.read<NotesCubit>().loadAttachment(note, id),
           onEdit: (note) => _openFinancialEditor(note: note),
           onAdd: () => _openFinancialEditor(),
         ),
@@ -792,6 +797,19 @@ extension _BoardPageContent on _BoardPageState {
     if (list == null ||
         !widget.listProtectionController.canAccess(list.id) ||
         list.isEncryptionKeyPending) {
+      return;
+    }
+    if (note?.financialEntry?.isBudget == true) {
+      await showFinancialBudgetDialog(
+        context,
+        currency: note!.financialEntry!.currency,
+        notes: cubit.state.notes,
+        month: note.financialEntry!.period == 'all'
+            ? null
+            : note.financialEntry!.period,
+        save: (draft, existing) =>
+            cubit.saveFinancialEntry(list.id, draft, existing: existing),
+      );
       return;
     }
     await showFinancialEntryEditor(

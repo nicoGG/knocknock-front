@@ -73,6 +73,18 @@ void main() {
       counterparty: 'Persona privada',
       date: DateTime(2026, 10, 22),
       status: 'paid',
+      payments: [
+        FinancialPayment(
+          id: 'private-payment',
+          amountMinor: 12345,
+          date: DateTime(2026, 10, 22),
+          detail: 'Referencia privada',
+          receiptId: 'private-receipt',
+        ),
+      ],
+      participants: const ['Ana privada', 'Persona privada'],
+      paidBy: 'Ana privada',
+      dueDate: DateTime(2026, 10, 25),
     );
     final optimistic = await repository.updateNote(note.id, {
       'financialData': paid.encoded,
@@ -85,6 +97,9 @@ void main() {
       'Fondo familiar privado',
       'Persona privada',
       'amountMinor',
+      'Referencia privada',
+      'Ana privada',
+      'private-receipt',
     ]) {
       expect(persisted, isNot(contains(secret)));
     }

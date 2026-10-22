@@ -34,7 +34,8 @@ Map<String, dynamic> buildHomeWidgetSnapshot({
   for (final note in notes) {
     if (!visibleLists.containsKey(note.boardId) ||
         (note.financialEntry != null &&
-            note.financialEntry!.status != 'pending') ||
+            (note.financialEntry!.isBudget ||
+                note.financialEntry!.status != 'pending')) ||
         note.isCompleted ||
         note.deletedAt != null) {
       continue;

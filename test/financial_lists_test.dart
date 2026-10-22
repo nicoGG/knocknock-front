@@ -275,6 +275,44 @@ void main() {
   );
 
   testWidgets(
+    'a financial template configures a real list without dummy records',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = LocalNotesRepository();
+      await tester.pumpWidget(
+        NockNockApp(repository: repository, authRepository: _Guest()),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add-list-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('list-template')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Viaje compartido').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('create-list-confirm-button')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('create-list-confirm-button')),
+      );
+      await tester.pumpAndSettle();
+      final created = (await repository.fetchLists()).singleWhere(
+        (l) => l.name == 'Viaje compartido',
+      );
+      expect(created.configuration.type, NoteListType.expenses);
+      expect(await repository.fetchNotes(created.id), isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
     'a failed financial save keeps the form and validates who owes money',
     (tester) async {
       final now = DateTime.now();

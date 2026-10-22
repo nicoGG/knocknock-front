@@ -57,6 +57,21 @@ class NoteVersionPreview extends StatelessWidget {
             ),
             if (entry.counterparty.isNotEmpty)
               Text(entry.counterparty, style: TextStyle(color: foreground)),
+            if (entry.payments.isNotEmpty)
+              Text(
+                'Abonado: ${entry.paidMinor} · Saldo: ${entry.balanceMinor} (${entry.currency})',
+                style: TextStyle(color: foreground),
+              ),
+            for (final payment in entry.payments)
+              Text(
+                '${payment.date.day}/${payment.date.month}/${payment.date.year}: ${payment.amountMinor} ${entry.currency} · ${payment.detail}',
+                style: TextStyle(color: foreground),
+              ),
+            if (entry.participants.isNotEmpty)
+              Text(
+                'Pagó: ${entry.paidBy} · ${entry.participants.join(', ')}',
+                style: TextStyle(color: foreground),
+              ),
             Text(entry.statusLabel, style: TextStyle(color: foreground)),
           ],
           if (drawing != null) ...[

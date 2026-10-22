@@ -1,3 +1,6 @@
+import 'package:nocknock/features/finance/financial_reports.dart';
+import 'package:nocknock/features/finance/financial_budget_dialog.dart';
+import 'package:nocknock/features/finance/financial_export.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -11,13 +14,23 @@ Map<String, Map<String, int>> financialTotals(Iterable<Note> notes) {
   final totals = <String, Map<String, int>>{};
   for (final note in notes) {
     final entry = note.financialEntry;
-    if (note.deletedAt != null || entry == null) continue;
+    if (note.deletedAt != null ||
+        entry == null ||
+        entry.isBudget ||
+        entry.isSettlement) {
+      continue;
+    }
     final group = totals.putIfAbsent(
       entry.currency,
       () => {'total': 0, 'pending': 0, 'paid': 0, 'accepted': 0, 'rejected': 0},
     );
     group['total'] = group['total']! + entry.amountMinor;
-    group[entry.status] = group[entry.status]! + entry.amountMinor;
+    if (['accepted', 'rejected'].contains(entry.status)) {
+      group[entry.status] = group[entry.status]! + entry.amountMinor;
+    } else {
+      group['paid'] = group['paid']! + entry.paidMinor;
+      group['pending'] = group['pending']! + entry.balanceMinor;
+    }
   }
   return totals;
 }
@@ -28,34 +41,167 @@ class FinancialListBoard extends StatefulWidget {
     required this.notes,
     required this.onEdit,
     required this.onAdd,
+    this.onSave,
+    this.loadAttachment,
     super.key,
   });
   final NoteList list;
   final List<Note> notes;
   final ValueChanged<Note> onEdit;
   final VoidCallback onAdd;
+  final Future<void> Function(NoteDraft, Note?)? onSave;
+  final Future<NoteAttachment> Function(Note, String)? loadAttachment;
   @override
   State<FinancialListBoard> createState() => _FinancialListBoardState();
 }
 
 class _FinancialListBoardState extends State<FinancialListBoard> {
   String? _status;
+  String? _month;
+  bool _overdue = false;
+  bool _exporting = false;
+  Future<void> _settle(SharedTransfer transfer) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Registrar transferencia'),
+        content: Text(
+          '¿Confirmas que ${transfer.from} pagó ${FinancialEntry.formatAmount(transfer.amountMinor, transfer.currency)} a ${transfer.to}? Se conservará el registro y se actualizarán los saldos compartidos.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Registrar pago'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.onSave!(
+        NoteDraft(
+          title: 'Transferencia de ${transfer.from} a ${transfer.to}'.characters
+              .take(80)
+              .toString(),
+          content: 'Liquidación de gastos compartidos.',
+          color: NoteColor.green,
+          category: NoteCategory.finance,
+          authorName: transfer.from.characters.take(50).toString(),
+          financialData: FinancialEntry(
+            kind: 'settlement',
+            amountMinor: transfer.amountMinor,
+            currency: transfer.currency,
+            counterparty: transfer.to,
+            paidBy: transfer.from,
+            date: DateTime.now(),
+            status: 'paid',
+          ).encoded,
+        ),
+        null,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo registrar la transferencia. Reintenta.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _export(String format) async {
+    setState(() => _exporting = true);
+    try {
+      await saveFinancialExport(
+        list: widget.list,
+        notes: widget.notes,
+        format: format,
+        month: _month,
+        loadAttachment: widget.loadAttachment,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo exportar. Comprueba la conexión para descargar todos los comprobantes.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
   String _query = '';
   int _visibleCount = 40;
   @override
   Widget build(BuildContext context) {
     final config = widget.list.configuration;
-    final totals = financialTotals(widget.notes);
-    final notes = widget.notes
+    final allRecords = financialRecords(widget.notes);
+    final records = financialRecords(widget.notes, month: _month);
+    final totals = financialTotals(records);
+    final months = {
+      financialMonth(DateTime.now()),
+      ?_month,
+      ...allRecords
+          .where((n) => n.financialEntry != null)
+          .map((n) => financialMonth(n.financialEntry!.date)),
+    }.toList()..sort((a, b) => b.compareTo(a));
+    final budgetNotes =
+        widget.notes
+            .where(
+              (n) =>
+                  n.deletedAt == null &&
+                  n.financialEntry?.isBudget == true &&
+                  n.financialEntry!.period == (_month ?? 'all'),
+            )
+            .toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final budgets = <String, Note>{};
+    for (final note in budgetNotes) {
+      budgets.putIfAbsent(note.financialEntry!.currency, () => note);
+    }
+    final transfers = sharedTransfers(widget.notes);
+    final quotes = records
+        .where(
+          (n) =>
+              n.financialEntry != null &&
+              n.financialEntry!.status != 'rejected',
+        )
+        .toList();
+    final overdueCount = records
+        .where(
+          (n) =>
+              n.financialEntry?.isOverdue(
+                DateTime.now(),
+                receivable: config.type == NoteListType.receivables,
+              ) ==
+              true,
+        )
+        .length;
+    final notes = records
         .where(
           (note) =>
               (_status == null || note.financialEntry?.status == _status) &&
+              (!_overdue ||
+                  note.financialEntry?.isOverdue(
+                        DateTime.now(),
+                        receivable: config.type == NoteListType.receivables,
+                      ) ==
+                      true) &&
               '${note.title} ${note.financialEntry?.counterparty ?? ''}'
                   .toLowerCase()
                   .contains(_query.toLowerCase()),
         )
         .toList();
-    final missing = widget.notes
+    final missing = allRecords
         .where((note) => note.financialEntry == null)
         .length;
     final primary = Theme.of(context).colorScheme.primary;
@@ -77,7 +223,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${widget.notes.length} registros',
+                    '${allRecords.length} registros',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -96,6 +242,129 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
           ],
         ),
         const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            DropdownButton<String>(
+              key: const ValueKey('financial-month'),
+              value: _month ?? 'all',
+              items: [
+                const DropdownMenuItem(
+                  value: 'all',
+                  child: Text('Todos los meses'),
+                ),
+                ...months.map(
+                  (m) => DropdownMenuItem(
+                    value: m,
+                    child: Text(
+                      DateFormat(
+                        'MMMM yyyy',
+                        'es',
+                      ).format(DateTime.parse('$m-01')),
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (v) => setState(() {
+                _month = v == 'all' ? null : v;
+                _visibleCount = 40;
+              }),
+            ),
+            if (widget.onSave != null &&
+                [
+                  NoteListType.expenses,
+                  NoteListType.custom,
+                ].contains(config.type))
+              OutlinedButton.icon(
+                onPressed: () => showFinancialBudgetDialog(
+                  context,
+                  currency: config.currency,
+                  notes: widget.notes,
+                  save: widget.onSave!,
+                  month: _month,
+                ),
+                icon: const Icon(Icons.savings_outlined),
+                label: const Text('Presupuesto'),
+              ),
+            PopupMenuButton<String>(
+              enabled: !_exporting,
+              tooltip: 'Exportar registros del período seleccionado',
+              onSelected: _export,
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'pdf', child: Text('Informe PDF')),
+                const PopupMenuItem(
+                  value: 'xlsx',
+                  child: Text('Excel: registros, abonos y reparto'),
+                ),
+                const PopupMenuItem(
+                  value: 'zip',
+                  child: Text('Rendición ZIP con comprobantes'),
+                ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _exporting
+                          ? Icons.hourglass_top
+                          : Icons.file_download_outlined,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(_exporting ? 'Exportando…' : 'Exportar'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        Text(
+          _month == null
+              ? 'Resumen de toda la lista'
+              : 'Resumen de registros del mes',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 10),
+        for (final note in budgets.values)
+          _budget(context, note.financialEntry!),
+        if (transfers.isNotEmpty)
+          FinancialSurface(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Saldos compartidos acumulados',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Text(
+                  'Saldos de toda la lista, independientes del mes. Registra los pagos entre participantes para actualizarlos.',
+                ),
+                for (final t in transfers)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '${t.from} → ${t.to}: ${FinancialEntry.formatAmount(t.amountMinor, t.currency)}',
+                        ),
+                        if (widget.onSave != null)
+                          TextButton(
+                            onPressed: () => _settle(t),
+                            child: const Text('Registrar pago'),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        if (config.type == NoteListType.quotations && quotes.isNotEmpty)
+          _comparison(context, quotes),
         for (final group in totals.entries)
           FinancialSurface(
             padding: EdgeInsets.zero,
@@ -144,7 +413,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
               ),
             ),
           ),
-        if (widget.notes.isEmpty)
+        if (allRecords.isEmpty)
           FinancialSurface(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 28),
@@ -182,7 +451,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
               '$missing ${missing == 1 ? 'nota sin monto' : 'notas sin monto'}: no se incluyen en los totales. Ábrelas para completar sus datos.',
             ),
           ),
-        if (widget.notes.isNotEmpty) ...[
+        if (allRecords.isNotEmpty) ...[
           const SizedBox(height: 16),
           TextField(
             key: const ValueKey('financial-search'),
@@ -197,6 +466,12 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
             spacing: 8,
             runSpacing: 4,
             children: [
+              FilterChip(
+                avatar: const Icon(Icons.event_busy_outlined, size: 16),
+                label: Text('Vencidos ($overdueCount)'),
+                selected: _overdue,
+                onSelected: (v) => setState(() => _overdue = v),
+              ),
               ChoiceChip(
                 label: const Text('Todos'),
                 selected: _status == null,
@@ -251,6 +526,29 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                           fontWeight: FontWeight.w800,
                         ),
                       ),
+                      if (entry.payments.isNotEmpty)
+                        Text(
+                          'Abonado: ${FinancialEntry.formatAmount(entry.paidMinor, entry.currency)} · Saldo: ${FinancialEntry.formatAmount(entry.balanceMinor, entry.currency)}',
+                        ),
+                      if (entry.isOverdue(
+                        DateTime.now(),
+                        receivable: config.type == NoteListType.receivables,
+                      ))
+                        Text(
+                          'Vencido · saldo ${FinancialEntry.formatAmount(entry.balanceMinor, entry.currency)}',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      if (entry.dueDate != null)
+                        Text(
+                          'Vence: ${DateFormat('dd/MM/yyyy').format(entry.dueDate!)}',
+                        ),
+                      if (entry.participants.isNotEmpty)
+                        Text(
+                          '${entry.paidBy} pagó · ${entry.participants.length} participantes',
+                        ),
                       Text(
                         [
                           if (entry.counterparty.isNotEmpty) entry.counterparty,
@@ -279,6 +577,112 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
       ],
     );
   }
+
+  Widget _budget(BuildContext context, FinancialEntry budget) {
+    final spent = budgetSpent(widget.notes, budget);
+    final remaining = budget.amountMinor - spent;
+    return FinancialSurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Presupuesto ${budget.currency} · ${budget.period == 'all' ? 'Toda la lista' : budget.period}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: (spent / budget.amountMinor).clamp(0, 1),
+            color: remaining < 0 ? Theme.of(context).colorScheme.error : null,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${FinancialEntry.formatAmount(spent, budget.currency)} de ${budget.formattedAmount}',
+          ),
+          Text(
+            '${remaining < 0 ? 'Excedido' : 'Disponible'}: ${FinancialEntry.formatAmount(remaining.abs(), budget.currency)}',
+            style: TextStyle(
+              color: remaining < 0 ? Theme.of(context).colorScheme.error : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _comparison(
+    BuildContext context,
+    List<Note> quotes,
+  ) => FinancialSurface(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Comparar cotizaciones',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const Text(
+          'Compara propuestas para el mismo trabajo o producto. Las vencidas se identifican; la selección se cambia desde el registro.',
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: const [
+              DataColumn(label: Text('Proveedor / concepto')),
+              DataColumn(label: Text('Precio')),
+              DataColumn(label: Text('Entrega')),
+              DataColumn(label: Text('Estado / validez')),
+              DataColumn(label: Text('Adjuntos')),
+            ],
+            rows: [
+              for (final note
+                  in (List<Note>.from(quotes)..sort((a, b) {
+                    final c = a.financialEntry!.currency.compareTo(
+                      b.financialEntry!.currency,
+                    );
+                    return c != 0
+                        ? c
+                        : a.financialEntry!.amountMinor.compareTo(
+                            b.financialEntry!.amountMinor,
+                          );
+                  })))
+                DataRow(
+                  selected: note.financialEntry!.status == 'accepted',
+                  onSelectChanged: (_) => widget.onEdit(note),
+                  cells: [
+                    DataCell(
+                      SizedBox(
+                        width: 170,
+                        child: Text(
+                          '${note.financialEntry!.counterparty}\n${note.title}',
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        '${note.financialEntry!.formattedAmount}${!quotes.any((q) => q.financialEntry!.currency == note.financialEntry!.currency && q.financialEntry!.amountMinor < note.financialEntry!.amountMinor) ? '\nMenor precio (${note.financialEntry!.currency})' : ''}',
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        note.financialEntry!.deliveryDays == null
+                            ? 'Sin plazo'
+                            : '${note.financialEntry!.deliveryDays} días',
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        '${note.financialEntry!.status == 'accepted' ? '✓ Elegida' : note.financialEntry!.statusLabel}${note.financialEntry!.validUntil == null ? '' : '\nHasta ${DateFormat('dd/MM/yyyy').format(note.financialEntry!.validUntil!)}'}${note.financialEntry!.validUntil != null && note.financialEntry!.validUntil!.isBefore(DateUtils.dateOnly(DateTime.now())) ? '\nVencida' : ''}',
+                      ),
+                    ),
+                    DataCell(Text('${note.photoAttachments.length}')),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _total(
     BuildContext context,
