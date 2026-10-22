@@ -733,6 +733,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                               ),
                             DropdownButtonFormField<String>(
                               key: const ValueKey('list-currency-field'),
+                              isExpanded: true,
                               initialValue: _currency,
                               decoration: const InputDecoration(
                                 labelText: 'Moneda',
@@ -779,14 +780,15 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                             ),
                           ],
                           const SizedBox(height: 14),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
+                          OverflowBar(
+                            alignment: MainAxisAlignment.end,
+                            spacing: 12,
+                            overflowSpacing: 8,
                             children: [
                               TextButton(
                                 onPressed: () => Navigator.pop(context),
                                 child: const Text('Cancelar'),
                               ),
-                              const SizedBox(width: 12),
                               FilledButton(
                                 key: const ValueKey(
                                   'create-list-confirm-button',

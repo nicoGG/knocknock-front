@@ -66,8 +66,11 @@ class _NoteHistorySheetState extends State<_NoteHistorySheet> {
       builder: (context) => LiquidAlertDialog(
         icon: const Icon(Icons.restore_rounded),
         title: const Text('¿Recuperar esta versión?'),
-        content: const Text(
-          'Se recuperarán el texto, el dibujo, la lista de tareas y el estilo. Los responsables, recordatorios y adjuntos actuales se conservan. La versión actual quedará en el historial.',
+        content: Text(
+          widget.currentNote().financialEntry != null ||
+                  version.note.financialEntry != null
+              ? 'Se recuperarán los datos financieros y los abonos de esta versión. Los responsables y adjuntos actuales se conservan. Si recuperas un registro cerrado, se cancelará su alerta. La versión actual quedará en el historial.'
+              : 'Se recuperarán el texto, el dibujo, la lista de tareas y el estilo. Los responsables, recordatorios y adjuntos actuales se conservan. La versión actual quedará en el historial.',
         ),
         actions: [
           TextButton(

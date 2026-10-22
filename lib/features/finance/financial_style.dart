@@ -118,3 +118,65 @@ class FinancialSurface extends StatelessWidget {
     );
   }
 }
+
+/// A bounded, scrollable dialog using the same glass surfaces as finance boards.
+/// Actions stay visible when the software keyboard reduces the available height.
+class FinancialDialog extends StatelessWidget {
+  const FinancialDialog({
+    required this.title,
+    required this.icon,
+    required this.content,
+    required this.actions,
+    super.key,
+  });
+  final String title;
+  final IconData icon;
+  final Widget content;
+  final List<Widget> actions;
+  @override
+  Widget build(BuildContext context) => Dialog(
+    backgroundColor: Colors.transparent,
+    surfaceTintColor: Colors.transparent,
+    elevation: 0,
+    insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 620),
+      child: FinancialSurface(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                FinancialIconBadge(icon: icon),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: SingleChildScrollView(
+                key: const ValueKey('financial-dialog-scroll'),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                child: content,
+              ),
+            ),
+            const SizedBox(height: 16),
+            OverflowBar(
+              alignment: MainAxisAlignment.end,
+              spacing: 8,
+              overflowSpacing: 8,
+              children: actions,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}

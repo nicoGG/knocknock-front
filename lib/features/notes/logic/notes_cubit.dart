@@ -890,6 +890,10 @@ class NotesCubit extends Cubit<NotesState> {
           'title': previous.title,
           'content': previous.content,
           'financialData': version.note.financialData,
+          if (previous.financialEntry?.isClosed == true) ...{
+            'reminderAt': null,
+            'reminderRecurrence': null,
+          },
           'contentDelta': previous.contentDelta,
           'color': previous.color.name,
           'category': previous.category.name,
@@ -1556,6 +1560,15 @@ class NotesCubit extends Cubit<NotesState> {
         ),
       );
     }
+  }
+
+  /// Widget writes happen outside the cubit, including local/offline writes
+  /// that have no socket echo. Refresh visible state and invalidate stale pages.
+  void applyWidgetCompletion(Note note) {
+    if (isClosed) return;
+    _listNotes.remove(note.boardId);
+    _scopeNotesRefreshedAt = null;
+    _upsert(note);
   }
 
   void _upsert(Note note) {

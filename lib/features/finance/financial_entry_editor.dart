@@ -100,6 +100,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
       .map((p) => p.trim())
       .where((p) => p.isNotEmpty)
       .toList();
+  bool get _isClosed => ['paid', 'accepted', 'rejected'].contains(_status);
   int get _paid => _payments.fold(0, (sum, p) => sum + p.amountMinor);
   bool _saving = false;
   String? _error;
@@ -225,8 +226,9 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('¿Eliminar este registro?'),
+      builder: (context) => FinancialDialog(
+        title: '¿Eliminar este registro?',
+        icon: Icons.delete_outline,
         content: const Text(
           'Se moverá a la papelera y dejará de sumar en los totales.',
         ),
@@ -330,6 +332,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
           24 + MediaQuery.viewInsetsOf(context).bottom,
         ),
         child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           child: Form(
             key: _form,
             child: Column(
@@ -382,6 +385,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                 TextFormField(
                   key: const ValueKey('financial-amount'),
                   controller: _amount,
+                  onChanged: (_) => setState(() {}),
                   enabled: !_saving,
                   keyboardType: TextInputType.numberWithOptions(
                     decimal: _currency != 'CLP',
@@ -494,11 +498,13 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                   leading: const Icon(Icons.notifications_active_outlined),
                   title: const Text('Alerta de pago o cobro'),
                   subtitle: Text(
-                    _reminder == null
+                    _isClosed
+                        ? 'Sin alertas: el registro está cerrado'
+                        : _reminder == null
                         ? 'Agregar recordatorio'
                         : DateFormat('dd/MM/yyyy HH:mm').format(_reminder!),
                   ),
-                  onTap: _saving
+                  onTap: _saving || _isClosed
                       ? null
                       : () async {
                           final choice = await showReminderSchedulePicker(
@@ -512,7 +518,9 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                             });
                           }
                         },
-                  trailing: _reminder == null
+                  trailing: _isClosed
+                      ? null
+                      : _reminder == null
                       ? const Icon(Icons.add)
                       : IconButton(
                           tooltip: 'Quitar alerta',
@@ -525,7 +533,8 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                                 }),
                         ),
                 ),
-                if (_due != null &&
+                if (!_isClosed &&
+                    _due != null &&
                     _reminder == null &&
                     DateTime(
                       _due!.year,
@@ -639,7 +648,15 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                     ),
                   OutlinedButton.icon(
                     key: const ValueKey('financial-add-payment'),
-                    onPressed: _saving || _payments.length >= 50
+                    onPressed:
+                        _saving ||
+                            _payments.length >= 50 ||
+                            (FinancialEntry.parseAmount(
+                                      _amount.text,
+                                      _currency,
+                                    ) ??
+                                    0) <=
+                                _paid
                         ? null
                         : _addPayment,
                     icon: const Icon(Icons.add_card),
@@ -701,6 +718,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                           )
                           .toList(),
                     ),
+                    const SizedBox(height: 12),
                     TextFormField(
                       key: const ValueKey('financial-paid-by'),
                       controller: _payer,
@@ -843,8 +861,9 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Registrar abono'),
+  Widget build(BuildContext context) => FinancialDialog(
+    title: 'Registrar abono',
+    icon: Icons.payments_outlined,
     content: SingleChildScrollView(
       child: Form(
         key: _form,
@@ -854,6 +873,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
             Text(
               'Saldo: ${FinancialEntry.formatAmount(widget.balance, widget.currency)}',
             ),
+            const SizedBox(height: 12),
             TextFormField(
               key: const ValueKey('payment-amount'),
               controller: _amount,
@@ -871,6 +891,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                     : null;
               },
             ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _detail,
               maxLength: 160,

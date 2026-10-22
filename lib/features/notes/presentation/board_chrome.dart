@@ -42,6 +42,9 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
     return AppBar(
       key: const ValueKey('parallax-app-bar'),
       toolbarHeight: 72,
+      systemOverlayStyle: Theme.of(context).brightness == Brightness.dark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
       backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,

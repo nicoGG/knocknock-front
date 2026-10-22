@@ -225,7 +225,7 @@ Future<Uint8List> financialPdf(
   return doc.save();
 }
 
-Future<void> saveFinancialExport({
+Future<String?> saveFinancialExport({
   required NoteList list,
   required List<Note> notes,
   required String format,
@@ -273,7 +273,7 @@ Future<void> saveFinancialExport({
     bytes = Uint8List.fromList(ZipEncoder().encode(zip));
     mime = 'application/zip';
   }
-  await FileSaver.instance.saveAs(
+  return FileSaver.instance.saveAs(
     name: '$name.$format',
     bytes: bytes,
     includeExtension: false,

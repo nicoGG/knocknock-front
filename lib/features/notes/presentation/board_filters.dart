@@ -135,6 +135,9 @@ class _BoardHeader extends StatelessWidget {
                     ),
                   if (showAddButton)
                     GlassNewNoteButton(
+                      label: list?.isFinancial == true
+                          ? list!.configuration.entryLabel
+                          : 'Nueva nota',
                       onLongPress: onQuickCapture,
                       key: const ValueKey('new-note-button'),
                       onPressed: onAdd,

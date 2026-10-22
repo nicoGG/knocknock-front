@@ -134,6 +134,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   int? _trashCount;
   int _trashCountGeneration = 0;
   StreamSubscription<Map<String, String>>? _notificationTapSubscription;
+  StreamSubscription<Note>? _widgetCompletionSubscription;
   late final AnimationController _entranceController;
   late final Animation<double> _headerOpacity;
   late final Animation<Offset> _headerSlide;
@@ -159,6 +160,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
     super.initState();
     widget.captureInbox?.addListener(_scheduleCapture);
     widget.homeWidgets?.addListener(_scheduleWidgetAction);
+    _widgetCompletionSubscription = widget.homeWidgets?.completedNotes.listen((
+      note,
+    ) {
+      if (mounted) context.read<NotesCubit>().applyWidgetCompletion(note);
+    });
     final selectedListId = context.read<NotesCubit>().state.selectedListId;
     _activePreferenceListId = selectedListId;
     _filter = widget.viewModeController.filterFor(selectedListId);
@@ -227,6 +233,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   void dispose() {
     widget.captureInbox?.removeListener(_scheduleCapture);
     widget.homeWidgets?.removeListener(_scheduleWidgetAction);
+    unawaited(_widgetCompletionSubscription?.cancel());
     widget.viewModeController.removeListener(_restoreBoardPreferences);
     widget.listProtectionController.removeListener(_restoreListProtectionState);
     unawaited(_notificationTapSubscription?.cancel());
@@ -244,12 +251,24 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
 
   bool _widgetActionOpen = false;
   void _scheduleWidgetAction() {
+    if (widget.homeWidgets?.pendingAction == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted ||
           _widgetActionOpen ||
           _captureOpen ||
-          ModalRoute.of(context)?.isCurrent != true ||
           context.read<NotesCubit>().state.status != NotesStatus.ready) {
+        return;
+      }
+      final route = ModalRoute.of(context);
+      final pending = widget.homeWidgets?.pendingAction;
+      if (pending == null) return;
+      if (pending['owner'] != null &&
+          pending['owner'] != widget.homeWidgets?.owner) {
+        widget.homeWidgets?.takeAction();
+        return;
+      }
+      if (route != null && !route.isCurrent) {
+        Navigator.of(context).popUntil((candidate) => candidate == route);
         return;
       }
       final action = widget.homeWidgets?.takeAction();
@@ -280,6 +299,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
         if (mounted) _scheduleWidgetAction();
       }
     });
+    // A native widget tap can arrive after the foreground frame has finished.
+    // Request a frame so the action never waits for another touch or rebuild.
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _scheduleCapture() {
@@ -452,8 +474,10 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
       listenWhen: (previous, current) =>
           (current.message != null && previous.message != current.message) ||
           previous.selectedListId != current.selectedListId ||
+          previous.notes != current.notes ||
           previous.lists != current.lists,
       listener: (context, state) {
+        widget.homeWidgets?.refresh();
         if (state.selectedListId != _activePreferenceListId) {
           _isEditingListTitle = false;
           _restoreBoardPreferences(state.selectedListId);
@@ -604,6 +628,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                   animation: _entranceController,
                   child: CollapsingNewNoteFab(
                     key: const ValueKey('new-note-fab'),
+                    label: state.selectedList?.isFinancial == true
+                        ? state.selectedList!.configuration.entryLabel
+                        : 'Nueva nota',
                     scrollProgress: _appBarScrollProgress,
                     onPressed: state.isSaving ? null : _openNewNoteEditor,
                     onLongPress: () => _openQuickCapture(),

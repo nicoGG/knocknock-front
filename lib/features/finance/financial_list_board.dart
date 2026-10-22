@@ -63,8 +63,9 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
   Future<void> _settle(SharedTransfer transfer) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Registrar transferencia'),
+      builder: (c) => FinancialDialog(
+        title: 'Registrar transferencia',
+        icon: Icons.swap_horiz,
         content: Text(
           '¿Confirmas que ${transfer.from} pagó ${FinancialEntry.formatAmount(transfer.amountMinor, transfer.currency)} a ${transfer.to}? Se conservará el registro y se actualizarán los saldos compartidos.',
         ),
@@ -117,13 +118,18 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
   Future<void> _export(String format) async {
     setState(() => _exporting = true);
     try {
-      await saveFinancialExport(
+      final saved = await saveFinancialExport(
         list: widget.list,
         notes: widget.notes,
         format: format,
         month: _month,
         loadAttachment: widget.loadAttachment,
       );
+      if (mounted && saved != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Archivo ${format.toUpperCase()} guardado.')),
+        );
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -223,7 +229,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${allRecords.length} registros',
+                    '${allRecords.length} ${allRecords.length == 1 ? 'registro' : 'registros'}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -623,66 +629,178 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
         const Text(
           'Compara propuestas para el mismo trabajo o producto. Las vencidas se identifican; la selección se cambia desde el registro.',
         ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            columns: const [
-              DataColumn(label: Text('Proveedor / concepto')),
-              DataColumn(label: Text('Precio')),
-              DataColumn(label: Text('Entrega')),
-              DataColumn(label: Text('Estado / validez')),
-              DataColumn(label: Text('Adjuntos')),
-            ],
-            rows: [
-              for (final note
-                  in (List<Note>.from(quotes)..sort((a, b) {
-                    final c = a.financialEntry!.currency.compareTo(
-                      b.financialEntry!.currency,
-                    );
-                    return c != 0
-                        ? c
-                        : a.financialEntry!.amountMinor.compareTo(
-                            b.financialEntry!.amountMinor,
-                          );
-                  })))
-                DataRow(
-                  selected: note.financialEntry!.status == 'accepted',
-                  onSelectChanged: (_) => widget.onEdit(note),
-                  cells: [
-                    DataCell(
-                      SizedBox(
-                        width: 170,
-                        child: Text(
-                          '${note.financialEntry!.counterparty}\n${note.title}',
+        const SizedBox(height: 12),
+        if (MediaQuery.sizeOf(context).width < 600)
+          ..._sortedQuotes(quotes)
+              .map((note) => _compactQuote(context, note, quotes))
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              showCheckboxColumn: false,
+              columns: const [
+                DataColumn(label: Text('Proveedor / concepto')),
+                DataColumn(label: Text('Precio')),
+                DataColumn(label: Text('Entrega')),
+                DataColumn(label: Text('Estado / validez')),
+                DataColumn(label: Text('Adjuntos')),
+              ],
+              rows: [
+                for (final note in _sortedQuotes(quotes))
+                  DataRow(
+                    selected: note.financialEntry!.status == 'accepted',
+                    onSelectChanged: (_) => widget.onEdit(note),
+                    cells: [
+                      DataCell(
+                        SizedBox(
+                          width: 170,
+                          child: Text(
+                            '${note.financialEntry!.counterparty}\n${note.title}',
+                          ),
                         ),
                       ),
-                    ),
-                    DataCell(
-                      Text(
-                        '${note.financialEntry!.formattedAmount}${!quotes.any((q) => q.financialEntry!.currency == note.financialEntry!.currency && q.financialEntry!.amountMinor < note.financialEntry!.amountMinor) ? '\nMenor precio (${note.financialEntry!.currency})' : ''}',
+                      DataCell(
+                        Text(
+                          '${note.financialEntry!.formattedAmount}${!quotes.any((q) => q.financialEntry!.currency == note.financialEntry!.currency && q.financialEntry!.amountMinor < note.financialEntry!.amountMinor) ? '\nMenor precio (${note.financialEntry!.currency})' : ''}',
+                        ),
                       ),
-                    ),
-                    DataCell(
-                      Text(
-                        note.financialEntry!.deliveryDays == null
-                            ? 'Sin plazo'
-                            : '${note.financialEntry!.deliveryDays} días',
+                      DataCell(
+                        Text(
+                          note.financialEntry!.deliveryDays == null
+                              ? 'Sin plazo'
+                              : '${note.financialEntry!.deliveryDays} días',
+                        ),
                       ),
-                    ),
-                    DataCell(
-                      Text(
-                        '${note.financialEntry!.status == 'accepted' ? '✓ Elegida' : note.financialEntry!.statusLabel}${note.financialEntry!.validUntil == null ? '' : '\nHasta ${DateFormat('dd/MM/yyyy').format(note.financialEntry!.validUntil!)}'}${note.financialEntry!.validUntil != null && note.financialEntry!.validUntil!.isBefore(DateUtils.dateOnly(DateTime.now())) ? '\nVencida' : ''}',
+                      DataCell(
+                        Text(
+                          '${note.financialEntry!.status == 'accepted' ? '✓ Elegida' : note.financialEntry!.statusLabel}${note.financialEntry!.validUntil == null ? '' : '\nHasta ${DateFormat('dd/MM/yyyy').format(note.financialEntry!.validUntil!)}'}${note.financialEntry!.validUntil != null && note.financialEntry!.validUntil!.isBefore(DateUtils.dateOnly(DateTime.now())) ? '\nVencida' : ''}',
+                        ),
                       ),
-                    ),
-                    DataCell(Text('${note.photoAttachments.length}')),
-                  ],
-                ),
-            ],
+                      DataCell(Text('${note.photoAttachments.length}')),
+                    ],
+                  ),
+              ],
+            ),
           ),
-        ),
       ],
     ),
   );
+
+  List<Note> _sortedQuotes(List<Note> quotes) =>
+      List<Note>.from(quotes)..sort((a, b) {
+        final currency = a.financialEntry!.currency.compareTo(
+          b.financialEntry!.currency,
+        );
+        return currency != 0
+            ? currency
+            : a.financialEntry!.amountMinor.compareTo(
+                b.financialEntry!.amountMinor,
+              );
+      });
+
+  Widget _compactQuote(BuildContext context, Note note, List<Note> quotes) {
+    final entry = note.financialEntry!;
+    final cheapest = !quotes.any(
+      (q) =>
+          q.financialEntry!.currency == entry.currency &&
+          q.financialEntry!.amountMinor < entry.amountMinor,
+    );
+    final expired =
+        entry.validUntil != null &&
+        entry.validUntil!.isBefore(DateUtils.dateOnly(DateTime.now()));
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: entry.status == 'accepted'
+            ? colors.primary.withValues(alpha: .10)
+            : colors.surface.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          key: ValueKey('quote-comparison-${note.id}'),
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => widget.onEdit(note),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.counterparty.isEmpty ? note.title : entry.counterparty,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (entry.counterparty.isNotEmpty)
+                  Text(
+                    note.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  entry.formattedAmount,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: colors.primary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (cheapest)
+                  Text(
+                    'Menor precio (${entry.currency})',
+                    style: TextStyle(color: colors.primary),
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  entry.deliveryDays == null
+                      ? 'Entrega: sin plazo'
+                      : 'Entrega: ${entry.deliveryDays} días',
+                ),
+                if (entry.validUntil != null)
+                  Text(
+                    'Válida hasta ${DateFormat('dd/MM/yyyy').format(entry.validUntil!)}${expired ? ' · Vencida' : ''}',
+                    style: TextStyle(color: expired ? colors.error : null),
+                  ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    Chip(
+                      avatar: Icon(
+                        FinancialStyle.statusIcon(entry.status),
+                        size: 16,
+                      ),
+                      label: Text(
+                        entry.status == 'accepted'
+                            ? 'Elegida'
+                            : entry.statusLabel,
+                      ),
+                    ),
+                    if (note.photoAttachments.isNotEmpty)
+                      Chip(
+                        avatar: const Icon(Icons.attach_file, size: 16),
+                        label: Text('${note.photoAttachments.length} adjuntos'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Abrir cotización',
+                        style: TextStyle(color: colors.primary),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: colors.primary),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _total(
     BuildContext context,

@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/finance/financial_entry.dart';
 import 'package:nocknock/features/finance/financial_reports.dart';
@@ -108,70 +109,74 @@ class _BudgetDialogState extends State<_BudgetDialog> {
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
-    child: AlertDialog(
-      title: const Text('Presupuesto de la lista'),
-      content: SingleChildScrollView(
-        child: Form(
-          key: _form,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Se comparte con los miembros de la lista. Suma los montos registrados, salvo los descartados.',
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: _currency,
-                decoration: const InputDecoration(labelText: 'Moneda'),
-                items: ListConfiguration.currencies
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() {
-                        _currency = v!;
-                        _load();
-                      }),
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: _period,
-                decoration: const InputDecoration(labelText: 'Período'),
-                items: [
-                  const DropdownMenuItem(
-                    value: 'all',
-                    child: Text('Toda la lista'),
-                  ),
-                  for (final m in {
-                    financialMonth(DateTime.now()),
-                    if (widget.month != null) widget.month!,
-                    ...widget.notes
-                        .where((n) => n.financialEntry != null)
-                        .map((n) => financialMonth(n.financialEntry!.date)),
-                  }.toList()..sort((a, b) => b.compareTo(a)))
-                    DropdownMenuItem(value: m, child: Text(m)),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() {
-                        _period = v!;
-                        _load();
-                      }),
-              ),
-              TextFormField(
-                key: const ValueKey('budget-amount'),
-                controller: _amount,
-                enabled: !_saving,
-                decoration: InputDecoration(labelText: 'Límite ($_currency)'),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
+    child: FinancialDialog(
+      title: 'Presupuesto de la lista',
+      icon: Icons.savings_outlined,
+      content: Form(
+        key: _form,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Se comparte con los miembros de la lista. Suma los montos registrados, salvo los descartados.',
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _currency,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Moneda'),
+              items: ListConfiguration.currencies
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                  .toList(),
+              onChanged: _saving
+                  ? null
+                  : (v) => setState(() {
+                      _currency = v!;
+                      _load();
+                    }),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _period,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Período'),
+              items: [
+                const DropdownMenuItem(
+                  value: 'all',
+                  child: Text('Toda la lista'),
                 ),
-                validator: (v) =>
-                    FinancialEntry.parseAmount(v ?? '', _currency) == null
-                    ? 'Ingresa un límite mayor que cero'
-                    : null,
+                for (final m in {
+                  financialMonth(DateTime.now()),
+                  if (widget.month != null) widget.month!,
+                  ...widget.notes
+                      .where((n) => n.financialEntry != null)
+                      .map((n) => financialMonth(n.financialEntry!.date)),
+                }.toList()..sort((a, b) => b.compareTo(a)))
+                  DropdownMenuItem(value: m, child: Text(m)),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (v) => setState(() {
+                      _period = v!;
+                      _load();
+                    }),
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              key: const ValueKey('budget-amount'),
+              controller: _amount,
+              enabled: !_saving,
+              decoration: InputDecoration(labelText: 'Límite ($_currency)'),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
-              if (_error != null) Text(_error!),
-            ],
-          ),
+              validator: (v) =>
+                  FinancialEntry.parseAmount(v ?? '', _currency) == null
+                  ? 'Ingresa un límite mayor que cero'
+                  : null,
+            ),
+            if (_error != null) Text(_error!),
+          ],
         ),
       ),
       actions: [

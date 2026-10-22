@@ -8,12 +8,14 @@ class CollapsingNewNoteFab extends StatelessWidget {
     required this.scrollProgress,
     required this.onPressed,
     this.onLongPress,
+    this.label = 'Nueva nota',
     this.backgroundColor,
     this.foregroundColor,
     super.key,
   });
 
   final VoidCallback? onLongPress;
+  final String label;
   final ValueListenable<double> scrollProgress;
   final VoidCallback? onPressed;
   final Color? backgroundColor;
@@ -34,9 +36,9 @@ class CollapsingNewNoteFab extends StatelessWidget {
       return Semantics(
         button: true,
         enabled: onPressed != null,
-        label: 'Nueva nota',
+        label: label,
         child: Tooltip(
-          message: 'Nueva nota · Mantén pulsado para captura rápida',
+          message: '$label · Mantén pulsado para captura rápida',
           excludeFromSemantics: true,
           child: _GlassNewNoteSurface(
             keyPrefix: 'new-note-fab',
@@ -68,7 +70,7 @@ class CollapsingNewNoteFab extends StatelessWidget {
                       opacity: expandedProgress,
                       child: Transform.translate(
                         offset: Offset(8 * progress, 0),
-                        child: const Text('Nueva nota'),
+                        child: Text(label),
                       ),
                     ),
                   ),
@@ -86,6 +88,7 @@ class GlassNewNoteButton extends StatelessWidget {
   const GlassNewNoteButton({
     required this.onPressed,
     this.onLongPress,
+    this.label = 'Nueva nota',
     required this.backgroundColor,
     required this.foregroundColor,
     super.key,
@@ -93,6 +96,7 @@ class GlassNewNoteButton extends StatelessWidget {
 
   final VoidCallback? onPressed;
   final VoidCallback? onLongPress;
+  final String label;
   final Color backgroundColor;
   final Color foregroundColor;
 
@@ -100,9 +104,9 @@ class GlassNewNoteButton extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     button: true,
     enabled: onPressed != null,
-    label: 'Nueva nota',
+    label: label,
     child: Tooltip(
-      message: 'Nueva nota',
+      message: label,
       excludeFromSemantics: true,
       child: _GlassNewNoteSurface(
         keyPrefix: 'new-note-button',
@@ -113,12 +117,12 @@ class GlassNewNoteButton extends StatelessWidget {
         onLongPress: onLongPress,
         minHeight: 52,
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add_rounded),
-            SizedBox(width: 8),
-            Text('Nueva nota'),
+            const Icon(Icons.add_rounded),
+            const SizedBox(width: 8),
+            Text(label),
           ],
         ),
       ),

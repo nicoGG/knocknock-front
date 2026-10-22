@@ -114,6 +114,8 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
   String? captureListId;
   bool hideContent = false;
   String? error;
+  final _completedNotes = StreamController<Note>.broadcast();
+  Stream<Note> get completedNotes => _completedNotes.stream;
   Map<String, String>? _pendingAction;
   Map<String, String>? get pendingAction => _pendingAction;
   StreamSubscription<NotesRealtimeEvent>? _events;
@@ -283,7 +285,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         continue;
       }
       try {
-        await repository.updateNote(action['id'] as String, {
+        final completed = await repository.updateNote(action['id'] as String, {
           'isCompleted': true,
           'completedAt': DateTime.fromMillisecondsSinceEpoch(
             action['completedAt'] as int,
@@ -291,6 +293,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
           'expectedRevision': action['revision'],
           'clientMutationId': action['mutationId'],
         });
+        if (!_disposed && owner == account) _completedNotes.add(completed);
         await channel.invokeMethod<void>('acknowledge', action['mutationId']);
       } catch (_) {
         // The native queue is acknowledged only after the repository persists it.
@@ -338,6 +341,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_completedNotes.close());
     _generation++;
     _timer?.cancel();
     _events?.cancel();

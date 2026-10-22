@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/financial_entry.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
@@ -59,12 +60,12 @@ class NoteVersionPreview extends StatelessWidget {
               Text(entry.counterparty, style: TextStyle(color: foreground)),
             if (entry.payments.isNotEmpty)
               Text(
-                'Abonado: ${entry.paidMinor} · Saldo: ${entry.balanceMinor} (${entry.currency})',
+                'Abonado: ${FinancialEntry.formatAmount(entry.paidMinor, entry.currency)} · Saldo: ${FinancialEntry.formatAmount(entry.balanceMinor, entry.currency)}',
                 style: TextStyle(color: foreground),
               ),
             for (final payment in entry.payments)
               Text(
-                '${payment.date.day}/${payment.date.month}/${payment.date.year}: ${payment.amountMinor} ${entry.currency} · ${payment.detail}',
+                '${payment.date.day}/${payment.date.month}/${payment.date.year}: ${FinancialEntry.formatAmount(payment.amountMinor, entry.currency)}${payment.detail.isEmpty ? '' : ' · ${payment.detail}'}',
                 style: TextStyle(color: foreground),
               ),
             if (entry.participants.isNotEmpty)
