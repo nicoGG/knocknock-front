@@ -1,3 +1,4 @@
+import 'package:nocknock/features/subscriptions/plus_page.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 
 import 'dart:async';
@@ -137,6 +138,12 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 640),
                       child: _SettingsContent(
+                        onOpenPlus: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                PlusPage(auth: widget.authRepository),
+                          ),
+                        ),
                         user: snapshot.data,
                         appVersion: _appVersion,
                         isClearingData: _isClearingData,
@@ -309,6 +316,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
 class _SettingsContent extends StatelessWidget {
   const _SettingsContent({
+    required this.onOpenPlus,
     required this.user,
     required this.appVersion,
     required this.isClearingData,
@@ -323,6 +331,7 @@ class _SettingsContent extends StatelessWidget {
     this.onOpenHomeWidgets,
   });
 
+  final VoidCallback onOpenPlus;
   final AppUser? user;
   final Future<String> appVersion;
   final bool isClearingData;
@@ -355,6 +364,17 @@ class _SettingsContent extends StatelessWidget {
                 : 'Conectado como ${user!.email}',
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: onOpenProfile,
+          ),
+        ),
+        const SizedBox(height: 28),
+        _SettingsCard(
+          child: _SettingsTile(
+            key: const ValueKey('settings-plus-button'),
+            leading: const Icon(Icons.auto_awesome_rounded),
+            title: 'NockNock Plus',
+            subtitle: 'Una suscripción para tus listas compartidas.',
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: onOpenPlus,
           ),
         ),
         const SizedBox(height: 28),

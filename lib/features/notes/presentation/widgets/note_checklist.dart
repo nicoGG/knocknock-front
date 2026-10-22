@@ -56,9 +56,8 @@ class _NoteChecklistEditorState extends State<NoteChecklistEditor> {
         ),
         Text(
           'Arrastra desde los puntos para ordenar. Usa las flechas para crear subtareas.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurface.withValues(alpha: 0.58),
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: colorScheme.onSurface.withValues(alpha: 0.58)),
         ),
         const SizedBox(height: 10),
         if (items.isEmpty)

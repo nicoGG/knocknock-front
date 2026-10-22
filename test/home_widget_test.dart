@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:nocknock/features/finance/list_configuration.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
@@ -221,6 +223,32 @@ void main() {
           .setMockMethodCallHandler(channel, null);
     });
 
+    test(
+      'expense widget saves currency and publishes the financial total',
+      () async {
+        repository.expenses = true;
+        queue.add({
+          'type': 'expense',
+          'id': 'widget-expense',
+          'boardId': 'home',
+          'owner': 'guest',
+          'title': 'Almuerzo',
+          'amount': '5000',
+          'mutationId': 'expense-mutation',
+          'completedAt': now.millisecondsSinceEpoch,
+        });
+        await controller.start();
+        await controller.refreshNow();
+        final saved = (await repository.fetchNotes('home')).single;
+        expect(saved.financialEntry?.amountMinor, 5000);
+        expect(saved.financialEntry?.currency, 'CLP');
+        expect(queue, isEmpty);
+        final catalog = published.last['catalog'] as List;
+        expect(catalog.first['expenses'], true);
+        expect(catalog.first['summary'], contains('5.000'));
+      },
+    );
+
     Future<Note> enqueue({String owner = 'guest'}) async {
       final saved = await repository.createNote(
         'home',
@@ -241,6 +269,48 @@ void main() {
       });
       return saved;
     }
+
+    test(
+      'widget subtasks persist without completing the parent or siblings',
+      () async {
+        final saved = await repository.createNote(
+          'home',
+          const NoteDraft(
+            title: 'Compras',
+            content: '',
+            color: NoteColor.none,
+            authorName: 'Yo',
+            checklist: [
+              NoteChecklistItem(id: 'a', text: 'Pan'),
+              NoteChecklistItem(id: 'b', text: 'Leche'),
+            ],
+          ),
+        );
+        queue.add({
+          'id': saved.id,
+          'boardId': 'home',
+          'owner': 'guest',
+          'subtaskId': 'a',
+          'mutationId': 'subtask-mutation',
+          'completedAt': now.millisecondsSinceEpoch,
+        });
+        await controller.start();
+        await controller.refreshNow();
+        final updated = (await repository.fetchNotes('home')).single;
+        expect(updated.isCompleted, false);
+        expect(updated.checklist.first.isCompleted, true);
+        expect(updated.checklist.last.isCompleted, false);
+        expect(queue, isEmpty);
+        final catalog = published.last['catalog'] as List;
+        expect(
+          (catalog.first['rows'] as List).single['checklist'],
+          hasLength(2),
+        );
+        await controller.configure(hidden: true);
+        await controller.refreshNow();
+        expect(published.last['catalog'], isEmpty);
+      },
+    );
 
     test(
       'completion is acknowledged only after repository persistence',
@@ -327,6 +397,19 @@ void main() {
 }
 
 class _Repository extends LocalNotesRepository {
+  bool expenses = false;
+  @override
+  Future<List<NoteList>> fetchLists() async => (await super.fetchLists())
+      .map(
+        (list) => expenses
+            ? list.copyWith(
+                configuration: const ListConfiguration(
+                  type: NoteListType.expenses,
+                ),
+              )
+            : list,
+      )
+      .toList();
   bool fail = false;
   final changes = <Map<String, dynamic>>[];
   @override

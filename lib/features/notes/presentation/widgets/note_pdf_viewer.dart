@@ -5,8 +5,10 @@ import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/presentation/note_attachment_download.dart';
 import 'package:pdfrx/pdfrx.dart';
 
-typedef NotePdfViewBuilder =
-    Widget Function(Uint8List bytes, String sourceName);
+typedef NotePdfViewBuilder = Widget Function(
+  Uint8List bytes,
+  String sourceName,
+);
 
 Future<void> showNotePdfViewer(
   BuildContext context, {

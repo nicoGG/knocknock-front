@@ -101,139 +101,253 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('note preview opens collaboration history and restores the selected content', (tester) async {
-    tester.view.physicalSize = const Size(390, 1000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
-    final repository = LocalNotesRepository();
-    final original = (await tester.runAsync(() => repository.createNote('home', const NoteDraft(
-      title: 'Título original', content: 'Texto', color: NoteColor.blue, authorName: 'Nico'))))!;
-    await tester.runAsync(() => repository.updateNote(original.id, {'title': 'Título editado'}));
-    await tester.pumpWidget(NockNockApp(repository: repository, authRepository: _FakeAuthRepository()));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Título editado'));
-    await tester.pumpAndSettle();
-    expect(tester.getTopLeft(find.byKey(const ValueKey('note-collaboration-history'))).dy,
-      greaterThan(tester.getBottomLeft(find.byKey(const ValueKey('preview-delete-action'))).dy));
-    await tester.tap(find.byKey(const ValueKey('note-collaboration-history')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('note-history-sheet')), findsOneWidget);
-    await tester.tap(find.byKey(ValueKey('note-version-${original.revision}')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(ValueKey('restore-version-${original.revision}')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('confirm-restore-version')));
-    await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 100)); });
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('note-history-sheet')), findsNothing);
-    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
-    expect(find.text('Título original'), findsWidgets);
-    expect((await tester.runAsync(() => repository.fetchNotes('home')))!.single.title, 'Título original');
-  });
+  testWidgets(
+    'note preview opens collaboration history and restores the selected content',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = LocalNotesRepository();
+      final original = (await tester.runAsync(
+        () => repository.createNote(
+          'home',
+          const NoteDraft(
+            title: 'Título original',
+            content: 'Texto',
+            color: NoteColor.blue,
+            authorName: 'Nico',
+          ),
+        ),
+      ))!;
+      await tester.runAsync(
+        () => repository.updateNote(original.id, {'title': 'Título editado'}),
+      );
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Título editado'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('note-collaboration-history')),
+            )
+            .dy,
+        greaterThan(
+          tester
+              .getBottomLeft(
+                find.byKey(const ValueKey('preview-delete-action')),
+              )
+              .dy,
+        ),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('note-collaboration-history')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-history-sheet')), findsOneWidget);
+      await tester.tap(
+        find.byKey(ValueKey('note-version-${original.revision}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(ValueKey('restore-version-${original.revision}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-restore-version')));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-history-sheet')), findsNothing);
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      expect(find.text('Título original'), findsWidgets);
+      expect(
+        (await tester.runAsync(() => repository.fetchNotes('home')))!
+            .single
+            .title,
+        'Título original',
+      );
+    },
+  );
 
-  testWidgets('long press creates a quick note in the selected list', (tester) async {
+  testWidgets('long press creates a quick note in the selected list', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final repository = LocalNotesRepository();
     await tester.runAsync(() => repository.createList('Capturas'));
-    await tester.pumpWidget(NockNockApp(repository: repository, authRepository: _FakeAuthRepository()));
+    await tester.pumpWidget(
+      NockNockApp(
+        repository: repository,
+        authRepository: _FakeAuthRepository(),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.longPress(find.text('Crear una nota'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('quick-capture-sheet')), findsOneWidget);
-    await tester.enterText(find.byKey(const ValueKey('quick-capture-text')), 'Idea rápida\nUn detalle para después');
+    await tester.enterText(
+      find.byKey(const ValueKey('quick-capture-text')),
+      'Idea rápida\nUn detalle para después',
+    );
     await tester.tap(find.byKey(const ValueKey('quick-capture-save')));
-    await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 100)); });
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('quick-capture-sheet')), findsNothing);
     expect(find.text('Idea rápida'), findsOneWidget);
   });
 
-  testWidgets('drawer trash badge refreshes after restoring and emptying deleted notes', (tester) async {
-    tester.view.physicalSize = const Size(390, 1000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final repository = LocalNotesRepository();
-    final deleted = (await tester.runAsync(() async {
-      final first = await repository.createNote('home', const NoteDraft(
-        title: 'Primera eliminada', content: '', color: NoteColor.blue, authorName: 'Nico'));
-      final second = await repository.createNote('home', const NoteDraft(
-        title: 'Segunda eliminada', content: '', color: NoteColor.pink, authorName: 'Nico'));
-      await repository.deleteNote(first.id);
-      await repository.deleteNote(second.id);
-      return first;
-    }))!;
-    await tester.pumpWidget(NockNockApp(repository: repository, authRepository: _FakeAuthRepository()));
-    await tester.pumpAndSettle();
-    Future<void> openDrawer() async {
+  testWidgets(
+    'drawer trash badge refreshes after restoring and emptying deleted notes',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = LocalNotesRepository();
+      final deleted = (await tester.runAsync(() async {
+        final first = await repository.createNote(
+          'home',
+          const NoteDraft(
+            title: 'Primera eliminada',
+            content: '',
+            color: NoteColor.blue,
+            authorName: 'Nico',
+          ),
+        );
+        final second = await repository.createNote(
+          'home',
+          const NoteDraft(
+            title: 'Segunda eliminada',
+            content: '',
+            color: NoteColor.pink,
+            authorName: 'Nico',
+          ),
+        );
+        await repository.deleteNote(first.id);
+        await repository.deleteNote(second.id);
+        return first;
+      }))!;
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Future<void> openDrawer() async {
+        await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+      }
+
+      final badge = find.byKey(const ValueKey('drawer-trash-count'));
+      await openDrawer();
+      expect(
+        find.descendant(of: badge, matching: find.text('2')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('trash-menu-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('restore-note-${deleted.id}')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await openDrawer();
+      expect(
+        find.descendant(of: badge, matching: find.text('1')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('trash-menu-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('empty-trash-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-empty-trash')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await openDrawer();
+      expect(tester.widget<Badge>(badge).isLabelVisible, isFalse);
+      expect(await repository.fetchTrash(), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'Today opens the regular preview over the source list instead of a detail page',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = LocalNotesRepository();
+      final note = (await tester.runAsync(() async {
+        final list = await repository.createList('Lista origen');
+        return repository.createNote(
+          list.id,
+          NoteDraft(
+            title: 'Nota desde Hoy',
+            content: 'Contenido de la nota',
+            color: NoteColor.blue,
+            authorName: 'Nico',
+            reminderAt: DateTime.now(),
+          ),
+        );
+      }))!;
+      await tester.pumpWidget(
+        NockNockApp(
+          repository: repository,
+          authRepository: _FakeAuthRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('today-menu-button')));
       await tester.pumpAndSettle();
-    }
-    final badge = find.byKey(const ValueKey('drawer-trash-count'));
-    await openDrawer();
-    expect(find.descendant(of: badge, matching: find.text('2')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('trash-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(ValueKey('restore-note-${deleted.id}')));
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await openDrawer();
-    expect(find.descendant(of: badge, matching: find.text('1')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('trash-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('empty-trash-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('confirm-empty-trash')));
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await openDrawer();
-    expect(tester.widget<Badge>(badge).isLabelVisible, isFalse);
-    expect(await repository.fetchTrash(), isEmpty);
-  });
-
-  testWidgets('Today opens the regular preview over the source list instead of a detail page', (tester) async {
-    tester.view.physicalSize = const Size(390, 1000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final repository = LocalNotesRepository();
-    final note = (await tester.runAsync(() async {
-      final list = await repository.createList('Lista origen');
-      return repository.createNote(list.id, NoteDraft(
-        title: 'Nota desde Hoy', content: 'Contenido de la nota',
-        color: NoteColor.blue, authorName: 'Nico', reminderAt: DateTime.now()));
-    }))!;
-    await tester.pumpWidget(NockNockApp(repository: repository, authRepository: _FakeAuthRepository()));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('today-menu-button')));
-    await tester.pumpAndSettle();
-    final todayCard = find.byKey(ValueKey('today-note-${note.id}'));
-    await tester.scrollUntilVisible(todayCard, 200, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.descendant(of: todayCard, matching: find.text('Nota desde Hoy')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('open-note-from-preview-button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
-    expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
-    expect(find.byKey(const ValueKey('open-note-from-preview-button')), findsNothing);
-    final cubit = tester.element(find.byKey(const ValueKey('appbar-menu-button'))).read<NotesCubit>();
-    expect(cubit.state.selectedListId, note.boardId);
-    await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
-    expect(find.text('Lista origen'), findsWidgets);
-    expect(find.text('Nota desde Hoy'), findsOneWidget);
-  });
+      final todayCard = find.byKey(ValueKey('today-note-${note.id}'));
+      await tester.scrollUntilVisible(
+        todayCard,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(
+        find.descendant(of: todayCard, matching: find.text('Nota desde Hoy')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('open-note-from-preview-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-detail-page')), findsNothing);
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('open-note-from-preview-button')),
+        findsNothing,
+      );
+      final cubit = tester
+          .element(find.byKey(const ValueKey('appbar-menu-button')))
+          .read<NotesCubit>();
+      expect(cubit.state.selectedListId, note.boardId);
+      await tester.tap(find.byKey(const ValueKey('close-note-preview-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('note-preview-dialog')), findsNothing);
+      expect(find.text('Lista origen'), findsWidgets);
+      expect(find.text('Nota desde Hoy'), findsOneWidget);
+    },
+  );
 
   testWidgets('notification opens the mosaic preview in its source list', (
     tester,
@@ -5890,7 +6004,12 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Trabajo'),
       100,
-      scrollable: find.descendant(of: find.byType(Drawer), matching: find.byType(Scrollable)).last,
+      scrollable: find
+          .descendant(
+            of: find.byType(Drawer),
+            matching: find.byType(Scrollable),
+          )
+          .last,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Trabajo'));
@@ -6254,6 +6373,11 @@ void main() {
     final initialPrimary = Theme.of(tester.element(find.text('Atardecer')))
         .colorScheme
         .primary;
+    await tester.drag(
+      find.byKey(const ValueKey('profile-scroll-view')),
+      const Offset(0, -240),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
     for (var page = 0; page < 3; page++) {
       await tester.drag(
         find.byKey(const ValueKey('profile-color-theme-list')),
@@ -6570,7 +6694,9 @@ void main() {
     expect(find.text('Al día'), findsOneWidget);
   });
 
-  testWidgets('keeps sync changes in the app bar without a board notice', (tester) async {
+  testWidgets('keeps sync changes in the app bar without a board notice', (
+    tester,
+  ) async {
     const user = AppUser(
       id: 'google-user',
       displayName: 'Nico Galdames',
@@ -6596,15 +6722,24 @@ void main() {
 
     expect(find.byKey(const ValueKey('offline-sync-notice')), findsNothing);
     expect(find.byKey(const ValueKey('sync-status-chip')), findsNothing);
-    expect(find.byKey(const ValueKey('connection-pending-badge')), findsOneWidget);
-    expect(find.byKey(const ValueKey('connection-conflict-badge')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('connection-pending-badge')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('connection-conflict-badge')),
+      findsNothing,
+    );
     await tester.tap(find.byKey(const ValueKey('connection-status-button')));
     await tester.pumpAndSettle();
     final openChanges = find.byKey(const ValueKey('open-sync-activity'));
     await tester.ensureVisible(openChanges);
     await tester.tap(openChanges);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('connection-status-dialog')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('connection-status-dialog')),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('sync-activity-sheet')), findsOneWidget);
     expect(find.text('1 cambio pendiente'), findsOneWidget);
     await tester.tap(find.byTooltip('Cerrar sincronización'));
@@ -6620,7 +6755,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('offline-sync-notice')), findsNothing);
-    expect(find.byKey(const ValueKey('connection-pending-badge')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('connection-pending-badge')),
+      findsNothing,
+    );
     final conflictBadge = find.byKey(
       const ValueKey('connection-conflict-badge'),
     );

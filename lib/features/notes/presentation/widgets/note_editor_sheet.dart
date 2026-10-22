@@ -702,7 +702,7 @@ class _GlassReminderButton extends StatelessWidget {
     final title = reminderAt == null
         ? 'Agregar recordatorio'
         : recurrence == null
-        ? DateFormat("EEE d MMM · HH:mm", 'es').format(reminderAt!)
+        ? DateFormat("dd-MM-yyyy · HH:mm", 'es').format(reminderAt!)
         : reminderRecurrenceLabel(recurrence!, reminderAt!, includeTime: true);
 
     return Semantics(

@@ -1,3 +1,4 @@
+import 'package:intl/intl.dart';
 import 'package:nocknock/features/finance/financial_entry.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
@@ -56,6 +57,8 @@ class NoteVersionPreview extends StatelessWidget {
                 color: foreground,
               ),
             ),
+            if (entry.paymentMethod != null)
+              Text(entry.paymentLabel, style: TextStyle(color: foreground)),
             if (entry.counterparty.isNotEmpty)
               Text(entry.counterparty, style: TextStyle(color: foreground)),
             if (entry.payments.isNotEmpty)
@@ -65,7 +68,7 @@ class NoteVersionPreview extends StatelessWidget {
               ),
             for (final payment in entry.payments)
               Text(
-                '${payment.date.day}/${payment.date.month}/${payment.date.year}: ${FinancialEntry.formatAmount(payment.amountMinor, entry.currency)}${payment.detail.isEmpty ? '' : ' · ${payment.detail}'}',
+                '${DateFormat('dd-MM-yyyy').format(payment.date)}: ${FinancialEntry.formatAmount(payment.amountMinor, entry.currency)}${payment.detail.isEmpty ? '' : ' · ${payment.detail}'}${payment.paymentMethod == null ? '' : ' · ${payment.paymentLabel}'}',
                 style: TextStyle(color: foreground),
               ),
             if (entry.participants.isNotEmpty)

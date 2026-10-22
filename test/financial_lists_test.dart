@@ -248,14 +248,18 @@ void main() {
       );
       var note = (await repository.fetchNotes(list.id)).single;
       expect(note.financialEntry?.amountMinor, 15000);
+      await tester.ensureVisible(
+        find.byKey(ValueKey('financial-entry-${note.id}')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('financial-entry-${note.id}')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('financial-status')),
+      final paidChoice = find.descendant(
+        of: find.byKey(const ValueKey('financial-status-options')),
+        matching: find.widgetWithText(FinancialLiquidFilter, 'Pagado'),
       );
-      await tester.tap(find.byKey(const ValueKey('financial-status')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Pagado').last);
+      await tester.ensureVisible(paidChoice);
+      await tester.tap(paidChoice);
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('financial-save')));
       await tester.tap(find.byKey(const ValueKey('financial-save')));

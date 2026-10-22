@@ -48,9 +48,16 @@ object WidgetStore {
         val state = read(context)
         val snapshot = state.optJSONObject("snapshot") ?: return
         if (snapshot.optString("owner") != owner || snapshot.optBoolean("hidden")) return
-        val rows = snapshot.optJSONArray("rows") ?: return
+        val rows = JSONArray()
+        val defaultRows = snapshot.optJSONArray("rows") ?: JSONArray()
+        for (i in 0 until defaultRows.length()) rows.put(defaultRows.getJSONObject(i))
+        val catalog = snapshot.optJSONArray("catalog") ?: JSONArray()
+        for (i in 0 until catalog.length()) {
+            val items = catalog.optJSONObject(i)?.optJSONArray("rows") ?: continue
+            for (j in 0 until items.length()) rows.put(items.getJSONObject(j))
+        }
         val queue = state.optJSONArray("queue") ?: JSONArray()
-        for (i in 0 until queue.length()) if (queue.optJSONObject(i)?.optString("id") == id) return
+        for (i in 0 until queue.length()) if (queue.optJSONObject(i)?.optString("id") == id && !queue.optJSONObject(i)!!.has("subtaskId")) return
         for (i in 0 until rows.length()) {
             val row = rows.optJSONObject(i) ?: continue
             if (row.optString("id") == id && row.optBoolean("canComplete")) {
@@ -64,6 +71,25 @@ object WidgetStore {
                 return
             }
         }
+    }
+    @Synchronized fun configure(context: Context, widgetId: Int, board: String, note: String = "") {
+        val state = read(context)
+        val configs = state.optJSONObject("configs") ?: JSONObject()
+        configs.put(widgetId.toString(), JSONObject().put("board", board).put("note", note)
+            .put("owner", state.optJSONObject("snapshot")?.optString("owner")))
+        state.put("configs", configs)
+        write(context, state)
+        refresh(context)
+    }
+    @Synchronized fun enqueue(context: Context, action: JSONObject) {
+        val state = read(context)
+        val snapshot = state.optJSONObject("snapshot") ?: return
+        if (snapshot.optBoolean("hidden") || snapshot.optString("owner") != action.optString("owner")) return
+        val queue = state.optJSONArray("queue") ?: JSONArray()
+        queue.put(action.put("mutationId", UUID.randomUUID().toString()).put("completedAt", System.currentTimeMillis()))
+        state.put("queue", queue)
+        write(context, state)
+        refresh(context)
     }
     fun refresh(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
@@ -84,6 +110,10 @@ open class NockNockWidget : AppWidgetProvider() {
     }
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
+        if (intent.action == "cl.nocknock.WIDGET_SUBTASK") {
+            val row = JSONObject(intent.getStringExtra("row") ?: return)
+            WidgetStore.enqueue(context, row)
+        }
         if (intent.action == "cl.nocknock.WIDGET_COMPLETE") {
             WidgetStore.complete(context, intent.getStringExtra("noteId") ?: return,
                 intent.getStringExtra("owner") ?: return)
@@ -103,43 +133,97 @@ open class NockNockWidget : AppWidgetProvider() {
         }
         fun render(context: Context, manager: AppWidgetManager, id: Int, captureOnly: Boolean) {
             val state = WidgetStore.read(context)
-            val snapshot = state.optJSONObject("snapshot") ?: JSONObject()
+            val base = state.optJSONObject("snapshot") ?: JSONObject()
+            val config = state.optJSONObject("configs")?.optJSONObject(id.toString())
+            val catalog = base.optJSONArray("catalog") ?: JSONArray()
+            var selected: JSONObject? = null
+            if (config?.optString("owner") == base.optString("owner") && !base.optBoolean("hidden")) {
+                for (i in 0 until catalog.length()) {
+                    val candidate = catalog.optJSONObject(i) ?: continue
+                    if (candidate.optString("listId") == config.optString("board")) selected = candidate
+                }
+            }
+            val snapshot = if (config == null) base else JSONObject(base.toString()).apply {
+                put("rows", selected?.optJSONArray("rows") ?: JSONArray())
+                put("title", selected?.optString("title") ?: "Lista no disponible")
+                put("listId", selected?.optString("listId") ?: "")
+                put("captureListId", selected?.optString("listId") ?: "")
+            }
+            val noteFilter = config?.optString("note") ?: ""
+            if (selected != null) {
+                val flat = JSONArray()
+                val source = selected.optJSONArray("rows") ?: JSONArray()
+                for (i in 0 until source.length()) {
+                    val row = source.optJSONObject(i) ?: continue
+                    if (noteFilter.isNotEmpty() && row.optString("id") != noteFilter) continue
+                    flat.put(row)
+                    val checklist = row.optJSONArray("checklist") ?: JSONArray()
+                    for (j in 0 until checklist.length()) {
+                        val sub = checklist.optJSONObject(j) ?: continue
+                        flat.put(JSONObject(row.toString()).put("subtaskId", sub.optString("id"))
+                            .put("title", "  " + sub.optString("text"))
+                            .put("completed", sub.optBoolean("isCompleted")).put("canComplete", !sub.optBoolean("isCompleted")))
+                    }
+                }
+                snapshot.put("rows", flat).put("total", flat.length())
+            }
             val owner = snapshot.optString("owner", "guest")
             val hidden = snapshot.optBoolean("hidden", false)
             val queued = state.optJSONArray("queue") ?: JSONArray()
-            val queuedIds = (0 until queued.length()).mapNotNull { queued.optJSONObject(it)?.optString("id") }.toSet()
+            val queuedIds = (0 until queued.length()).mapNotNull { queued.optJSONObject(it)?.let { row -> row.optString("id") + ":" + row.optString("subtaskId") } }.toSet()
             val rows = snapshot.optJSONArray("rows") ?: JSONArray()
-            val visibleQueuedCount = (0 until rows.length()).count { queuedIds.contains(rows.optJSONObject(it)?.optString("id")) }
+            val visibleQueuedCount = (0 until rows.length()).count { queuedIds.contains(rows.optJSONObject(it)?.let { row -> row.optString("id") + ":" + row.optString("subtaskId") }) }
             val views = RemoteViews(context.packageName, if (captureOnly) R.layout.widget_capture else R.layout.widget_pending)
             views.setOnClickPendingIntent(R.id.widget_capture, launch(context, "capture", owner, snapshot.optString("captureListId", "").let { if (it == "null") "" else it }))
             if (!captureOnly) {
+                val configure = Intent(context, WidgetConfigurationActivity::class.java)
+                    .setData(Uri.parse("nocknock://configure/$id"))
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                views.setOnClickPendingIntent(R.id.widget_configure, PendingIntent.getActivity(context, id, configure, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                if (selected?.optBoolean("expenses") == true && !hidden) {
+                    val expense = Intent(context, WidgetExpenseActivity::class.java)
+                        .setData(Uri.parse("nocknock://expense/$id"))
+                        .putExtra("boardId", selected.optString("listId")).putExtra("owner", owner)
+                    views.setTextViewText(R.id.widget_capture, "＋ Agregar gasto")
+                    views.setOnClickPendingIntent(R.id.widget_capture, PendingIntent.getActivity(context, id, expense, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                }
                 views.setTextViewText(R.id.widget_title, snapshot.optString("title", "Hoy"))
                 views.setOnClickPendingIntent(R.id.widget_title, launch(context, "today", owner, snapshot.optString("listId", "").let { if (it == "null") "" else it }))
                 views.setTextViewText(R.id.widget_count, if (hidden) "Contenido oculto" else "${(snapshot.optInt("total") - visibleQueuedCount).coerceAtLeast(0)} pendientes")
+                if (selected?.optBoolean("financial") == true && !hidden) {
+                    views.setTextViewText(R.id.widget_count, "Total · " + selected.optString("summary").ifEmpty { "Sin movimientos" })
+                }
                 views.removeAllViews(R.id.widget_rows)
                 var shown = 0
                 val height = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 310)
-                val rowLimit = ((height - 140) / 44).coerceIn(1, 5)
+                val rowLimit = if (config != null) Int.MAX_VALUE else ((height - 140) / 44).coerceIn(1, 5)
                 if (!hidden) for (i in 0 until rows.length()) {
                     val row = rows.optJSONObject(i) ?: continue
                     val noteId = row.optString("id")
-                    if (queuedIds.contains(noteId)) continue
+                    val subtask = row.optString("subtaskId")
+                    val completed = row.optBoolean("completed") || queuedIds.contains("$noteId:$subtask")
+                    if (config == null && completed) continue
                     if (shown >= rowLimit) break
                     val item = RemoteViews(context.packageName, R.layout.widget_note_row)
                     item.setTextViewText(R.id.widget_note_title, row.optString("title"))
                     item.setContentDescription(R.id.widget_check, if (row.optBoolean("canComplete")) "Completar ${row.optString("title")}" else "Abrir recordatorio recurrente ${row.optString("title")}")
                     val open = launch(context, "note", owner, row.optString("boardId"), noteId)
                     item.setOnClickPendingIntent(R.id.widget_note_title, open)
-                    if (row.optBoolean("canComplete")) {
+                    if (row.optBoolean("canComplete") && !completed) {
                         val complete = Intent(context, NockNockWidget::class.java)
                             .setAction("cl.nocknock.WIDGET_COMPLETE")
                             .setData(Uri.parse("nocknock://complete/${Uri.encode(owner)}/${Uri.encode(noteId)}"))
                             .putExtra("owner", owner).putExtra("noteId", noteId)
+                        if (subtask.isNotEmpty()) {
+                            complete.setAction("cl.nocknock.WIDGET_SUBTASK")
+                                .setData(Uri.parse("nocknock://subtask/${Uri.encode(owner)}/${Uri.encode(noteId)}/${Uri.encode(subtask)}"))
+                                .putExtra("row", JSONObject(row.toString()).put("owner", owner).toString())
+                        }
                         item.setTextViewText(R.id.widget_check, "○")
                         item.setOnClickPendingIntent(R.id.widget_check, PendingIntent.getBroadcast(context,
                             complete.data.toString().hashCode(), complete, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                     } else {
-                        item.setTextViewText(R.id.widget_check, "↻")
+                        item.setTextViewText(R.id.widget_check, if (completed) "✓" else "↗")
                         item.setOnClickPendingIntent(R.id.widget_check, open)
                     }
                     views.addView(R.id.widget_rows, item)

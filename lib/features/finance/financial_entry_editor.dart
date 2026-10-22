@@ -1,3 +1,7 @@
+import 'package:nocknock/features/finance/payment_method_field.dart';
+import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
+import 'package:nocknock/features/finance/financial_amount_input.dart';
+import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:nocknock/features/notes/presentation/widgets/reminder_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -61,10 +65,14 @@ class FinancialEntryEditor extends StatefulWidget {
 
 class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   final _form = GlobalKey<FormState>();
+  late String? _method = _existing?.paymentMethod;
+  late final _installments = TextEditingController(
+    text: _existing?.installments?.toString() ?? '',
+  );
   late final _existing = widget.note?.financialEntry;
   late final _title = TextEditingController(text: widget.note?.title ?? '');
   late final _amount = TextEditingController(
-    text: _existing?.editableAmount ?? '',
+    text: financialAmountInput(_existing?.editableAmount ?? '', _currency),
   );
   late final _party = TextEditingController(
     text: _existing?.counterparty ?? '',
@@ -108,6 +116,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   void dispose() {
     _title.dispose();
     _amount.dispose();
+    _installments.dispose();
     _party.dispose();
     _detail.dispose();
     _participants.dispose();
@@ -118,7 +127,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
-    final amount = FinancialEntry.parseAmount(_amount.text, _currency)!;
+    final amount = parseFinancialAmountInput(_amount.text, _currency)!;
     if (_paid > amount ||
         (_payments.isNotEmpty && _status == 'paid' && _paid != amount)) {
       setState(
@@ -131,7 +140,11 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
       _error = null;
     });
     final entry = FinancialEntry(
-      amountMinor: FinancialEntry.parseAmount(_amount.text, _currency)!,
+      paymentMethod: _method,
+      installments: _method == 'credit'
+          ? int.tryParse(_installments.text)
+          : null,
+      amountMinor: parseFinancialAmountInput(_amount.text, _currency)!,
       currency: _currency,
       counterparty: _party.text.trim(),
       date: _date,
@@ -200,23 +213,30 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
     if (picked != null && mounted) setState(() => update(picked));
   }
 
-  Future<void> _addPayment() async {
-    final total = FinancialEntry.parseAmount(_amount.text, _currency);
-    if (total == null || total <= _paid) {
+  Future<void> _addPayment({FinancialPayment? existing}) async {
+    final total = parseFinancialAmountInput(_amount.text, _currency);
+    if (total == null || (existing == null && total <= _paid)) {
       setState(() => _error = 'Ingresa un monto válido con saldo pendiente.');
       return;
     }
-    final payment = await showDialog<FinancialPayment>(
+    final result = await showDialog<(FinancialPayment, List<NoteAttachment>)>(
       context: context,
       builder: (_) => _PaymentDialog(
         currency: _currency,
-        balance: total - _paid,
+        balance: total - _paid + (existing?.amountMinor ?? 0),
+        existing: existing,
         attachments: _attachments,
       ),
     );
-    if (payment != null && mounted) {
+    if (result != null && mounted) {
       setState(() {
-        _payments.add(payment);
+        if (existing == null) {
+          _payments.add(result.$1);
+        } else {
+          final index = _payments.indexWhere((p) => p.id == existing.id);
+          if (index >= 0) _payments[index] = result.$1;
+        }
+        _attachments.addAll(result.$2);
         _status = _paid == total ? 'paid' : 'pending';
         _error = null;
       });
@@ -322,510 +342,755 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   @override
   Widget build(BuildContext context) {
     final config = widget.list.configuration;
-    return PopScope(
-      canPop: !_saving,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          12,
-          24,
-          24 + MediaQuery.viewInsetsOf(context).bottom,
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final radius = BorderRadius.circular(22);
+    return Theme(
+      data: theme.copyWith(
+        inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+          filled: true,
+          fillColor: colors.surfaceContainerHigh.withValues(alpha: .38),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 18,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: colors.outline.withValues(alpha: .20),
+            ),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: colors.outline.withValues(alpha: .20),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: colors.primary.withValues(alpha: .7),
+              width: 1.5,
+            ),
+          ),
         ),
-        child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          child: Form(
-            key: _form,
-            child: Column(
-              key: const ValueKey('financial-entry-editor'),
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
+        listTileTheme: theme.listTileTheme.copyWith(
+          iconColor: colors.primary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          titleTextStyle: theme.textTheme.bodyLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+          subtitleTextStyle: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+          ),
+        ),
+      ),
+      child: PopScope(
+        canPop: !_saving,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            12,
+            24,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: ScrollEdgeFade(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Form(
+                key: _form,
+                child: Column(
+                  key: const ValueKey('financial-entry-editor'),
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    FinancialIconBadge(
-                      icon: FinancialStyle.typeIcon(config.type),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        widget.note == null
-                            ? config.entryLabel
-                            : 'Editar registro',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      onPressed: _saving ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                Text(
-                  '${config.label} · ${widget.list.name}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 20),
-                TextFormField(
-                  key: const ValueKey('financial-title'),
-                  controller: _title,
-                  enabled: !_saving,
-                  autofocus: widget.note == null,
-                  maxLength: 80,
-                  decoration: const InputDecoration(
-                    labelText: 'Concepto',
-                    prefixIcon: Icon(Icons.description_outlined),
-                    hintText: 'Ej. Materiales, reparación o préstamo',
-                  ),
-                  validator: (value) => value?.trim().isEmpty != false
-                      ? 'Escribe un concepto'
-                      : null,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  key: const ValueKey('financial-amount'),
-                  controller: _amount,
-                  onChanged: (_) => setState(() {}),
-                  enabled: !_saving,
-                  keyboardType: TextInputType.numberWithOptions(
-                    decimal: _currency != 'CLP',
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'Monto ($_currency)',
-                    prefixIcon: Icon(FinancialStyle.currencyIcon(_currency)),
-                    hintText: _currency == 'CLP' ? '15000' : '15000,50',
-                    helperText: _currency == 'CLP'
-                        ? 'Pesos enteros, sin puntos ni comas.'
-                        : 'Usa coma o punto para los decimales, sin separadores de miles.',
-                  ),
-                  validator: (value) =>
-                      FinancialEntry.parseAmount(value ?? '', _currency) == null
-                      ? 'Ingresa un monto mayor que cero y válido para $_currency'
-                      : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  key: const ValueKey('financial-counterparty'),
-                  controller: _party,
-                  enabled: !_saving,
-                  maxLength: 120,
-                  decoration: InputDecoration(
-                    labelText: config.counterpartyLabel,
-                    prefixIcon: const Icon(Icons.person_outline_rounded),
-                  ),
-                  validator: (value) =>
-                      config.type.name == 'receivables' &&
-                          value?.trim().isEmpty != false
-                      ? 'Indica quién debe este monto'
-                      : null,
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  key: const ValueKey('financial-status'),
-                  initialValue: _status,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Estado',
-                    prefixIcon: Icon(Icons.flag_outlined),
-                  ),
-                  items: config.statuses
-                      .map(
-                        (status) => DropdownMenuItem(
-                          value: status,
-                          child: FinancialOptionLabel(
-                            icon: FinancialStyle.statusIcon(status),
-                            label: config.statusLabel(status),
+                    Row(
+                      children: [
+                        FinancialIconBadge(
+                          icon: FinancialStyle.typeIcon(config.type),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            widget.note == null
+                                ? config.entryLabel
+                                : 'Editar registro',
+                            style: Theme.of(context).textTheme.titleLarge,
                           ),
                         ),
-                      )
-                      .toList(),
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _status = value!),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.calendar_today_outlined),
-                  title: Text('Fecha del registro'),
-                  subtitle: Text(DateFormat('dd/MM/yyyy').format(_date)),
-                  trailing: const Icon(Icons.edit_calendar_outlined),
-                  onTap: _saving
-                      ? null
-                      : () async {
-                          final date = await showDatePicker(
-                            context: context,
-                            initialDate: _date,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100, 12, 31),
-                          );
-                          if (date != null && mounted) {
-                            setState(() => _date = date);
-                          }
-                        },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.event_busy_outlined),
-                  title: const Text('Vencimiento'),
-                  subtitle: Text(
-                    _due == null
-                        ? 'Sin vencimiento'
-                        : DateFormat('dd/MM/yyyy').format(_due!),
-                  ),
-                  onTap: _saving
-                      ? null
-                      : () => _pickDate(
-                          'Vencimiento',
-                          _due,
-                          (date) => _due = date,
-                        ),
-                  trailing: _due == null
-                      ? const Icon(Icons.add)
-                      : IconButton(
-                          tooltip: 'Quitar vencimiento',
-                          icon: const Icon(Icons.close),
+                        IconButton(
+                          tooltip: 'Cerrar',
                           onPressed: _saving
                               ? null
-                              : () => setState(() {
-                                  _due = null;
-                                  _reminder = null;
-                                  _recurrence = null;
-                                }),
-                        ),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.notifications_active_outlined),
-                  title: const Text('Alerta de pago o cobro'),
-                  subtitle: Text(
-                    _isClosed
-                        ? 'Sin alertas: el registro está cerrado'
-                        : _reminder == null
-                        ? 'Agregar recordatorio'
-                        : DateFormat('dd/MM/yyyy HH:mm').format(_reminder!),
-                  ),
-                  onTap: _saving || _isClosed
-                      ? null
-                      : () async {
-                          final choice = await showReminderSchedulePicker(
-                            context,
-                            currentReminder: _reminder,
-                          );
-                          if (choice != null && mounted) {
-                            setState(() {
-                              _reminder = choice.reminderAt;
-                              _recurrence = choice.recurrence;
-                            });
-                          }
-                        },
-                  trailing: _isClosed
-                      ? null
-                      : _reminder == null
-                      ? const Icon(Icons.add)
-                      : IconButton(
-                          tooltip: 'Quitar alerta',
+                              : () => Navigator.pop(context),
                           icon: const Icon(Icons.close),
-                          onPressed: _saving
-                              ? null
-                              : () => setState(() {
-                                  _reminder = null;
-                                  _recurrence = null;
-                                }),
                         ),
-                ),
-                if (!_isClosed &&
-                    _due != null &&
-                    _reminder == null &&
-                    DateTime(
-                      _due!.year,
-                      _due!.month,
-                      _due!.day - 1,
-                      9,
-                    ).isAfter(DateTime.now()))
-                  TextButton.icon(
-                    onPressed: _saving
-                        ? null
-                        : () => setState(() {
-                            _reminder = DateTime(
-                              _due!.year,
-                              _due!.month,
-                              _due!.day - 1,
-                              9,
-                            );
-                            _recurrence = null;
-                          }),
-                    icon: const Icon(Icons.alarm_add),
-                    label: const Text('Avisarme un día antes a las 09:00'),
-                  ),
-                if (config.type.name == 'quotations') ...[
-                  TextFormField(
-                    controller: _delivery,
-                    enabled: !_saving,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Plazo de entrega (días)',
-                      prefixIcon: Icon(Icons.local_shipping_outlined),
+                      ],
                     ),
-                    validator: (v) =>
-                        v == null ||
-                            v.isEmpty ||
-                            (int.tryParse(v) != null &&
-                                int.parse(v) >= 0 &&
-                                int.parse(v) <= 3650)
-                        ? null
-                        : 'Ingresa de 0 a 3650 días',
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.event_available_outlined),
-                    title: const Text('Cotización válida hasta'),
-                    subtitle: Text(
-                      _validUntil == null
-                          ? 'Sin fecha límite'
-                          : DateFormat('dd/MM/yyyy').format(_validUntil!),
+                    Text(
+                      '${config.label} · ${widget.list.name}',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    onTap: _saving
-                        ? null
-                        : () => _pickDate(
-                            'Validez de la cotización',
-                            _validUntil,
-                            (date) => _validUntil = date,
-                          ),
-                    trailing: _validUntil == null
-                        ? null
-                        : IconButton(
-                            tooltip: 'Quitar validez',
-                            icon: const Icon(Icons.close),
-                            onPressed: _saving
-                                ? null
-                                : () => setState(() => _validUntil = null),
-                          ),
-                  ),
-                ] else if (_existing?.isSettlement != true) ...[
-                  const Divider(),
-                  Text(
-                    'Abonos e historial de pagos',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  Text(
-                    'Abonado: ${FinancialEntry.formatAmount(_paid, _currency)}',
-                  ),
-                  for (final payment in _payments)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.payments_outlined),
-                      title: Text(
-                        FinancialEntry.formatAmount(
-                          payment.amountMinor,
-                          _currency,
-                        ),
-                      ),
-                      subtitle: Text(
-                        [
-                          DateFormat('dd/MM/yyyy').format(payment.date),
-                          if (payment.detail.isNotEmpty) payment.detail,
-                          if (payment.receiptId != null) 'Comprobante asociado',
-                        ].join(' · '),
-                      ),
-                      onTap: payment.receiptId == null
-                          ? null
-                          : () async {
-                              final receipt = _attachments
-                                  .where((a) => a.id == payment.receiptId)
-                                  .firstOrNull;
-                              if (receipt != null) await _view(receipt);
-                            },
-                      trailing: IconButton(
-                        tooltip: 'Quitar abono (se guardará en el historial)',
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: _saving
-                            ? null
-                            : () => setState(() {
-                                _payments.remove(payment);
-                                _status = 'pending';
-                              }),
-                      ),
-                    ),
-                  OutlinedButton.icon(
-                    key: const ValueKey('financial-add-payment'),
-                    onPressed:
-                        _saving ||
-                            _payments.length >= 50 ||
-                            (FinancialEntry.parseAmount(
-                                      _amount.text,
-                                      _currency,
-                                    ) ??
-                                    0) <=
-                                _paid
-                        ? null
-                        : _addPayment,
-                    icon: const Icon(Icons.add_card),
-                    label: const Text('Registrar abono'),
-                  ),
-                  if (config.type.name != 'receivables')
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Dividir gasto entre personas'),
-                      subtitle: const Text(
-                        'Reparto en partes iguales, con ajuste exacto de centavos.',
-                      ),
-                      value: _shared,
-                      onChanged: _saving
-                          ? null
-                          : (v) => setState(() => _shared = v),
-                    ),
-                  if (_shared) ...[
+                    const SizedBox(height: 20),
                     TextFormField(
-                      key: const ValueKey('financial-participants'),
-                      controller: _participants,
+                      key: const ValueKey('financial-title'),
+                      controller: _title,
+                      textCapitalization: TextCapitalization.sentences,
                       enabled: !_saving,
+                      autofocus: widget.note == null,
+                      maxLength: 80,
                       decoration: const InputDecoration(
-                        labelText: 'Participantes separados por coma',
-                        hintText: 'Ana, Pedro, María',
+                        labelText: 'Concepto',
+                        prefixIcon: Icon(Icons.description_outlined),
+                        hintText: 'Ej. Materiales, reparación o préstamo',
                       ),
-                      onChanged: (_) => setState(() {}),
-                      validator: (_) =>
-                          _people.length < 2 ||
-                              _people.length > 30 ||
-                              _people.toSet().length != _people.length ||
-                              _people.any((p) => p.length > 120) ||
-                              (FinancialEntry.parseAmount(
-                                        _amount.text,
-                                        _currency,
-                                      ) ??
-                                      0) <
-                                  _people.length
-                          ? 'Indica de 2 a 30 nombres distintos y un monto suficiente para repartir'
+                      validator: (value) => value?.trim().isEmpty != false
+                          ? 'Escribe un concepto'
                           : null,
                     ),
-                    Wrap(
-                      spacing: 6,
-                      children: widget.list.collaborators
-                          .map(
-                            (p) => ActionChip(
-                              label: Text(p.displayName),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      key: const ValueKey('financial-amount'),
+                      controller: _amount,
+                      inputFormatters: _currency == 'CLP'
+                          ? [ClpThousandsInputFormatter()]
+                          : null,
+                      onChanged: (_) => setState(() {}),
+                      enabled: !_saving,
+                      keyboardType: TextInputType.numberWithOptions(
+                        decimal: _currency != 'CLP',
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Monto ($_currency)',
+                        prefixText: _currency == 'EUR' ? '€ ' : r'$ ',
+                        prefixIcon: Icon(
+                          FinancialStyle.currencyIcon(_currency),
+                        ),
+                        hintText: _currency == 'CLP' ? '15.000' : '15000,50',
+                        helperText: _currency == 'CLP'
+                            ? 'Pesos enteros; los miles se separan automáticamente.'
+                            : 'Usa coma o punto para los decimales, sin separadores de miles.',
+                      ),
+                      validator: (value) =>
+                          parseFinancialAmountInput(value ?? '', _currency) ==
+                              null
+                          ? 'Ingresa un monto mayor que cero y válido para $_currency'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                    FinancialPaymentMethodField(
+                      method: _method,
+                      installments: _installments,
+                      enabled: !_saving,
+                      onChanged: (v) => setState(() {
+                        _method = v;
+                        if (v != 'credit') _installments.clear();
+                      }),
+                    ),
+                    TextFormField(
+                      key: const ValueKey('financial-counterparty'),
+                      controller: _party,
+                      textCapitalization: TextCapitalization.sentences,
+                      enabled: !_saving,
+                      maxLength: 120,
+                      decoration: InputDecoration(
+                        labelText: config.counterpartyLabel,
+                        prefixIcon: const Icon(Icons.person_outline_rounded),
+                      ),
+                      validator: (value) =>
+                          config.type.name == 'receivables' &&
+                              value?.trim().isEmpty != false
+                          ? 'Indica quién debe este monto'
+                          : null,
+                    ),
+                    const SizedBox(height: 8),
+                    if (config.statuses.length == 2)
+                      Column(
+                        key: const ValueKey('financial-status-options'),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Estado',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: config.statuses
+                                .map(
+                                  (status) => FinancialLiquidFilter(
+                                    icon: FinancialStyle.statusIcon(status),
+                                    label: config.statusLabel(status),
+                                    selected: _status == status,
+                                    onPressed: _saving
+                                        ? null
+                                        : () =>
+                                              setState(() => _status = status),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ],
+                      )
+                    else
+                      LiquidDropdownFormField<String>(
+                        key: const ValueKey('financial-status'),
+                        initialValue: _status,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Estado',
+                          prefixIcon: Icon(Icons.flag_outlined),
+                        ),
+                        items: config.statuses
+                            .map(
+                              (status) => DropdownMenuItem(
+                                value: status,
+                                child: FinancialOptionLabel(
+                                  icon: FinancialStyle.statusIcon(status),
+                                  label: config.statusLabel(status),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (value) => setState(() => _status = value!),
+                      ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.calendar_today_outlined),
+                      title: Text('Fecha del registro'),
+                      subtitle: Text(DateFormat('dd-MM-yyyy').format(_date)),
+                      trailing: const Icon(Icons.edit_calendar_outlined),
+                      onTap: _saving
+                          ? null
+                          : () async {
+                              final date = await showDatePicker(
+                                context: context,
+                                initialDate: _date,
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime(2100, 12, 31),
+                              );
+                              if (date != null && mounted) {
+                                setState(() => _date = date);
+                              }
+                            },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.event_busy_outlined),
+                      title: const Text('Vencimiento'),
+                      subtitle: Text(
+                        _due == null
+                            ? 'Sin vencimiento'
+                            : DateFormat('dd-MM-yyyy').format(_due!),
+                      ),
+                      onTap: _saving
+                          ? null
+                          : () => _pickDate(
+                              'Vencimiento',
+                              _due,
+                              (date) => _due = date,
+                            ),
+                      trailing: _due == null
+                          ? const Icon(Icons.add)
+                          : IconButton(
+                              tooltip: 'Quitar vencimiento',
+                              icon: const Icon(Icons.close),
                               onPressed: _saving
                                   ? null
                                   : () => setState(() {
-                                      if (!_people.contains(p.displayName)) {
-                                        _participants.text = [
-                                          ..._people,
-                                          p.displayName,
-                                        ].join(', ');
-                                      }
+                                      _due = null;
+                                      _reminder = null;
+                                      _recurrence = null;
                                     }),
                             ),
-                          )
-                          .toList(),
                     ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.notifications_active_outlined),
+                      title: const Text('Alerta de pago o cobro'),
+                      subtitle: Text(
+                        _isClosed
+                            ? 'Sin alertas: el registro está cerrado'
+                            : _reminder == null
+                            ? 'Agregar recordatorio'
+                            : DateFormat('dd/MM/yyyy HH:mm').format(_reminder!),
+                      ),
+                      onTap: _saving || _isClosed
+                          ? null
+                          : () async {
+                              final choice = await showReminderSchedulePicker(
+                                context,
+                                currentReminder: _reminder,
+                              );
+                              if (choice != null && mounted) {
+                                setState(() {
+                                  _reminder = choice.reminderAt;
+                                  _recurrence = choice.recurrence;
+                                });
+                              }
+                            },
+                      trailing: _isClosed
+                          ? null
+                          : _reminder == null
+                          ? const Icon(Icons.add)
+                          : IconButton(
+                              tooltip: 'Quitar alerta',
+                              icon: const Icon(Icons.close),
+                              onPressed: _saving
+                                  ? null
+                                  : () => setState(() {
+                                      _reminder = null;
+                                      _recurrence = null;
+                                    }),
+                            ),
+                    ),
+                    if (!_isClosed &&
+                        _due != null &&
+                        _reminder == null &&
+                        DateTime(
+                          _due!.year,
+                          _due!.month,
+                          _due!.day - 1,
+                          9,
+                        ).isAfter(DateTime.now()))
+                      TextButton.icon(
+                        onPressed: _saving
+                            ? null
+                            : () => setState(() {
+                                _reminder = DateTime(
+                                  _due!.year,
+                                  _due!.month,
+                                  _due!.day - 1,
+                                  9,
+                                );
+                                _recurrence = null;
+                              }),
+                        icon: const Icon(Icons.alarm_add),
+                        label: const Text('Avisarme un día antes a las 09:00'),
+                      ),
+                    if (config.type.name == 'quotations') ...[
+                      TextFormField(
+                        controller: _delivery,
+                        enabled: !_saving,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Plazo de entrega (días)',
+                          prefixIcon: Icon(Icons.local_shipping_outlined),
+                        ),
+                        validator: (v) =>
+                            v == null ||
+                                v.isEmpty ||
+                                (int.tryParse(v) != null &&
+                                    int.parse(v) >= 0 &&
+                                    int.parse(v) <= 3650)
+                            ? null
+                            : 'Ingresa de 0 a 3650 días',
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.event_available_outlined),
+                        title: const Text('Cotización válida hasta'),
+                        subtitle: Text(
+                          _validUntil == null
+                              ? 'Sin fecha límite'
+                              : DateFormat('dd-MM-yyyy').format(_validUntil!),
+                        ),
+                        onTap: _saving
+                            ? null
+                            : () => _pickDate(
+                                'Validez de la cotización',
+                                _validUntil,
+                                (date) => _validUntil = date,
+                              ),
+                        trailing: _validUntil == null
+                            ? null
+                            : IconButton(
+                                tooltip: 'Quitar validez',
+                                icon: const Icon(Icons.close),
+                                onPressed: _saving
+                                    ? null
+                                    : () => setState(() => _validUntil = null),
+                              ),
+                      ),
+                    ] else if (_existing?.isSettlement != true) ...[
+                      const Divider(),
+                      Text(
+                        'Abonos e historial de pagos',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        'Abonado: ${FinancialEntry.formatAmount(_paid, _currency)}',
+                      ),
+                      for (final payment in _payments)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.payments_outlined),
+                          title: Text(
+                            FinancialEntry.formatAmount(
+                              payment.amountMinor,
+                              _currency,
+                            ),
+                          ),
+                          subtitle: Text(
+                            [
+                              DateFormat('dd-MM-yyyy').format(payment.date),
+                              if (payment.detail.isNotEmpty) payment.detail,
+                              if (payment.paymentMethod != null)
+                                payment.paymentLabel,
+                              if (payment.receiptId != null)
+                                'Comprobante asociado',
+                            ].join(' · '),
+                          ),
+                          onTap: _saving
+                              ? null
+                              : () => _addPayment(existing: payment),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (payment.receiptId != null)
+                                IconButton(
+                                  tooltip: 'Ver comprobante del abono',
+                                  icon: const Icon(Icons.receipt_long_rounded),
+                                  onPressed: () async {
+                                    final receipt = _attachments
+                                        .where((a) => a.id == payment.receiptId)
+                                        .firstOrNull;
+                                    if (receipt != null) await _view(receipt);
+                                  },
+                                ),
+                              IconButton(
+                                tooltip: 'Quitar abono (se guardará en el historial)',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: _saving
+                                    ? null
+                                    : () => setState(() {
+                                        _payments.remove(payment);
+                                        _status = 'pending';
+                                      }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('financial-add-payment'),
+                        onPressed:
+                            _saving ||
+                                _payments.length >= 50 ||
+                                (parseFinancialAmountInput(
+                                          _amount.text,
+                                          _currency,
+                                        ) ??
+                                        0) <=
+                                    _paid
+                            ? null
+                            : _addPayment,
+                        icon: const Icon(Icons.add_card),
+                        label: const Text('Registrar abono'),
+                      ),
+                      if (config.type.name != 'receivables')
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Dividir gasto entre personas'),
+                          subtitle: const Text(
+                            'Reparto en partes iguales, con ajuste exacto de centavos.',
+                          ),
+                          value: _shared,
+                          onChanged: _saving
+                              ? null
+                              : (v) => setState(() => _shared = v),
+                        ),
+                      if (_shared) ...[
+                        FormField<List<String>>(
+                          key: const ValueKey('financial-participants'),
+                          validator: (_) =>
+                              _people.length < 2 ||
+                                  _people.length > 30 ||
+                                  _people.toSet().length != _people.length ||
+                                  _people.any((p) => p.length > 120) ||
+                                  (parseFinancialAmountInput(
+                                            _amount.text,
+                                            _currency,
+                                          ) ??
+                                          0) <
+                                      _people.length
+                              ? 'Selecciona de 2 a 30 personas y un monto suficiente para repartir'
+                              : null,
+                          builder: (field) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'Participantes · ${_people.length} seleccionados',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              const SizedBox(height: 8),
+                              for (final person in widget.list.collaborators)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: FinancialParticipantOption(
+                                    name: person.displayName,
+                                    photoUrl: person.photoUrl,
+                                    selected: _people.contains(
+                                      person.displayName,
+                                    ),
+                                    onPressed: _saving
+                                        ? null
+                                        : () {
+                                            setState(() {
+                                              final names = List<String>.of(
+                                                _people,
+                                              );
+                                              if (names.contains(
+                                                person.displayName,
+                                              )) {
+                                                names.remove(
+                                                  person.displayName,
+                                                );
+                                              } else if (names.length < 30) {
+                                                names.add(person.displayName);
+                                              }
+                                              _participants.text = names.join(
+                                                ', ',
+                                              );
+                                              if (!names.contains(
+                                                _payer.text.trim(),
+                                              )) {
+                                                _payer.text = names.isEmpty
+                                                    ? ''
+                                                    : names.first;
+                                              }
+                                            });
+                                            field.didChange(_people);
+                                          },
+                                  ),
+                                ),
+                              for (final name in _people.where(
+                                (n) => !widget.list.collaborators.any(
+                                  (p) => p.displayName == n,
+                                ),
+                              ))
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: FinancialParticipantOption(
+                                    name: name,
+                                    selected: true,
+                                    onPressed: _saving
+                                        ? null
+                                        : () => setState(() {
+                                            _participants.text = _people
+                                                .where((n) => n != name)
+                                                .join(', ');
+                                            if (_payer.text == name) {
+                                              _payer.text = _people.isEmpty
+                                                  ? ''
+                                                  : _people.first;
+                                            }
+                                          }),
+                                  ),
+                                ),
+                              if (field.hasError)
+                                Text(
+                                  field.errorText!,
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          title: const Text('Agregar otras personas'),
+                          subtitle: const Text(
+                            'Para gastos con personas que no están en la lista',
+                          ),
+                          children: [
+                            TextFormField(
+                              key: const ValueKey(
+                                'financial-manual-participants',
+                              ),
+                              controller: _participants,
+                              textCapitalization: TextCapitalization.words,
+                              enabled: !_saving,
+                              decoration: const InputDecoration(
+                                labelText: 'Nombres separados por coma',
+                              ),
+                              onChanged: (_) => setState(() {
+                                if (!_people.contains(_payer.text.trim())) {
+                                  _payer.text = _people.isEmpty
+                                      ? ''
+                                      : _people.first;
+                                }
+                              }),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        FormField<String>(
+                          key: const ValueKey('financial-paid-by'),
+                          validator: (_) =>
+                              !_people.contains(_payer.text.trim())
+                              ? 'Elige quién pagó entre los participantes'
+                              : null,
+                          builder: (field) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'Quién pagó',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              const SizedBox(height: 8),
+                              if (_people.isEmpty)
+                                const Text(
+                                  'Selecciona participantes para elegir quién pagó.',
+                                ),
+                              for (final name in _people)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: FinancialParticipantOption(
+                                    name: name,
+                                    photoUrl: widget.list.collaborators
+                                        .where((p) => p.displayName == name)
+                                        .firstOrNull
+                                        ?.photoUrl,
+                                    selected: _payer.text.trim() == name,
+                                    onPressed: _saving
+                                        ? null
+                                        : () {
+                                            setState(() => _payer.text = name);
+                                            field.didChange(name);
+                                          },
+                                  ),
+                                ),
+                              if (field.hasError)
+                                Text(
+                                  field.errorText!,
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const Text(
+                          'Cada participante debe su parte a quien pagó. El resumen muestra los saldos acumulados por moneda.',
+                        ),
+                      ],
+                    ],
                     const SizedBox(height: 12),
                     TextFormField(
-                      key: const ValueKey('financial-paid-by'),
-                      controller: _payer,
+                      key: const ValueKey('financial-detail'),
+                      controller: _detail,
+                      textCapitalization: TextCapitalization.sentences,
                       enabled: !_saving,
+                      maxLength: 500,
+                      minLines: 2,
+                      maxLines: 5,
                       decoration: const InputDecoration(
-                        labelText: 'Quién pagó (nombre del participante)',
+                        labelText: 'Detalle (opcional)',
+                        prefixIcon: Icon(Icons.notes_rounded),
                       ),
-                      validator: (v) => !_people.contains(v?.trim())
-                          ? 'Elige un nombre incluido en los participantes'
-                          : null,
                     ),
-                    const Text(
-                      'Cada participante debe su parte a quien pagó. El resumen muestra los saldos acumulados por moneda.',
+                    const SizedBox(height: 12),
+                    Text(
+                      'Boletas, capturas y documentos',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      'Hasta $noteAttachmentMaxCount adjuntos. Fotos y PDF de hasta 5 MB.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    ..._attachments.map(
+                      (attachment) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          attachment.isPdf
+                              ? Icons.picture_as_pdf_outlined
+                              : Icons.receipt_long_outlined,
+                        ),
+                        title: Text(
+                          attachment.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => _view(attachment),
+                        trailing: IconButton(
+                          tooltip: 'Quitar adjunto',
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() {
+                                  _attachments.remove(attachment);
+                                  for (var i = 0; i < _payments.length; i++) {
+                                    final payment = _payments[i];
+                                    if (payment.receiptId == attachment.id) {
+                                      _payments[i] = FinancialPayment(
+                                        id: payment.id,
+                                        amountMinor: payment.amountMinor,
+                                        date: payment.date,
+                                        detail: payment.detail,
+                                        paymentMethod: payment.paymentMethod,
+                                        installments: payment.installments,
+                                      );
+                                    }
+                                  }
+                                }),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('financial-attach'),
+                      onPressed:
+                          _saving ||
+                              _attachments.length >= noteAttachmentMaxCount
+                          ? null
+                          : _attach,
+                      icon: const Icon(Icons.attach_file),
+                      label: const Text('Adjuntar boleta, captura o PDF'),
+                    ),
+                    if (widget.onHistory != null)
+                      TextButton.icon(
+                        icon: const Icon(Icons.history),
+                        label: const Text('Historial del registro'),
+                        onPressed: _saving
+                            ? null
+                            : () async {
+                                final restored = await widget.onHistory!();
+                                if (restored && context.mounted) {
+                                  Navigator.pop(context, true);
+                                }
+                              },
+                      ),
+                    if (widget.onDelete != null)
+                      TextButton.icon(
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Eliminar registro'),
+                        onPressed: _saving ? null : _delete,
+                      ),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      key: const ValueKey('financial-save'),
+                      onPressed: _saving ? null : _save,
+                      child: Text(_saving ? 'Guardando…' : 'Guardar registro'),
                     ),
                   ],
-                ],
-                const SizedBox(height: 12),
-                TextFormField(
-                  key: const ValueKey('financial-detail'),
-                  controller: _detail,
-                  enabled: !_saving,
-                  maxLength: 500,
-                  minLines: 2,
-                  maxLines: 5,
-                  decoration: const InputDecoration(
-                    labelText: 'Detalle (opcional)',
-                    prefixIcon: Icon(Icons.notes_rounded),
-                  ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Boletas, capturas y documentos',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                Text(
-                  'Hasta $noteAttachmentMaxCount adjuntos. Fotos y PDF de hasta 5 MB.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                ..._attachments.map(
-                  (attachment) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      attachment.isPdf
-                          ? Icons.picture_as_pdf_outlined
-                          : Icons.receipt_long_outlined,
-                    ),
-                    title: Text(
-                      attachment.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => _view(attachment),
-                    trailing: IconButton(
-                      tooltip: 'Quitar adjunto',
-                      onPressed: _saving
-                          ? null
-                          : () =>
-                                setState(() => _attachments.remove(attachment)),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
-                ),
-                OutlinedButton.icon(
-                  key: const ValueKey('financial-attach'),
-                  onPressed:
-                      _saving || _attachments.length >= noteAttachmentMaxCount
-                      ? null
-                      : _attach,
-                  icon: const Icon(Icons.attach_file),
-                  label: const Text('Adjuntar boleta, captura o PDF'),
-                ),
-                if (widget.onHistory != null)
-                  TextButton.icon(
-                    icon: const Icon(Icons.history),
-                    label: const Text('Historial del registro'),
-                    onPressed: _saving
-                        ? null
-                        : () async {
-                            final restored = await widget.onHistory!();
-                            if (restored && context.mounted) {
-                              Navigator.pop(context, true);
-                            }
-                          },
-                  ),
-                if (widget.onDelete != null)
-                  TextButton.icon(
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Eliminar registro'),
-                    onPressed: _saving ? null : _delete,
-                  ),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  key: const ValueKey('financial-save'),
-                  onPressed: _saving ? null : _save,
-                  child: Text(_saving ? 'Guardando…' : 'Guardar registro'),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -839,7 +1104,9 @@ class _PaymentDialog extends StatefulWidget {
     required this.currency,
     required this.balance,
     required this.attachments,
+    this.existing,
   });
+  final FinancialPayment? existing;
   final String currency;
   final int balance;
   final List<NoteAttachment> attachments;
@@ -849,91 +1116,221 @@ class _PaymentDialog extends StatefulWidget {
 
 class _PaymentDialogState extends State<_PaymentDialog> {
   final _form = GlobalKey<FormState>();
+  late String? _method = widget.existing?.paymentMethod;
+  late final _installments = TextEditingController(
+    text: widget.existing?.installments?.toString() ?? '',
+  );
   final _amount = TextEditingController();
   final _detail = TextEditingController();
   DateTime _date = DateTime.now();
   String? _receipt;
+  final List<NoteAttachment> _newAttachments = [];
+  bool _picking = false;
+  String? _attachmentError;
+
+  Future<void> _attachReceipt() async {
+    setState(() {
+      _picking = true;
+      _attachmentError = null;
+    });
+    try {
+      final picked = await pickNoteAttachments(context: context, remaining: 1);
+      if (!mounted || picked.isEmpty) return;
+      setState(() {
+        _newAttachments.addAll(picked);
+        _receipt = picked.first.id;
+      });
+    } on NoteAttachmentPickFailure catch (e) {
+      if (mounted) setState(() => _attachmentError = e.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _attachmentError =
+              'No se pudo adjuntar el comprobante. Reintenta.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final payment = widget.existing;
+    if (payment != null) {
+      _amount.text = financialAmountInput(
+        FinancialEntry(
+          amountMinor: payment.amountMinor,
+          counterparty: '',
+          currency: widget.currency,
+          date: payment.date,
+        ).editableAmount,
+        widget.currency,
+      );
+      _detail.text = payment.detail;
+      _date = payment.date;
+      _receipt = payment.receiptId;
+    }
+  }
+
   @override
   void dispose() {
     _amount.dispose();
+    _installments.dispose();
     _detail.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => FinancialDialog(
-    title: 'Registrar abono',
+    title: widget.existing == null ? 'Registrar abono' : 'Editar abono',
     icon: Icons.payments_outlined,
-    content: SingleChildScrollView(
-      child: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    content: Form(
+      key: _form,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Saldo: ${FinancialEntry.formatAmount(widget.balance, widget.currency)}',
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            key: const ValueKey('payment-amount'),
+            controller: _amount,
+            inputFormatters: widget.currency == 'CLP'
+                ? [ClpThousandsInputFormatter()]
+                : null,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'Monto (${widget.currency})',
+              prefixText: widget.currency == 'EUR' ? '€ ' : r'$ ',
+            ),
+            validator: (v) {
+              final a = parseFinancialAmountInput(v ?? '', widget.currency);
+              return a == null || a > widget.balance
+                  ? 'Ingresa un abono mayor que cero y menor o igual al saldo'
+                  : null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _detail,
+            textCapitalization: TextCapitalization.sentences,
+            maxLength: 160,
+            decoration: const InputDecoration(
+              labelText: 'Detalle / referencia',
+            ),
+          ),
+          FinancialPaymentMethodField(
+            method: _method,
+            installments: _installments,
+            enabled: !_picking,
+            onChanged: (v) => setState(() {
+              _method = v;
+              if (v != 'credit') _installments.clear();
+            }),
+          ),
+          ListTile(
+            title: Text(DateFormat('dd-MM-yyyy').format(_date)),
+            trailing: const Icon(Icons.calendar_today),
+            onTap: () async {
+              final d = await showDatePicker(
+                context: context,
+                initialDate: _date,
+                firstDate: DateTime(2000),
+                lastDate: DateTime.now(),
+              );
+              if (d != null && mounted) setState(() => _date = d);
+            },
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('payment-attach-receipt'),
+            onPressed:
+                _picking ||
+                    widget.attachments.length + _newAttachments.length >=
+                        noteAttachmentMaxCount
+                ? null
+                : _attachReceipt,
+            icon: const Icon(Icons.add_photo_alternate_rounded),
+            label: Text(
+              _picking ? 'Adjuntando…' : 'Adjuntar comprobante del abono',
+            ),
+          ),
+          Text(
+            'Foto o PDF · Hasta $noteAttachmentMaxCount adjuntos por registro, incluidos los abonos.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_attachmentError != null)
             Text(
-              'Saldo: ${FinancialEntry.formatAmount(widget.balance, widget.currency)}',
+              _attachmentError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              key: const ValueKey('payment-amount'),
-              controller: _amount,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: InputDecoration(
-                labelText: 'Monto (${widget.currency})',
-              ),
-              validator: (v) {
-                final a = FinancialEntry.parseAmount(v ?? '', widget.currency);
-                return a == null || a > widget.balance
-                    ? 'Ingresa un abono mayor que cero y menor o igual al saldo'
-                    : null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _detail,
-              maxLength: 160,
-              decoration: const InputDecoration(
-                labelText: 'Detalle / referencia',
-              ),
-            ),
-            ListTile(
-              title: Text(DateFormat('dd/MM/yyyy').format(_date)),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: () async {
-                final d = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime.now(),
-                );
-                if (d != null && mounted) setState(() => _date = d);
-              },
-            ),
-            DropdownButtonFormField<String>(
-              initialValue: _receipt,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Comprobante (opcional)',
-              ),
-              items: [
-                const DropdownMenuItem(
-                  value: '',
-                  child: Text('Sin comprobante'),
+          const SizedBox(height: 12),
+          for (final attachment in [
+            ...widget.attachments,
+            ..._newAttachments,
+          ].where((a) => a.id == _receipt))
+            FinancialSurface(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: Icon(
+                  attachment.isPdf
+                      ? Icons.picture_as_pdf_rounded
+                      : Icons.image_rounded,
                 ),
-                ...widget.attachments.map(
-                  (a) => DropdownMenuItem(
-                    value: a.id,
-                    child: Text(a.name, overflow: TextOverflow.ellipsis),
-                  ),
+                title: Text(
+                  attachment.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
-              onChanged: (v) => _receipt = v == '' ? null : v,
+                subtitle: const Text('Comprobante del abono'),
+                trailing: IconButton(
+                  tooltip: 'Quitar comprobante del abono',
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: _picking
+                      ? null
+                      : () => setState(() {
+                          _receipt = null;
+                          _newAttachments.removeWhere(
+                            (a) => a.id == attachment.id,
+                          );
+                        }),
+                ),
+              ),
             ),
-          ],
-        ),
+          if (widget.attachments.any((a) => a.id != _receipt))
+            TextButton.icon(
+              icon: const Icon(Icons.attach_file_rounded),
+              label: const Text('Usar comprobante existente'),
+              onPressed: _picking
+                  ? null
+                  : () async {
+                      final id = await showLiquidSelection<String>(
+                        context: context,
+                        title: 'Elegir comprobante existente',
+                        items: widget.attachments
+                            .where((a) => a.id != _receipt)
+                            .map(
+                              (a) => DropdownMenuItem(
+                                value: a.id,
+                                child: FinancialOptionLabel(
+                                  icon: a.isPdf
+                                      ? Icons.picture_as_pdf_rounded
+                                      : Icons.image_rounded,
+                                  label: a.name,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      );
+                      if (id != null && mounted) {
+                        setState(() => _receipt = id);
+                      }
+                    },
+            ),
+        ],
       ),
     ),
     actions: [
@@ -943,24 +1340,30 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       ),
       FilledButton(
         key: const ValueKey('payment-save'),
-        onPressed: () {
-          if (_form.currentState!.validate()) {
-            Navigator.pop(
-              context,
-              FinancialPayment(
-                id: const Uuid().v4(),
-                amountMinor: FinancialEntry.parseAmount(
-                  _amount.text,
-                  widget.currency,
-                )!,
-                date: _date,
-                detail: _detail.text.trim(),
-                receiptId: _receipt,
-              ),
-            );
-          }
-        },
-        child: const Text('Agregar'),
+        onPressed: _picking
+            ? null
+            : () {
+                if (_form.currentState!.validate()) {
+                  Navigator.pop(context, (
+                    FinancialPayment(
+                      paymentMethod: _method,
+                      installments: _method == 'credit'
+                          ? int.tryParse(_installments.text)
+                          : null,
+                      id: widget.existing?.id ?? const Uuid().v4(),
+                      amountMinor: parseFinancialAmountInput(
+                        _amount.text,
+                        widget.currency,
+                      )!,
+                      date: _date,
+                      detail: _detail.text.trim(),
+                      receiptId: _receipt,
+                    ),
+                    List<NoteAttachment>.of(_newAttachments),
+                  ));
+                }
+              },
+        child: Text(widget.existing == null ? 'Agregar' : 'Guardar cambios'),
       ),
     ],
   );

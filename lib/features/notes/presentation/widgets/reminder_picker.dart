@@ -833,7 +833,7 @@ class _RecurrenceScheduleFields extends StatelessWidget {
           key: const ValueKey('recurrence-start-date'),
           icon: Icons.calendar_today_rounded,
           label: 'Comienza',
-          value: DateFormat('d MMM y', 'es').format(start),
+          value: DateFormat('dd-MM-yyyy', 'es').format(start),
           onTap: onPickDate,
         );
         final time = _RecurrenceScheduleField(
@@ -1034,7 +1034,7 @@ class _ReminderPresetTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = Theme.of(context).colorScheme;
-    final formattedDate = DateFormat("EEE d MMM · HH:mm", 'es').format(date);
+    final formattedDate = DateFormat("dd-MM-yyyy · HH:mm", 'es').format(date);
     return Semantics(
       button: true,
       label: '$title, $formattedDate',

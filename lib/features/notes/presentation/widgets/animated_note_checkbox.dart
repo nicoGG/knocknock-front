@@ -132,9 +132,8 @@ class _AnimatedNoteCheckboxState extends State<AnimatedNoteCheckbox>
                   boxShadow: widget.value
                       ? [
                           BoxShadow(
-                            color: const Color(
-                              0xFF235C48,
-                            ).withValues(alpha: .22),
+                            color: const Color(0xFF235C48)
+                                .withValues(alpha: .22),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),

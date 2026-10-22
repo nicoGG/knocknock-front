@@ -81,6 +81,24 @@ void main() {
                       as RenderRepaintBoundary)
                   .toImage();
           final data = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File(
+            '/tmp/nocknock-finance-actions-${dark ? 'dark' : 'light'}.png',
+          ).writeAsBytes(data!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('financial-entry-cuenta')),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      if (Platform.environment['FINANCE_VISUAL_QA'] == '1') {
+        await tester.runAsync(() async {
+          final image =
+              await (key.currentContext!.findRenderObject()
+                      as RenderRepaintBoundary)
+                  .toImage();
+          final data = await image.toByteData(format: ui.ImageByteFormat.png);
           await File('/tmp/nocknock-finance-${dark ? 'dark' : 'light'}.png')
               .writeAsBytes(data!.buffer.asUint8List());
           image.dispose();

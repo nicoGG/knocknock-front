@@ -614,7 +614,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                                 ?.copyWith(fontWeight: FontWeight.w900),
                           ),
                           const SizedBox(height: 24),
-                          DropdownButtonFormField<FinancialListTemplate>(
+                          LiquidDropdownFormField<FinancialListTemplate>(
                             key: const ValueKey('list-template'),
                             initialValue: _template,
                             isExpanded: true,
@@ -693,7 +693,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                             onFieldSubmitted: (_) => _submit(),
                           ),
                           const SizedBox(height: 14),
-                          DropdownButtonFormField<NoteListType>(
+                          LiquidDropdownFormField<NoteListType>(
                             key: const ValueKey('list-type-field'),
                             initialValue: _type,
                             isExpanded: true,
@@ -721,6 +721,8 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                               TextFormField(
                                 key: const ValueKey('list-custom-type-field'),
                                 controller: _customType,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
                                 maxLength: 50,
                                 decoration: const InputDecoration(
                                   labelText: 'Nombre del tipo personalizado',
@@ -731,7 +733,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                                     ? 'Escribe el nombre del tipo'
                                     : null,
                               ),
-                            DropdownButtonFormField<String>(
+                            LiquidDropdownFormField<String>(
                               key: const ValueKey('list-currency-field'),
                               isExpanded: true,
                               initialValue: _currency,

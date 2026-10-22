@@ -112,8 +112,11 @@ jobs:
           chmod 600 android/app/nocknock-upload.jks android/key.properties
 
       - name: Generar Android App Bundle
+        env:
+          GOOGLE_PLAY_BILLING_ENABLED: ${{ vars.GOOGLE_PLAY_BILLING_ENABLED || 'false' }}
         run: >-
           flutter build appbundle --release
+          --dart-define="GOOGLE_PLAY_BILLING_ENABLED=$GOOGLE_PLAY_BILLING_ENABLED"
           --build-name "$BUILD_NAME"
           --build-number "$BUILD_NUMBER"
 

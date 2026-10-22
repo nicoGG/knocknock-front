@@ -35,7 +35,7 @@ Future<bool> showNoteHistorySheet({
 String noteEditAttribution(Note note) {
   final name = note.lastEditedByName?.trim();
   final who = name == null || name.isEmpty ? 'Última edición' : 'Editó $name';
-  return '$who · ${DateFormat('d MMM, HH:mm', 'es').format((note.lastEditedAt ?? note.updatedAt).toLocal())}';
+  return '$who · ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format((note.lastEditedAt ?? note.updatedAt).toLocal())}';
 }
 
 class _NoteHistorySheet extends StatefulWidget {
@@ -419,7 +419,7 @@ class _NoteHistorySheetState extends State<_NoteHistorySheet> {
                                         padding: const EdgeInsets.only(top: 3),
                                         child: Text(
                                           DateFormat(
-                                            'd MMM yyyy · HH:mm',
+                                            'dd-MM-yyyy · HH:mm',
                                             'es',
                                           ).format(version.savedAt.toLocal()),
                                           style: theme.textTheme.bodySmall

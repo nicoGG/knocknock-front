@@ -158,7 +158,7 @@ void main() {
       find.byKey(const ValueKey('grid-reminder-recurring-note')),
       findsOneWidget,
     );
-    expect(find.text('05 sept · 08:00'), findsOneWidget);
+    expect(find.text('05-09-2026 · 08:00'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

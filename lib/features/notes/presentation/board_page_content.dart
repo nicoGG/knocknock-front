@@ -50,6 +50,13 @@ extension _BoardPageContent on _BoardPageState {
         child: FinancialListBoard(
           key: ValueKey('financial-board-${state.selectedListId}'),
           list: state.selectedList!,
+          listView:
+              widget.viewModeController.viewModeFor(state.selectedListId) ==
+              BoardViewMode.list,
+          onViewChanged: (listView) => widget.viewModeController.setViewMode(
+            state.selectedListId,
+            listView ? BoardViewMode.list : BoardViewMode.grid,
+          ),
           notes: state.notes,
           onSave: (draft, note) => context
               .read<NotesCubit>()

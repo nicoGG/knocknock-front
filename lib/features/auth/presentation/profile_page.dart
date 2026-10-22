@@ -1,4 +1,7 @@
+import 'package:nocknock/core/widgets/golden_sweep.dart';
+import 'package:nocknock/features/subscriptions/plus_page.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -230,9 +233,8 @@ class _ProfileCardState extends State<ProfileCard> {
       await action();
     } on AuthFailure catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
       }
     } catch (_) {
       if (mounted) {
@@ -331,9 +333,8 @@ class _SignedOutProfile extends StatelessWidget {
                 'Tus notas locales permanecen en este dispositivo hasta que inicies sesión.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.52),
+                  color: Theme.of(context).colorScheme.onSurface
+                      .withValues(alpha: 0.52),
                   fontSize: 12,
                   height: 1.35,
                 ),
@@ -341,6 +342,8 @@ class _SignedOutProfile extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 26),
+        const _ProfilePlusButton(),
         const SizedBox(height: 26),
         _ProfileThemePicker(themeController: themeController),
         const SizedBox(height: 26),
@@ -351,8 +354,7 @@ class _SignedOutProfile extends StatelessWidget {
             _ProfileDetailRow(
               icon: Icons.enhanced_encryption_outlined,
               title: 'Cifrado de extremo a extremo',
-              subtitle:
-                  'Al iniciar sesión, tus listas y notas se cifran antes de sincronizarse.',
+              subtitle: 'Al iniciar sesión, tus listas y notas se cifran antes de sincronizarse.',
             ),
             _ProfileCardDivider(),
             _ProfileDetailRow(
@@ -406,6 +408,8 @@ class _SignedInProfile extends StatelessWidget {
           subtitle: user.email,
         ),
         const SizedBox(height: 26),
+        const _ProfilePlusButton(),
+        const SizedBox(height: 26),
         _ProfileThemePicker(themeController: themeController),
         const SizedBox(height: 26),
         const _ProfileSectionTitle('PRIVACIDAD Y CUENTA'),
@@ -421,8 +425,7 @@ class _SignedInProfile extends StatelessWidget {
             _ProfileDetailRow(
               icon: Icons.enhanced_encryption_outlined,
               title: 'Cifrado de extremo a extremo',
-              subtitle:
-                  'Tus listas y notas se cifran antes de sincronizarse. Solo tú y tus colaboradores autorizados pueden leerlas.',
+              subtitle: 'Tus listas y notas se cifran antes de sincronizarse. Solo tú y tus colaboradores autorizados pueden leerlas.',
             ),
             _ProfileCardDivider(),
             _ProfileDetailRow(
@@ -1161,9 +1164,8 @@ class _ProfileCardDivider extends StatelessWidget {
     return Divider(
       height: 1,
       indent: 54,
-      color: Theme.of(
-        context,
-      ).colorScheme.outlineVariant.withValues(alpha: 0.7),
+      color: Theme.of(context).colorScheme.outlineVariant
+          .withValues(alpha: 0.7),
     );
   }
 }
@@ -1312,6 +1314,72 @@ class _GoogleMark extends StatelessWidget {
         color: Colors.white,
         fontSize: 17,
         fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+}
+
+class _ProfilePlusButton extends StatelessWidget {
+  const _ProfilePlusButton();
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Material(
+      color: c.primaryContainer,
+      borderRadius: BorderRadius.circular(22),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('profile-plus-button'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PlusPage(auth: context.read<AuthRepository>()),
+          ),
+        ),
+        child: GoldenSweep(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  color: c.onPrimaryContainer,
+                  size: 30,
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Descubre NockNock Plus',
+                        style: TextStyle(
+                          color: c.onPrimaryContainer,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Más espacio para organizarse juntos. Una persona paga, todos participan.',
+                        style: TextStyle(
+                          color: c.onPrimaryContainer,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_rounded,
+                  color: c.onPrimaryContainer,
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

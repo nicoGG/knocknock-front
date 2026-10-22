@@ -153,6 +153,283 @@ void main() {
       },
     );
   }
+  testWidgets('payment can open receipt picker without losing entered amount', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              onPressed: () => showFinancialEntryEditor(
+                context: context,
+                list: list(NoteListType.receivables),
+                author: 'QA',
+                note: record(money(paid: 0)),
+                onSave: (_) async {},
+              ),
+              child: const Text('Abrir'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Abrir'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('financial-add-payment')),
+    );
+    await tester.tap(find.byKey(const ValueKey('financial-add-payment')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('payment-amount')),
+      '3,25',
+    );
+    final attach = find.byKey(const ValueKey('payment-attach-receipt'));
+    await tester.ensureVisible(attach);
+    await tester.tap(attach);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pick-note-photos')), findsOneWidget);
+    expect(find.byKey(const ValueKey('pick-note-pdf')), findsOneWidget);
+    Navigator.of(tester.element(find.byKey(const ValueKey('pick-note-pdf'))))
+        .pop();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('payment-amount')))
+          .controller!
+          .text,
+      '3,25',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('payment-save')));
+    await tester.tap(find.byKey(const ValueKey('payment-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Registrar abono'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('editing a payment replaces its amount and preserves its id', (
+    tester,
+  ) async {
+    NoteDraft? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              onPressed: () => showFinancialEntryEditor(
+                context: context,
+                list: list(NoteListType.receivables),
+                author: 'QA',
+                note: record(money()),
+                onSave: (draft) async {
+                  saved = draft;
+                },
+              ),
+              child: const Text('Abrir'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Abrir'));
+    await tester.pumpAndSettle();
+    final paymentTile = find.byWidgetPredicate(
+      (w) =>
+          w is ListTile &&
+          w.title is Text &&
+          (w.title as Text).data == FinancialEntry.formatAmount(325, 'USD'),
+    );
+    await tester.ensureVisible(paymentTile);
+    await tester.tap(paymentTile);
+    await tester.pumpAndSettle();
+    expect(find.text('Editar abono'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const ValueKey('payment-amount')))
+          .controller!
+          .text,
+      '3,25',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('payment-amount')),
+      '11,00',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('payment-save')));
+    await tester.tap(find.byKey(const ValueKey('payment-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('menor o igual al saldo'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('payment-amount')),
+      '4,00',
+    );
+    await tester.tap(find.byKey(const ValueKey('payment-save')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('financial-save')));
+    await tester.tap(find.byKey(const ValueKey('financial-save')));
+    await tester.pumpAndSettle();
+    final data = FinancialEntry.tryDecode(saved!.financialData)!;
+    expect(data.payments, hasLength(1));
+    expect(data.payments.single.id, 'abono');
+    expect(data.payments.single.amountMinor, 400);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('shared expenses select multiple list members and payer', (
+    tester,
+  ) async {
+    NoteDraft? saved;
+    final members = ['Ana', 'Luis']
+        .map(
+          (name) => ListCollaborator(
+            uid: name,
+            email: '$name@example.com',
+            displayName: name,
+            role: ListMemberRole.editor,
+            joinedAt: DateTime(2026),
+          ),
+        )
+        .toList();
+    final sharedList = NoteList(
+      id: 'list',
+      name: 'Gastos',
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+      configuration: const ListConfiguration(
+        type: NoteListType.expenses,
+        currency: 'USD',
+      ),
+      collaborators: members,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              onPressed: () => showFinancialEntryEditor(
+                context: context,
+                list: sharedList,
+                author: 'QA',
+                note: record(money()),
+                onSave: (draft) async {
+                  saved = draft;
+                },
+              ),
+              child: const Text('Abrir'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Abrir'));
+    await tester.pumpAndSettle();
+    final toggle = find.widgetWithText(
+      SwitchListTile,
+      'Dividir gasto entre personas',
+    );
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    for (final name in ['Ana', 'Luis']) {
+      final choice = find.descendant(
+        of: find.byKey(const ValueKey('financial-participants')),
+        matching: find.text(name),
+      );
+      await tester.ensureVisible(choice);
+      await tester.pumpAndSettle();
+      await tester.tap(choice);
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('Participantes · 2 seleccionados'), findsOneWidget);
+    final payer = find.descendant(
+      of: find.byKey(const ValueKey('financial-paid-by')),
+      matching: find.text('Luis'),
+    );
+    await tester.ensureVisible(payer);
+    await tester.pumpAndSettle();
+    await tester.tap(payer);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('financial-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('financial-save')));
+    await tester.pumpAndSettle();
+    final entry = FinancialEntry.tryDecode(saved!.financialData)!;
+    expect(entry.participants, ['Ana', 'Luis']);
+    expect(entry.paidBy, 'Luis');
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('expense summary opens detail and movements switch to list', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FinancialListBoard(
+              list: list(NoteListType.expenses),
+              notes: [record(money())],
+              onEdit: (_) {},
+              onAdd: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('expense-summary-USD')),
+    );
+    await tester.tap(find.text('Resumen de gastos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Detalle de gastos'), findsOneWidget);
+    expect(find.text('Período'), findsOneWidget);
+    expect(find.textContaining(r'$'), findsWidgets);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Ver lista'));
+    await tester.tap(find.byTooltip('Ver lista'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('financial-list-entry-qa')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('financial-entry-qa')), findsNothing);
+    await tester.tap(find.byTooltip('Ver tarjetas'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('financial-entry-qa')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('financial search can recover from empty results', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FinancialListBoard(
+              list: list(NoteListType.expenses),
+              notes: [record(money())],
+              onEdit: (_) {},
+              onAdd: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    final search = find.byKey(const ValueKey('financial-search'));
+    await tester.ensureVisible(search);
+    await tester.enterText(search, 'inexistente');
+    await tester.pumpAndSettle();
+    expect(find.text('0 resultados'), findsOneWidget);
+    expect(find.text('No hay registros con este filtro.'), findsOneWidget);
+    await tester.ensureVisible(find.text('Limpiar filtros'));
+    await tester.tap(find.text('Limpiar filtros'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('financial-entry-qa')), findsOneWidget);
+    expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+    expect(find.text('0 resultados'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'compact quotations expose price and terms without horizontal table checkboxes',
     (tester) async {
@@ -195,7 +472,12 @@ void main() {
         ),
       );
       expect(
-        find.text('Abonado: 3,25\u00a0USD · Saldo: 7,25\u00a0USD'),
+        find.text(
+          r'Abonado: $ 3,25'
+          '\u00a0USD · Saldo: '
+          r'$ 7,25'
+          '\u00a0USD',
+        ),
         findsOneWidget,
       );
       expect(find.textContaining('325 USD'), findsNothing);

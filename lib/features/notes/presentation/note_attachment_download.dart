@@ -4,8 +4,10 @@ import 'package:file_saver/file_saver.dart';
 import 'package:flutter/foundation.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 
-typedef NoteAttachmentSaver =
-    Future<String?> Function(NoteAttachment attachment, Uint8List bytes);
+typedef NoteAttachmentSaver = Future<String?> Function(
+  NoteAttachment attachment,
+  Uint8List bytes,
+);
 
 Uint8List decodeNoteAttachmentBytes(NoteAttachment attachment) {
   final encoded = attachment.dataBase64?.trim();

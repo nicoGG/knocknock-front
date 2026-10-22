@@ -439,7 +439,7 @@ class _SyncActivitySheetState extends State<_SyncActivitySheet> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${change.needsReview ? 'Necesita revisión' : 'Guardado aquí'} · ${DateFormat('d MMM, HH:mm', 'es').format(change.createdAt.toLocal())}',
+                                          '${change.needsReview ? 'Necesita revisión' : 'Guardado aquí'} · ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format(change.createdAt.toLocal())}',
                                           style: theme.textTheme.bodySmall
                                               ?.copyWith(
                                                 color: colors.onSurfaceVariant,

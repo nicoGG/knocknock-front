@@ -1,3 +1,4 @@
+import 'package:nocknock/features/subscriptions/plus_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -55,6 +56,7 @@ Future<void> main() async {
   final preferences = await SharedPreferences.getInstance();
   final authRepository = FirebaseAuthRepository(telemetry: telemetry);
   await authRepository.initialize();
+  PlusService(authRepository).start();
   await telemetry.bindUserChanges(
     authRepository.authStateChanges.map((user) => user?.id),
     initialUserId: authRepository.currentUser?.id,

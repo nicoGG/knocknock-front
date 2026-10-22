@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:nocknock/features/finance/financial_entry.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -11,8 +13,7 @@ import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
-/// Only the five visible titles are shared with the native widget. No tokens,
-/// attachments, note bodies or protected-list names leave the app repository.
+/// Device-only widget data excludes protected lists, credentials and attachments.
 Map<String, dynamic> buildHomeWidgetSnapshot({
   required String owner,
   required List<NoteList> lists,
@@ -246,8 +247,58 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       if (!current()) return;
-      await _publish(
-        buildHomeWidgetSnapshot(
+      final catalog = <Map<String, dynamic>>[];
+      if (defaultTargetPlatform == TargetPlatform.android && !hideContent) {
+        for (final list in visible) {
+          final entries = await repository.fetchNotes(list.id);
+          if (!current()) return;
+          final active = entries.where((n) => n.deletedAt == null).toList()
+            ..sort(compareNotes);
+          final summary = <String, int>{};
+          for (final note in active) {
+            final entry = note.financialEntry;
+            if (entry == null ||
+                entry.isBudget ||
+                entry.isSettlement ||
+                entry.status == 'rejected') {
+              continue;
+            }
+            summary.update(
+              entry.currency,
+              (v) => v + entry.amountMinor,
+              ifAbsent: () => entry.amountMinor,
+            );
+          }
+          catalog.add({
+            'listId': list.id,
+            'title': list.name,
+            'financial': list.isFinancial,
+            'expenses': list.configuration.type.name == 'expenses',
+            'currency': list.configuration.currency,
+            'summary': summary.entries
+                .map((e) => FinancialEntry.formatAmount(e.value, e.key))
+                .join(' · '),
+            'rows': active
+                .map(
+                  (note) => {
+                    'id': note.id,
+                    'boardId': list.id,
+                    'title': note.title.characters.take(120).toString(),
+                    'revision': note.revision,
+                    'completed': note.isCompleted,
+                    'canComplete':
+                        !note.isRecurring && note.financialEntry == null,
+                    'checklist': note.checklist
+                        .map((item) => item.toJson())
+                        .toList(),
+                  },
+                )
+                .toList(),
+          });
+        }
+      }
+      await _publish({
+        ...buildHomeWidgetSnapshot(
           owner: account,
           lists: lists,
           notes: notes,
@@ -258,7 +309,8 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
           captureListId: captureListId,
           hideContent: hideContent,
         ),
-      );
+        'catalog': catalog,
+      });
       error = null;
     } catch (_) {
       error =
@@ -285,6 +337,76 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         continue;
       }
       try {
+        if (action['type'] == 'expense') {
+          final list = lists.firstWhere((l) => l.id == board);
+          final amount = FinancialEntry.parseAmount(
+            action['amount'] as String,
+            list.configuration.currency,
+          );
+          final title = (action['title'] as String).trim();
+          if (list.configuration.type.name != 'expenses' ||
+              amount == null ||
+              title.isEmpty) {
+            await channel.invokeMethod<void>(
+              'acknowledge',
+              action['mutationId'],
+            );
+            continue;
+          }
+          final created = await repository.createNote(
+            board,
+            NoteDraft(
+              title: title,
+              content: '',
+              color: NoteColor.green,
+              authorName: auth.currentUser?.displayName ?? 'Yo',
+              category: NoteCategory.finance,
+              clientNoteId: action['id'] as String,
+              clientMutationId: action['mutationId'] as String,
+              financialData: FinancialEntry(
+                amountMinor: amount,
+                currency: list.configuration.currency,
+                counterparty: '',
+                date: DateTime.fromMillisecondsSinceEpoch(
+                  action['completedAt'] as int,
+                ),
+              ).encoded,
+            ),
+          );
+          if (!_disposed && owner == account) _completedNotes.add(created);
+          await channel.invokeMethod<void>('acknowledge', action['mutationId']);
+          continue;
+        }
+        if (action['subtaskId'] != null) {
+          final notes = await repository.fetchNotes(board);
+          final note = notes
+              .where((n) => n.id == action['id'] && n.deletedAt == null)
+              .firstOrNull;
+          if (note == null ||
+              !note.checklist.any((item) => item.id == action['subtaskId'])) {
+            await channel.invokeMethod<void>(
+              'acknowledge',
+              action['mutationId'],
+            );
+            continue;
+          }
+          final updated = await repository.updateNote(note.id, {
+            'checklist': note.checklist
+                .map(
+                  (item) =>
+                      (item.id == action['subtaskId']
+                              ? item.copyWith(isCompleted: true)
+                              : item)
+                          .toJson(),
+                )
+                .toList(),
+            'expectedRevision': note.revision,
+            'clientMutationId': action['mutationId'],
+          });
+          if (!_disposed && owner == account) _completedNotes.add(updated);
+          await channel.invokeMethod<void>('acknowledge', action['mutationId']);
+          continue;
+        }
         final completed = await repository.updateNote(action['id'] as String, {
           'isCompleted': true,
           'completedAt': DateTime.fromMillisecondsSinceEpoch(

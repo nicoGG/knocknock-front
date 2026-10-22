@@ -197,6 +197,7 @@ class ApiNotesRepository
     String name,
     ListConfiguration configuration,
   ) async {
+    if (!configuration.isFinancial) return createList(name);
     final response = await _dio.post<Map<String, dynamic>>(
       '/lists',
       data: {'name': name, ...configuration.toJson()},
@@ -210,6 +211,12 @@ class ApiNotesRepository
     required ListKeyEnvelope keyEnvelope,
     required ListConfiguration configuration,
   }) async {
+    if (!configuration.isFinancial) {
+      return createEncryptedList(
+        encryptedName: encryptedName,
+        keyEnvelope: keyEnvelope,
+      );
+    }
     final response = await _dio.post<Map<String, dynamic>>(
       '/lists',
       data: {

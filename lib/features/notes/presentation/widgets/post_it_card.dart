@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/animated_card_backdrop.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
@@ -469,35 +470,41 @@ class PostItCard extends StatelessWidget {
                                     ),
                               borderRadius: BorderRadius.circular(borderRadius),
                             ),
-                            child: _SettlingNoteOpacity(
-                              completed: note.isCompleted,
-                              duration: completionDuration,
-                              child: gridPhotos.isEmpty
-                                  ? body
-                                  : Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        _MosaicPhotoHeader(
-                                          noteId: note.id,
-                                          attachments: gridPhotos,
-                                          loader: attachmentLoader,
-                                          borderRadius: borderRadius,
-                                          foregroundColor: foregroundColor,
-                                        ),
-                                        Expanded(
-                                          child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                              20,
-                                              12,
-                                              12,
-                                              12,
-                                            ),
-                                            child: body,
+                            child: AnimatedCardBackdrop(
+                              icon: NoteCategoryStyle.icon(note.category),
+                              color: foregroundColor,
+                              animate: !note.isCompleted,
+                              child: _SettlingNoteOpacity(
+                                completed: note.isCompleted,
+                                duration: completionDuration,
+                                child: gridPhotos.isEmpty
+                                    ? body
+                                    : Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          _MosaicPhotoHeader(
+                                            noteId: note.id,
+                                            attachments: gridPhotos,
+                                            loader: attachmentLoader,
+                                            borderRadius: borderRadius,
+                                            foregroundColor: foregroundColor,
                                           ),
-                                        ),
-                                      ],
-                                    ),
+                                          Expanded(
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    20,
+                                                    12,
+                                                    12,
+                                                    12,
+                                                  ),
+                                              child: body,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                              ),
                             ),
                           ),
                         ),
@@ -1083,7 +1090,10 @@ class _NoteBody extends StatelessWidget {
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
-                  DateFormat('dd MMM · HH:mm', 'es').format(reminder.toLocal()),
+                  DateFormat(
+                    'dd-MM-yyyy · HH:mm',
+                    'es',
+                  ).format(reminder.toLocal()),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -2801,7 +2811,7 @@ class _EditableLargeNoteBodyState extends State<_EditableLargeNoteBody> {
                           Expanded(
                             child: Text(
                               DateFormat(
-                                'dd MMM · HH:mm',
+                                'dd-MM-yyyy · HH:mm',
                                 'es',
                               ).format(reminder),
                               maxLines: 1,

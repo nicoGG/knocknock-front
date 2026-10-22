@@ -236,3 +236,11 @@ Requiere publicar primero la actualización correspondiente del backend.
   ficticios; la moneda se puede elegir antes de crear.
 - El JSON financiero versión 2 agrega campos opcionales sobre el transporte
   cifrado existente; el lector mantiene compatibilidad con registros versión 1.
+
+### Medio de pago y cuotas
+
+Gastos y abonos admiten crédito, débito, transferencia y efectivo. Crédito permite
+indicar entre 1 y 120 cuotas; es información del pago y no crea abonos ni cambia
+el total. Los registros anteriores conservan el medio sin especificar. Los campos
+opcionales `paymentMethod` e `installments` viajan en el JSON financiero v2 cifrado,
+se mantienen en historial y aparecen en las exportaciones.

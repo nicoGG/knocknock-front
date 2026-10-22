@@ -1,6 +1,7 @@
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
+
 import 'assignee_picker_style.dart';
 
 class AssigneeSelection {
@@ -210,9 +211,9 @@ class AssigneePickerSheetState extends State<AssigneePickerSheet> {
                       Icon(
                         Icons.info_outline_rounded,
                         size: 20,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSecondaryContainer,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSecondaryContainer,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -220,9 +221,9 @@ class AssigneePickerSheetState extends State<AssigneePickerSheet> {
                           'Máximo 3 personas. Quita una selección para asignar a alguien más.',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSecondaryContainer,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSecondaryContainer,
                               ),
                         ),
                       ),

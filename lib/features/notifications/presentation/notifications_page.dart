@@ -1,4 +1,5 @@
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -666,9 +667,8 @@ class _NotificationsBackdropPainter extends CustomPainter {
       center,
       radius,
       Paint()
-        ..shader = RadialGradient(
-          colors: [color, color.withValues(alpha: 0)],
-        ).createShader(bounds),
+        ..shader = RadialGradient(colors: [color, color.withValues(alpha: 0)])
+            .createShader(bounds),
     );
   }
 
@@ -920,9 +920,8 @@ class _EmptyNotificationsState extends StatelessWidget {
         Text(
           'Todo al día',
           textAlign: TextAlign.center,
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          style: Theme.of(context).textTheme.headlineSmall
+              ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 8),
         Text(
@@ -1440,6 +1439,6 @@ class _NotificationTile extends StatelessWidget {
     if (difference.inMinutes < 1) return 'Ahora';
     if (difference.inHours < 1) return 'Hace ${difference.inMinutes} min';
     if (difference.inHours < 24) return 'Hace ${difference.inHours} h';
-    return DateFormat('dd MMM · HH:mm', 'es').format(local);
+    return DateFormat('dd-MM-yyyy · HH:mm', 'es').format(local);
   }
 }

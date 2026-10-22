@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/financial_amount_input.dart';
+import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:flutter/material.dart';
 import 'package:nocknock/features/finance/financial_entry.dart';
@@ -54,8 +56,10 @@ class _BudgetDialogState extends State<_BudgetDialog> {
     return matches.firstOrNull;
   }
 
-  void _load() =>
-      _amount.text = _existing?.financialEntry?.editableAmount ?? '';
+  void _load() => _amount.text = financialAmountInput(
+    _existing?.financialEntry?.editableAmount ?? '',
+    _currency,
+  );
   @override
   void initState() {
     super.initState();
@@ -78,7 +82,7 @@ class _BudgetDialogState extends State<_BudgetDialog> {
       final entry = FinancialEntry(
         kind: 'budget',
         period: _period,
-        amountMinor: FinancialEntry.parseAmount(_amount.text, _currency)!,
+        amountMinor: parseFinancialAmountInput(_amount.text, _currency)!,
         currency: _currency,
         counterparty: '',
         date: DateTime.now(),
@@ -121,12 +125,23 @@ class _BudgetDialogState extends State<_BudgetDialog> {
               'Se comparte con los miembros de la lista. Suma los montos registrados, salvo los descartados.',
             ),
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
+            LiquidDropdownFormField<String>(
               initialValue: _currency,
               isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Moneda'),
+              decoration: const InputDecoration(
+                labelText: 'Moneda',
+                prefixIcon: Icon(Icons.currency_exchange_rounded),
+              ),
               items: ListConfiguration.currencies
-                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                  .map(
+                    (c) => DropdownMenuItem(
+                      value: c,
+                      child: FinancialOptionLabel(
+                        icon: FinancialStyle.currencyIcon(c),
+                        label: FinancialStyle.currencyLabel(c),
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: _saving
                   ? null
@@ -136,10 +151,13 @@ class _BudgetDialogState extends State<_BudgetDialog> {
                     }),
             ),
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
+            LiquidDropdownFormField<String>(
               initialValue: _period,
               isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Período'),
+              decoration: const InputDecoration(
+                labelText: 'Período',
+                prefixIcon: Icon(Icons.calendar_month_rounded),
+              ),
               items: [
                 const DropdownMenuItem(
                   value: 'all',
@@ -165,13 +183,19 @@ class _BudgetDialogState extends State<_BudgetDialog> {
             TextFormField(
               key: const ValueKey('budget-amount'),
               controller: _amount,
+              inputFormatters: _currency == 'CLP'
+                  ? [ClpThousandsInputFormatter()]
+                  : null,
               enabled: !_saving,
-              decoration: InputDecoration(labelText: 'Límite ($_currency)'),
+              decoration: InputDecoration(
+                labelText: 'Límite ($_currency)',
+                prefixText: _currency == 'EUR' ? '€ ' : r'$ ',
+              ),
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
               validator: (v) =>
-                  FinancialEntry.parseAmount(v ?? '', _currency) == null
+                  parseFinancialAmountInput(v ?? '', _currency) == null
                   ? 'Ingresa un límite mayor que cero'
                   : null,
             ),

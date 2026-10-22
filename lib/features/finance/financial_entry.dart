@@ -4,6 +4,24 @@ import 'package:equatable/equatable.dart';
 import 'package:intl/intl.dart';
 import 'package:nocknock/features/finance/list_configuration.dart';
 
+const financialPaymentMethods = ['credit', 'debit', 'transfer', 'cash'];
+bool validFinancialPaymentMethod(String? method, int? installments) =>
+    method == null
+    ? installments == null
+    : financialPaymentMethods.contains(method) &&
+          (method == 'credit'
+              ? installments != null && installments >= 1 && installments <= 120
+              : installments == null);
+String financialPaymentLabel(String? method, int? installments) =>
+    switch (method) {
+      'credit' =>
+        'Crédito · $installments ${installments == 1 ? 'cuota' : 'cuotas'}',
+      'debit' => 'Débito',
+      'transfer' => 'Transferencia',
+      'cash' => 'Efectivo',
+      _ => 'Sin especificar',
+    };
+
 class FinancialEntry extends Equatable {
   const FinancialEntry({
     required this.amountMinor,
@@ -20,7 +38,12 @@ class FinancialEntry extends Equatable {
     this.deliveryDays,
     this.validUntil,
     this.legacyDateAsDue = false,
+    this.paymentMethod,
+    this.installments,
   });
+  final String? paymentMethod;
+  final int? installments;
+  String get paymentLabel => financialPaymentLabel(paymentMethod, installments);
   final int amountMinor;
   final String currency;
   final String counterparty;
@@ -83,11 +106,7 @@ class FinancialEntry extends Equatable {
       ? '$amountMinor'
       : '${amountMinor ~/ 100},${(amountMinor % 100).toString().padLeft(2, '0')}';
   static String formatAmount(int minor, String currency) =>
-      NumberFormat.currency(
-        locale: 'es_CL',
-        symbol: currency,
-        decimalDigits: decimals(currency),
-      ).format(minor / (decimals(currency) == 0 ? 1 : 100));
+      '${currency == 'EUR' ? '€' : r'$'} ${NumberFormat.currency(locale: 'es_CL', symbol: currency, decimalDigits: decimals(currency)).format(minor / (decimals(currency) == 0 ? 1 : 100))}';
   String get statusLabel => switch (status) {
     'paid' => 'Pagado / cobrado',
     'accepted' => 'Aceptada',
@@ -97,6 +116,8 @@ class FinancialEntry extends Equatable {
   String get formattedAmount => formatAmount(amountMinor, currency);
   String get encoded => jsonEncode({
     'version': 2,
+    if (paymentMethod != null) 'paymentMethod': paymentMethod,
+    if (installments != null) 'installments': installments,
     'kind': kind,
     'period': period,
     'payments': payments.map((p) => p.toJson()).toList(),
@@ -137,6 +158,9 @@ class FinancialEntry extends Equatable {
           ].contains(data['status'])) {
         return null;
       }
+      final method = data['paymentMethod'] as String?;
+      final installments = data['installments'] as int?;
+      if (!validFinancialPaymentMethod(method, installments)) return null;
       final payments = (data['payments'] as List? ?? const [])
           .map(
             (p) =>
@@ -197,6 +221,8 @@ class FinancialEntry extends Equatable {
         return null;
       }
       return FinancialEntry(
+        paymentMethod: method,
+        installments: installments,
         legacyDateAsDue: data['version'] == 1,
         kind: kind,
         period: period,
@@ -219,6 +245,8 @@ class FinancialEntry extends Equatable {
 
   @override
   List<Object?> get props => [
+    paymentMethod,
+    installments,
     amountMinor,
     currency,
     counterparty,
@@ -242,13 +270,23 @@ class FinancialPayment extends Equatable {
     required this.date,
     this.detail = '',
     this.receiptId,
+    this.paymentMethod,
+    this.installments,
   });
+  final String? paymentMethod;
+  final int? installments;
+  String get paymentLabel => financialPaymentLabel(paymentMethod, installments);
   final String id;
   final int amountMinor;
   final DateTime date;
   final String detail;
   final String? receiptId;
   factory FinancialPayment.fromJson(Map<String, dynamic> json) {
+    final method = json['paymentMethod'] as String?;
+    final installments = json['installments'] as int?;
+    if (!validFinancialPaymentMethod(method, installments)) {
+      throw const FormatException('Medio de pago inválido');
+    }
     final id = json['id'] as String;
     final amount = json['amountMinor'] as int;
     final dateText = json['date'] as String;
@@ -265,6 +303,8 @@ class FinancialPayment extends Equatable {
       throw const FormatException('Abono inválido');
     }
     return FinancialPayment(
+      paymentMethod: method,
+      installments: installments,
       id: id,
       amountMinor: amount,
       date: date,
@@ -273,6 +313,8 @@ class FinancialPayment extends Equatable {
     );
   }
   Map<String, dynamic> toJson() => {
+    if (paymentMethod != null) 'paymentMethod': paymentMethod,
+    if (installments != null) 'installments': installments,
     'id': id,
     'amountMinor': amountMinor,
     'date': DateFormat('yyyy-MM-dd').format(date),
@@ -280,5 +322,13 @@ class FinancialPayment extends Equatable {
     if (receiptId != null) 'receiptId': receiptId,
   };
   @override
-  List<Object?> get props => [id, amountMinor, date, detail, receiptId];
+  List<Object?> get props => [
+    id,
+    amountMinor,
+    date,
+    detail,
+    receiptId,
+    paymentMethod,
+    installments,
+  ];
 }

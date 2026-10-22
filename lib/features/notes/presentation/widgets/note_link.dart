@@ -290,9 +290,9 @@ class _NoteLinkEditorDialogState extends State<_NoteLinkEditorDialog> {
                   alignment: Alignment.centerRight,
                   child: TextButton(
                     key: const ValueKey('remove-note-link-button'),
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(const NoteLinkEditResult.remove()),
+                    onPressed: () =>
+                        Navigator.of(context)
+                            .pop(const NoteLinkEditResult.remove()),
                     child: const Text('Quitar vínculo'),
                   ),
                 ),

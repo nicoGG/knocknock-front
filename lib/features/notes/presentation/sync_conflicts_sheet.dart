@@ -402,7 +402,7 @@ class _VersionBlock extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '${editor?.isNotEmpty == true ? editor : 'Último cambio'} · ${DateFormat('d MMM, HH:mm', 'es').format((note.lastEditedAt ?? note.updatedAt).toLocal())}',
+          '${editor?.isNotEmpty == true ? editor : 'Último cambio'} · ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format((note.lastEditedAt ?? note.updatedAt).toLocal())}',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 10),
@@ -419,7 +419,7 @@ class _VersionBlock extends StatelessWidget {
           ),
         if (note.reminderAt != null)
           Text(
-            'Recordatorio: ${DateFormat('d MMM yyyy · HH:mm', 'es').format(note.reminderAt!.toLocal())}${note.reminderRecurrence != null ? ' · Recurrente' : ''}',
+            'Recordatorio: ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format(note.reminderAt!.toLocal())}${note.reminderRecurrence != null ? ' · Recurrente' : ''}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         for (final attachment in note.photoAttachments)

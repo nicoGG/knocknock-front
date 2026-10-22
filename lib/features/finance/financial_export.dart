@@ -16,7 +16,7 @@ String _xml(Object? value) =>
         .convert('$value')
         .replaceAll(RegExp(r'[\x00-\x08\x0b\x0c\x0e-\x1f]'), '');
 String _day(DateTime date) =>
-    '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year.toString().padLeft(4, '0')}';
 String financialExportName(String name) {
   final safe = name.replaceAll(RegExp(r'[/\\\x00-\x1f<>:"|?*]'), '_').trim();
   return safe.isEmpty
@@ -49,6 +49,8 @@ Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
         'Comprobantes',
         'Detalle',
         'ID del registro',
+        'Medio de pago',
+        'Cuotas',
       ],
       for (final n in records)
         [
@@ -70,10 +72,23 @@ Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
           n.photoAttachments.map((a) => a.name).join('; '),
           n.content,
           n.id,
+          n.financialEntry!.paymentMethod == null
+              ? ''
+              : n.financialEntry!.paymentLabel,
+          n.financialEntry!.installments ?? '',
         ],
     ],
     'Abonos': [
-      ['Concepto', 'Fecha', 'Moneda', 'Monto', 'Referencia', 'Comprobante'],
+      [
+        'Concepto',
+        'Fecha',
+        'Moneda',
+        'Monto',
+        'Referencia',
+        'Comprobante',
+        'Medio de pago',
+        'Cuotas',
+      ],
       for (final n in records)
         for (final p in n.financialEntry!.payments)
           [
@@ -87,6 +102,8 @@ Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
                     .firstOrNull
                     ?.name ??
                 (p.receiptId == null ? '' : 'Adjunto retirado'),
+            p.paymentMethod == null ? '' : p.paymentLabel,
+            p.installments ?? '',
           ],
     ],
     'Reparto acumulado': [
@@ -199,7 +216,7 @@ Future<Uint8List> financialPdf(
                   n.financialEntry!.balanceMinor,
                   n.financialEntry!.currency,
                 ),
-                '${n.financialEntry!.statusLabel}\n${n.financialEntry!.dueDate == null ? '' : _day(n.financialEntry!.dueDate!)}',
+                '${n.financialEntry!.statusLabel}${n.financialEntry!.paymentMethod == null ? '' : '\n${n.financialEntry!.paymentLabel}'}\n${n.financialEntry!.dueDate == null ? '' : _day(n.financialEntry!.dueDate!)}',
                 n.photoAttachments.map((a) => a.name).join('\n'),
               ],
           ],

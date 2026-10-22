@@ -1,3 +1,4 @@
+import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/finance/financial_budget_dialog.dart';
 import 'package:nocknock/features/finance/list_templates.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
@@ -631,7 +632,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                     label: state.selectedList?.isFinancial == true
                         ? state.selectedList!.configuration.entryLabel
                         : 'Nueva nota',
-                    scrollProgress: _appBarScrollProgress,
+                    scrollProgress: state.selectedList?.isFinancial == true
+                        ? const AlwaysStoppedAnimation<double>(1)
+                        : _appBarScrollProgress,
                     onPressed: state.isSaving ? null : _openNewNoteEditor,
                     onLongPress: () => _openQuickCapture(),
                     backgroundColor: colorScheme.primary,
@@ -866,6 +869,10 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                                       selectedAssigneeUid,
                                     ),
                                   ),
+                                  if (state.selectedList?.isFinancial == true)
+                                    const SliverToBoxAdapter(
+                                      child: SizedBox(height: 100),
+                                    ),
                                 ],
                               ),
                             ),
