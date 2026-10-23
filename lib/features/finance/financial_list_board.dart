@@ -14,7 +14,10 @@ import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
 /// Totals always use the complete list, independently of the visible status filter.
-Map<String, Map<String, int>> financialTotals(Iterable<Note> notes) {
+Map<String, Map<String, int>> financialTotals(
+  Iterable<Note> notes, {
+  String? month,
+}) {
   final totals = <String, Map<String, int>>{};
   for (final note in notes) {
     final entry = note.financialEntry;
@@ -28,12 +31,12 @@ Map<String, Map<String, int>> financialTotals(Iterable<Note> notes) {
       entry.currency,
       () => {'total': 0, 'pending': 0, 'paid': 0, 'accepted': 0, 'rejected': 0},
     );
-    group['total'] = group['total']! + entry.amountMinor;
+    group['total'] = group['total']! + entry.amountInMonth(month);
     if (['accepted', 'rejected'].contains(entry.status)) {
-      group[entry.status] = group[entry.status]! + entry.amountMinor;
+      group[entry.status] = group[entry.status]! + entry.amountInMonth(month);
     } else {
-      group['paid'] = group['paid']! + entry.paidMinor;
-      group['pending'] = group['pending']! + entry.balanceMinor;
+      group['paid'] = group['paid']! + entry.paidInMonth(month);
+      group['pending'] = group['pending']! + entry.balanceInMonth(month);
     }
   }
   return totals;
@@ -190,13 +193,13 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
     final config = widget.list.configuration;
     final allRecords = financialRecords(widget.notes);
     final records = financialRecords(widget.notes, month: _month);
-    final totals = financialTotals(records);
+    final totals = financialTotals(records, month: _month);
     final months = {
       financialMonth(DateTime.now()),
       ?_month,
       ...allRecords
           .where((n) => n.financialEntry != null)
-          .map((n) => financialMonth(n.financialEntry!.date)),
+          .expand((n) => n.financialEntry!.periodDates.map(financialMonth)),
     }.toList()..sort((a, b) => b.compareTo(a));
     final budgetNotes =
         widget.notes
@@ -738,7 +741,9 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                               entry.formattedAmount,
                               config.statusLabel(entry.status),
                               if (entry.paymentMethod != null)
-                                entry.paymentLabel,
+                                entry.isDeferred
+                                    ? 'Diferido · ${entry.paymentLabel}'
+                                    : entry.paymentLabel,
                               DateFormat('dd-MM-yyyy').format(entry.date),
                             ],
                           ].join(' · '),
@@ -794,6 +799,14 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                             fontWeight: FontWeight.w800,
                           ),
                         ),
+                        if (entry.isDeferred)
+                          Text(
+                            'Diferido · ${entry.installments} cuotas mensuales · ${FinancialEntry.formatAmount(entry.installmentSchedule.first.amountMinor, entry.currency)} por cuota',
+                          ),
+                        if (_month != null && entry.isDeferred)
+                          Text(
+                            'Cuota del mes: ${FinancialEntry.formatAmount(entry.amountInMonth(_month), entry.currency)}',
+                          ),
                         if (entry.payments.isNotEmpty)
                           Text(
                             'Abonado: ${FinancialEntry.formatAmount(entry.paidMinor, entry.currency)} · Saldo: ${FinancialEntry.formatAmount(entry.balanceMinor, entry.currency)}',
@@ -823,7 +836,10 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                               entry.counterparty,
                             DateFormat('dd-MM-yyyy').format(entry.date),
                             config.statusLabel(entry.status),
-                            if (entry.paymentMethod != null) entry.paymentLabel,
+                            if (entry.paymentMethod != null)
+                              entry.isDeferred
+                                  ? 'Diferido · ${entry.paymentLabel}'
+                                  : entry.paymentLabel,
                           ].join(' · '),
                         ),
                       ] else

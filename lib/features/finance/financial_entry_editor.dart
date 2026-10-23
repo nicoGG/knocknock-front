@@ -1,3 +1,5 @@
+import 'package:nocknock/features/finance/financial_installment_preview.dart';
+import 'package:nocknock/features/finance/receipt_scanner.dart';
 import 'package:nocknock/features/finance/payment_method_field.dart';
 import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
 import 'package:nocknock/features/finance/financial_amount_input.dart';
@@ -96,9 +98,11 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   late final _delivery = TextEditingController(
     text: _existing?.deliveryDays?.toString() ?? '',
   );
-  late DateTime? _due = _existing?.effectiveDueDate(
-    receivable: widget.list.configuration.type.name == 'receivables',
-  );
+  late DateTime? _due = _existing?.isDeferred == true
+      ? _existing?.dueDate
+      : _existing?.effectiveDueDate(
+          receivable: widget.list.configuration.type.name == 'receivables',
+        );
   late DateTime? _validUntil = _existing?.validUntil;
   late DateTime? _reminder = widget.note?.reminderAt;
   late ReminderRecurrence? _recurrence = widget.note?.reminderRecurrence;
@@ -110,6 +114,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
       .toList();
   bool get _isClosed => ['paid', 'accepted', 'rejected'].contains(_status);
   int get _paid => _payments.fold(0, (sum, p) => sum + p.amountMinor);
+  bool _readingReceipt = false;
   bool _saving = false;
   String? _error;
   @override
@@ -126,6 +131,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   }
 
   Future<void> _save() async {
+    if (_readingReceipt) return;
     if (!_form.currentState!.validate()) return;
     final amount = parseFinancialAmountInput(_amount.text, _currency)!;
     if (_paid > amount ||
@@ -284,8 +290,35 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
       final picked = await pickNoteAttachments(
         context: context,
         remaining: noteAttachmentMaxCount - _attachments.length,
+        includeCamera: true,
       );
-      if (mounted) setState(() => _attachments.addAll(picked));
+      if (!mounted || picked.isEmpty) return;
+      setState(() {
+        _attachments.addAll(picked);
+        _readingReceipt = true;
+      });
+      try {
+        final total = await suggestReceiptTotal(
+          context,
+          picked.first,
+          _currency,
+        );
+        if (mounted && total != null) {
+          setState(
+            () => _amount.text = financialAmountInput(
+              FinancialEntry(
+                amountMinor: total,
+                currency: _currency,
+                counterparty: '',
+                date: _date,
+              ).editableAmount,
+              _currency,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _readingReceipt = false);
+      }
     } on NoteAttachmentPickFailure catch (error) {
       if (mounted) setState(() => _error = error.message);
     }
@@ -489,6 +522,20 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                         if (v != 'credit') _installments.clear();
                       }),
                     ),
+                    if (_method == 'credit')
+                      FinancialInstallmentPreview(
+                        amount: _amount,
+                        installments: _installments,
+                        currency: _currency,
+                        firstDate: _due ?? financialMonthOffset(_date, 1),
+                        paidMinor: _status == 'paid'
+                            ? parseFinancialAmountInput(
+                                    _amount.text,
+                                    _currency,
+                                  ) ??
+                                  0
+                            : _paid,
+                      ),
                     TextFormField(
                       key: const ValueKey('financial-counterparty'),
                       controller: _party,
@@ -583,17 +630,29 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.event_busy_outlined),
-                      title: const Text('Vencimiento'),
+                      title: Text(
+                        _method == 'credit'
+                            ? 'Fecha de primera cuota'
+                            : 'Vencimiento',
+                      ),
                       subtitle: Text(
                         _due == null
-                            ? 'Sin vencimiento'
+                            ? (_method == 'credit'
+                                  ? DateFormat('dd-MM-yyyy')
+                                        .format(financialMonthOffset(_date, 1))
+                                  : 'Sin vencimiento')
                             : DateFormat('dd-MM-yyyy').format(_due!),
                       ),
                       onTap: _saving
                           ? null
                           : () => _pickDate(
-                              'Vencimiento',
-                              _due,
+                              _method == 'credit'
+                                  ? 'Fecha de primera cuota'
+                                  : 'Vencimiento',
+                              _due ??
+                                  (_method == 'credit'
+                                      ? financialMonthOffset(_date, 1)
+                                      : null),
                               (date) => _due = date,
                             ),
                       trailing: _due == null
@@ -1047,11 +1106,16 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                       key: const ValueKey('financial-attach'),
                       onPressed:
                           _saving ||
+                              _readingReceipt ||
                               _attachments.length >= noteAttachmentMaxCount
                           ? null
                           : _attach,
                       icon: const Icon(Icons.attach_file),
-                      label: const Text('Adjuntar boleta, captura o PDF'),
+                      label: Text(
+                        _readingReceipt
+                            ? 'Leyendo total…'
+                            : 'Escanear o adjuntar boleta',
+                      ),
                     ),
                     if (widget.onHistory != null)
                       TextButton.icon(
@@ -1085,7 +1149,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                     const SizedBox(height: 16),
                     FilledButton(
                       key: const ValueKey('financial-save'),
-                      onPressed: _saving ? null : _save,
+                      onPressed: _saving || _readingReceipt ? null : _save,
                       child: Text(_saving ? 'Guardando…' : 'Guardar registro'),
                     ),
                   ],
@@ -1134,12 +1198,34 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       _attachmentError = null;
     });
     try {
-      final picked = await pickNoteAttachments(context: context, remaining: 1);
+      final picked = await pickNoteAttachments(
+        context: context,
+        remaining: 1,
+        includeCamera: true,
+      );
       if (!mounted || picked.isEmpty) return;
       setState(() {
         _newAttachments.addAll(picked);
         _receipt = picked.first.id;
       });
+      final total = await suggestReceiptTotal(
+        context,
+        picked.first,
+        widget.currency,
+      );
+      if (mounted && total != null) {
+        setState(
+          () => _amount.text = financialAmountInput(
+            FinancialEntry(
+              amountMinor: total,
+              currency: widget.currency,
+              counterparty: '',
+              date: _date,
+            ).editableAmount,
+            widget.currency,
+          ),
+        );
+      }
     } on NoteAttachmentPickFailure catch (e) {
       if (mounted) setState(() => _attachmentError = e.message);
     } catch (_) {
@@ -1232,6 +1318,13 @@ class _PaymentDialogState extends State<_PaymentDialog> {
               if (v != 'credit') _installments.clear();
             }),
           ),
+          if (_method == 'credit')
+            FinancialInstallmentPreview(
+              amount: _amount,
+              installments: _installments,
+              currency: widget.currency,
+              firstDate: financialMonthOffset(_date, 1),
+            ),
           ListTile(
             title: Text(DateFormat('dd-MM-yyyy').format(_date)),
             trailing: const Icon(Icons.calendar_today),

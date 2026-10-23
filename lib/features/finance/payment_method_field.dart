@@ -52,7 +52,8 @@ class FinancialPaymentMethodField extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'Número de cuotas',
             prefixIcon: Icon(Icons.calendar_month_rounded),
-            helperText: 'De 1 a 120 cuotas. No modifica el monto ni crea abonos automáticos.',
+            helperMaxLines: 3,
+            helperText: 'De 1 a 120 cuotas. El total se distribuye mensualmente, sin marcarlo como pagado.',
           ),
           validator: (v) {
             final n = int.tryParse(v ?? '');

@@ -15,6 +15,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        ReceiptScanner.register(this, flutterEngine.dartExecutor.binaryMessenger)
         captureWidgetAction(intent)
         widgetChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "cl.nocknock/home_widgets").also { channel ->
             channel.setMethodCallHandler { call, result ->

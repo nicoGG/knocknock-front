@@ -196,7 +196,9 @@ open class NockNockWidget : AppWidgetProvider() {
                 views.removeAllViews(R.id.widget_rows)
                 var shown = 0
                 val height = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 310)
-                val rowLimit = if (config != null) Int.MAX_VALUE else ((height - 140) / 44).coerceIn(1, 5)
+                // Reserve space for padding, configuration, headings, status and capture.
+                // Bound configured lists too: RemoteViews cannot host a ScrollView.
+                val rowLimit = ((height - 188) / 44).coerceIn(1, 20)
                 if (!hidden) for (i in 0 until rows.length()) {
                     val row = rows.optJSONObject(i) ?: continue
                     val noteId = row.optString("id")

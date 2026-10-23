@@ -21,11 +21,12 @@ class NoteAttachmentPickFailure implements Exception {
   final String message;
 }
 
-enum NoteAttachmentSource { photos, pdf }
+enum NoteAttachmentSource { photos, pdf, camera }
 
 Future<List<NoteAttachment>> pickNoteAttachments({
   required BuildContext context,
   int remaining = noteAttachmentMaxCount,
+  bool includeCamera = false,
 }) async {
   if (remaining <= 0) return const [];
   final source = await showLiquidBottomSheet<NoteAttachmentSource>(
@@ -35,6 +36,20 @@ Future<List<NoteAttachment>> pickNoteAttachments({
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (includeCamera &&
+              !kIsWeb &&
+              [
+                TargetPlatform.android,
+                TargetPlatform.iOS,
+              ].contains(defaultTargetPlatform))
+            ListTile(
+              key: const ValueKey('pick-note-camera'),
+              leading: const Icon(Icons.document_scanner_outlined),
+              title: const Text('Escanear boleta'),
+              subtitle: const Text('Tomar una foto con la cámara'),
+              onTap: () =>
+                  Navigator.pop(sheetContext, NoteAttachmentSource.camera),
+            ),
           ListTile(
             key: const ValueKey('pick-note-photos'),
             leading: const Icon(Icons.photo_library_outlined),
@@ -55,8 +70,12 @@ Future<List<NoteAttachment>> pickNoteAttachments({
     ),
   );
   if (!context.mounted || source == null) return const [];
-  if (source == NoteAttachmentSource.photos) {
-    return pickNotePhotos(remaining: remaining);
+  if (source == NoteAttachmentSource.photos ||
+      source == NoteAttachmentSource.camera) {
+    return pickNotePhotos(
+      remaining: remaining,
+      camera: source == NoteAttachmentSource.camera,
+    );
   }
   final attachment = await pickNotePdf();
   return attachment == null ? const [] : [attachment];
@@ -114,15 +133,28 @@ NoteAttachment createNotePdfAttachment({
 Future<List<NoteAttachment>> pickNotePhotos({
   int remaining = noteAttachmentMaxCount,
   ImagePicker? imagePicker,
+  bool camera = false,
 }) async {
   if (remaining <= 0) return const [];
-  final files = await (imagePicker ?? ImagePicker()).pickMultiImage(
-    maxWidth: 1280,
-    maxHeight: 1280,
-    imageQuality: 70,
-    limit: remaining.clamp(1, noteAttachmentMaxCount),
-    requestFullMetadata: false,
-  );
+  final picker = imagePicker ?? ImagePicker();
+  final photo = camera
+      ? await picker.pickImage(
+          source: ImageSource.camera,
+          maxWidth: 1920,
+          maxHeight: 1920,
+          imageQuality: 85,
+          requestFullMetadata: false,
+        )
+      : null;
+  final files = camera
+      ? <XFile>[?photo]
+      : await picker.pickMultiImage(
+          maxWidth: 1280,
+          maxHeight: 1280,
+          imageQuality: 70,
+          limit: remaining.clamp(1, noteAttachmentMaxCount),
+          requestFullMetadata: false,
+        );
   final attachments = <NoteAttachment>[];
   for (final file in files.take(remaining)) {
     final sourceBytes = await file.readAsBytes();

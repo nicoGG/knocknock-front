@@ -22,6 +22,51 @@ String financialPaymentLabel(String? method, int? installments) =>
       _ => 'Sin especificar',
     };
 
+/// Monthly installments retain integer minor units, including the remainder.
+class FinancialInstallment {
+  const FinancialInstallment(
+    this.number,
+    this.date,
+    this.amountMinor,
+    this.paidMinor,
+  );
+  final int number;
+  final DateTime date;
+  final int amountMinor;
+  final int paidMinor;
+  int get balanceMinor => amountMinor - paidMinor;
+}
+
+DateTime financialMonthOffset(DateTime date, int offset) {
+  final last = DateTime(date.year, date.month + offset + 1, 0).day;
+  return DateTime(
+    date.year,
+    date.month + offset,
+    date.day > last ? last : date.day,
+  );
+}
+
+List<FinancialInstallment> financialInstallmentSchedule({
+  required int amountMinor,
+  required int count,
+  required DateTime firstDate,
+  int paidMinor = 0,
+}) {
+  if (amountMinor <= 0 || count < 1 || count > 120) return const [];
+  var remainingPaid = paidMinor.clamp(0, amountMinor);
+  return List.generate(count, (i) {
+    final amount = amountMinor ~/ count + (i < amountMinor % count ? 1 : 0);
+    final paid = remainingPaid.clamp(0, amount);
+    remainingPaid -= paid;
+    return FinancialInstallment(
+      i + 1,
+      financialMonthOffset(firstDate, i),
+      amount,
+      paid,
+    );
+  });
+}
+
 class FinancialEntry extends Equatable {
   const FinancialEntry({
     required this.amountMinor,
@@ -65,8 +110,47 @@ class FinancialEntry extends Equatable {
       ? amountMinor
       : payments.fold(0, (sum, p) => sum + p.amountMinor);
   int get balanceMinor => status == 'rejected' ? 0 : amountMinor - paidMinor;
-  DateTime? effectiveDueDate({bool receivable = false}) =>
-      dueDate ?? (receivable && legacyDateAsDue ? date : null);
+  bool get isDeferred =>
+      !isBudget &&
+      !isSettlement &&
+      paymentMethod == 'credit' &&
+      (installments ?? 0) > 1;
+  DateTime get firstInstallmentDate => dueDate ?? financialMonthOffset(date, 1);
+  List<FinancialInstallment> get installmentSchedule => isDeferred
+      ? financialInstallmentSchedule(
+          amountMinor: amountMinor,
+          count: installments!,
+          firstDate: firstInstallmentDate,
+          paidMinor: paidMinor,
+        )
+      : const [];
+  Iterable<DateTime> get periodDates =>
+      isDeferred ? installmentSchedule.map((i) => i.date) : [date];
+  bool occursInMonth(String month) =>
+      periodDates.any((d) => DateFormat('yyyy-MM').format(d) == month);
+  int amountInMonth(String? month) => month == null
+      ? amountMinor
+      : isDeferred
+      ? installmentSchedule
+            .where((i) => DateFormat('yyyy-MM').format(i.date) == month)
+            .fold(0, (sum, i) => sum + i.amountMinor)
+      : occursInMonth(month)
+      ? amountMinor
+      : 0;
+  int paidInMonth(String? month) => month == null
+      ? paidMinor
+      : isDeferred
+      ? installmentSchedule
+            .where((i) => DateFormat('yyyy-MM').format(i.date) == month)
+            .fold(0, (sum, i) => sum + i.paidMinor)
+      : occursInMonth(month)
+      ? paidMinor
+      : 0;
+  int balanceInMonth(String? month) =>
+      status == 'rejected' ? 0 : amountInMonth(month) - paidInMonth(month);
+  DateTime? effectiveDueDate({bool receivable = false}) => isDeferred
+      ? installmentSchedule.where((i) => i.balanceMinor > 0).firstOrNull?.date
+      : dueDate ?? (receivable && legacyDateAsDue ? date : null);
   bool isOverdue(DateTime now, {bool receivable = false}) {
     final due = effectiveDueDate(receivable: receivable);
     return !isBudget &&

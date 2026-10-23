@@ -342,13 +342,20 @@ class _FinancialActionButtonState extends State<FinancialActionButton> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        widget.label,
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: enabled
-                              ? colors.primary
-                              : colors.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.label,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: enabled
+                                    ? colors.primary
+                                    : colors.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                              ),
                         ),
                       ),
                     ),

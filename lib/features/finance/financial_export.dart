@@ -26,10 +26,15 @@ String financialExportName(String name) {
 
 /// Minimal Office Open XML workbook. Text is always an inline string, never a
 /// formula; amounts are numeric cells in major units with a currency column.
-Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
-  final records = financialRecords(notes)
-      .where((n) => n.financialEntry != null)
-      .toList();
+Uint8List financialExcel(
+  List<Note> notes, {
+  List<Note>? balanceNotes,
+  String? month,
+}) {
+  final records = financialRecords(
+    notes,
+    month: month,
+  ).where((n) => n.financialEntry != null).toList();
   num amount(int value, String currency) =>
       currency == 'CLP' ? value : value / 100;
   final sheets = <String, List<List<Object?>>>{
@@ -58,9 +63,18 @@ Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
           n.financialEntry!.counterparty,
           _day(n.financialEntry!.date),
           n.financialEntry!.currency,
-          amount(n.financialEntry!.amountMinor, n.financialEntry!.currency),
-          amount(n.financialEntry!.paidMinor, n.financialEntry!.currency),
-          amount(n.financialEntry!.balanceMinor, n.financialEntry!.currency),
+          amount(
+            n.financialEntry!.amountInMonth(month),
+            n.financialEntry!.currency,
+          ),
+          amount(
+            n.financialEntry!.paidInMonth(month),
+            n.financialEntry!.currency,
+          ),
+          amount(
+            n.financialEntry!.balanceInMonth(month),
+            n.financialEntry!.currency,
+          ),
           n.financialEntry!.statusLabel,
           n.financialEntry!.dueDate == null
               ? ''
@@ -77,6 +91,21 @@ Uint8List financialExcel(List<Note> notes, {List<Note>? balanceNotes}) {
               : n.financialEntry!.paymentLabel,
           n.financialEntry!.installments ?? '',
         ],
+    ],
+    'Cuotas diferidas': [
+      ['Concepto', 'Cuota', 'Fecha', 'Moneda', 'Monto', 'Pagado', 'Pendiente'],
+      for (final n in records)
+        for (final quota in n.financialEntry!.installmentSchedule)
+          if (month == null || financialMonth(quota.date) == month)
+            [
+              n.title,
+              '${quota.number}/${n.financialEntry!.installments}',
+              _day(quota.date),
+              n.financialEntry!.currency,
+              amount(quota.amountMinor, n.financialEntry!.currency),
+              amount(quota.paidMinor, n.financialEntry!.currency),
+              amount(quota.balanceMinor, n.financialEntry!.currency),
+            ],
     ],
     'Abonos': [
       [
@@ -155,9 +184,10 @@ Future<Uint8List> financialPdf(
   String? month,
   List<Note>? balanceNotes,
 }) async {
-  final records = financialRecords(notes)
-      .where((n) => n.financialEntry != null)
-      .toList();
+  final records = financialRecords(
+    notes,
+    month: month,
+  ).where((n) => n.financialEntry != null).toList();
   final font = pw.Font.ttf(
     await rootBundle.load('assets/fonts/Lato-Regular.ttf'),
   );
@@ -186,7 +216,7 @@ Future<Uint8List> financialPdf(
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(vertical: 5),
             child: pw.Text(
-              '$c · Registrado: ${FinancialEntry.formatAmount(records.where((n) => n.financialEntry!.currency == c).fold(0, (sum, n) => sum + (n.financialEntry!.isSettlement ? 0 : n.financialEntry!.amountMinor)), c)} · Abonado: ${FinancialEntry.formatAmount(records.where((n) => n.financialEntry!.currency == c).fold(0, (sum, n) => sum + (n.financialEntry!.isSettlement ? 0 : n.financialEntry!.paidMinor)), c)}',
+              '$c · Registrado: ${FinancialEntry.formatAmount(records.where((n) => n.financialEntry!.currency == c).fold(0, (sum, n) => sum + (n.financialEntry!.isSettlement ? 0 : n.financialEntry!.amountInMonth(month))), c)} · Abonado: ${FinancialEntry.formatAmount(records.where((n) => n.financialEntry!.currency == c).fold(0, (sum, n) => sum + (n.financialEntry!.isSettlement ? 0 : n.financialEntry!.paidInMonth(month))), c)}',
             ),
           ),
         pw.SizedBox(height: 12),
@@ -207,13 +237,16 @@ Future<Uint8List> financialPdf(
               [
                 '${n.title}\n${n.financialEntry!.counterparty}',
                 _day(n.financialEntry!.date),
-                n.financialEntry!.formattedAmount,
                 FinancialEntry.formatAmount(
-                  n.financialEntry!.paidMinor,
+                  n.financialEntry!.amountInMonth(month),
                   n.financialEntry!.currency,
                 ),
                 FinancialEntry.formatAmount(
-                  n.financialEntry!.balanceMinor,
+                  n.financialEntry!.paidInMonth(month),
+                  n.financialEntry!.currency,
+                ),
+                FinancialEntry.formatAmount(
+                  n.financialEntry!.balanceInMonth(month),
                   n.financialEntry!.currency,
                 ),
                 '${n.financialEntry!.statusLabel}${n.financialEntry!.paymentMethod == null ? '' : '\n${n.financialEntry!.paymentLabel}'}\n${n.financialEntry!.dueDate == null ? '' : _day(n.financialEntry!.dueDate!)}',
@@ -221,6 +254,32 @@ Future<Uint8List> financialPdf(
               ],
           ],
         ),
+        if (records.any((n) => n.financialEntry!.isDeferred)) ...[
+          pw.SizedBox(height: 12),
+          pw.Text('Calendario de cuotas diferidas'),
+          pw.TableHelper.fromTextArray(
+            headers: ['Concepto', 'Cuota', 'Fecha', 'Monto', 'Pendiente'],
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            data: [
+              for (final n in records)
+                for (final quota in n.financialEntry!.installmentSchedule)
+                  if (month == null || financialMonth(quota.date) == month)
+                    [
+                      n.title,
+                      '${quota.number}/${n.financialEntry!.installments}',
+                      _day(quota.date),
+                      FinancialEntry.formatAmount(
+                        quota.amountMinor,
+                        n.financialEntry!.currency,
+                      ),
+                      FinancialEntry.formatAmount(
+                        quota.balanceMinor,
+                        n.financialEntry!.currency,
+                      ),
+                    ],
+            ],
+          ),
+        ],
         pw.SizedBox(height: 12),
         if (sharedTransfers(balanceNotes ?? records).isNotEmpty)
           pw.Text('Saldos compartidos acumulados de toda la lista'),
@@ -254,7 +313,7 @@ Future<String?> saveFinancialExport({
   Uint8List bytes;
   String mime;
   if (format == 'xlsx') {
-    bytes = financialExcel(selected, balanceNotes: notes);
+    bytes = financialExcel(selected, balanceNotes: notes, month: month);
     mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   } else if (format == 'pdf') {
     bytes = await financialPdf(
@@ -272,7 +331,10 @@ Future<String?> saveFinancialExport({
       '$name.pdf',
       await financialPdf(list, selected, month: month, balanceNotes: notes),
     );
-    add('$name.xlsx', financialExcel(selected, balanceNotes: notes));
+    add(
+      '$name.xlsx',
+      financialExcel(selected, balanceNotes: notes, month: month),
+    );
     for (final note in selected) {
       for (final attachment in note.photoAttachments) {
         final source = attachment.dataBase64 != null

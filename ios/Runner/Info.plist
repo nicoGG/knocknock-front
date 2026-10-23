@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Usamos la cámara para escanear boletas y adjuntarlas a tus registros.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Elige fotos para fondos o adjunta boletas y capturas a tus notas.</string>
 	<key>NSFaceIDUsageDescription</key>

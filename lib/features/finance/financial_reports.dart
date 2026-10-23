@@ -11,7 +11,7 @@ List<Note> financialRecords(Iterable<Note> notes, {String? month}) => notes
           n.financialEntry?.isBudget != true &&
           (month == null ||
               (n.financialEntry != null &&
-                  financialMonth(n.financialEntry!.date) == month)),
+                  n.financialEntry!.occursInMonth(month))),
     )
     .toList();
 
@@ -91,5 +91,5 @@ int budgetSpent(Iterable<Note> notes, FinancialEntry budget) =>
                   e.currency != budget.currency ||
                   e.status == 'rejected'
               ? 0
-              : e.amountMinor);
+              : e.amountInMonth(budget.period == 'all' ? null : budget.period));
     });

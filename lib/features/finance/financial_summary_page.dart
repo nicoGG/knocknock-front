@@ -54,15 +54,15 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
           );
     final total = records.fold<int>(
       0,
-      (v, n) => v + n.financialEntry!.amountMinor,
+      (v, n) => v + n.financialEntry!.amountInMonth(month),
     );
     final paid = records.fold<int>(
       0,
-      (v, n) => v + n.financialEntry!.paidMinor,
+      (v, n) => v + n.financialEntry!.paidInMonth(month),
     );
     final pending = records.fold<int>(
       0,
-      (v, n) => v + n.financialEntry!.balanceMinor,
+      (v, n) => v + n.financialEntry!.balanceInMonth(month),
     );
     final groups = <String, int>{};
     for (final note in records) {
@@ -70,7 +70,7 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
       final name = e.counterparty.trim().isEmpty
           ? 'Sin persona o comercio'
           : e.counterparty.trim();
-      groups[name] = (groups[name] ?? 0) + e.amountMinor;
+      groups[name] = (groups[name] ?? 0) + e.amountInMonth(month);
     }
     final months =
         financialRecords(notes)
@@ -79,7 +79,7 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
                   n.financialEntry != null &&
                   n.financialEntry?.isSettlement != true,
             )
-            .map((n) => financialMonth(n.financialEntry!.date))
+            .expand((n) => n.financialEntry!.periodDates.map(financialMonth))
             .toSet()
             .toList()
           ..sort((a, b) => b.compareTo(a));
@@ -96,10 +96,16 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
     final dated = <String, int>{};
     for (final note in records) {
       final e = note.financialEntry!;
-      final label = month == null
-          ? DateFormat('MMMM yyyy', 'es').format(e.date)
-          : DateFormat('dd-MM-yyyy').format(e.date);
-      dated[label] = (dated[label] ?? 0) + e.amountMinor;
+      for (final date in e.periodDates) {
+        final period = financialMonth(date);
+        if (month != null && period != month) continue;
+        final label = month == null
+            ? DateFormat('MMMM yyyy', 'es').format(date)
+            : DateFormat('dd-MM-yyyy').format(date);
+        dated[label] =
+            (dated[label] ?? 0) +
+            (e.isDeferred ? e.amountInMonth(period) : e.amountMinor);
+      }
     }
     final chartGroups = _breakdown == 'people'
         ? groups
@@ -332,7 +338,7 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
                                 ),
                               ),
                               subtitle: Text(
-                                '${FinancialEntry.formatAmount(note.financialEntry!.amountMinor, currency)} · ${list.configuration.statusLabel(note.financialEntry!.status)}${note.financialEntry!.paymentMethod == null ? '' : ' · ${note.financialEntry!.paymentLabel}'}\n${DateFormat('dd-MM-yyyy').format(note.financialEntry!.date)}',
+                                '${FinancialEntry.formatAmount(note.financialEntry!.amountInMonth(month), currency)} · ${list.configuration.statusLabel(note.financialEntry!.status)}${note.financialEntry!.paymentMethod == null ? '' : ' · ${note.financialEntry!.paymentLabel}'}\n${DateFormat('dd-MM-yyyy').format(note.financialEntry!.date)}',
                               ),
                               trailing: const Icon(
                                 Icons.chevron_right_rounded,
