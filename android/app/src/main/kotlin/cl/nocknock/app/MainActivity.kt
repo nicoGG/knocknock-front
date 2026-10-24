@@ -27,8 +27,15 @@ class MainActivity : FlutterFragmentActivity() {
                         "takeAction" -> { result.success(pendingWidgetAction); pendingWidgetAction = null }
                         "requestPin" -> {
                             val manager = AppWidgetManager.getInstance(this)
+                            val provider = when (call.argument<String>("kind")) {
+                                "summary" -> SummaryWidget::class.java
+                                "upcoming" -> UpcomingWidget::class.java
+                                "expanded" -> ExpandedListWidget::class.java
+                                "capture" -> QuickCaptureWidget::class.java
+                                else -> NockNockWidget::class.java
+                            }
                             result.success(Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported &&
-                                manager.requestPinAppWidget(ComponentName(this, NockNockWidget::class.java), null, null))
+                                manager.requestPinAppWidget(ComponentName(this, provider), null, null))
                         }
                         else -> result.notImplemented()
                     }

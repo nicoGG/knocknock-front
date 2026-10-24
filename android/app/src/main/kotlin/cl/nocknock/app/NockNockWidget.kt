@@ -93,7 +93,7 @@ object WidgetStore {
     }
     fun refresh(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
-        for (type in listOf(NockNockWidget::class.java, QuickCaptureWidget::class.java)) {
+        for (type in listOf(NockNockWidget::class.java, SummaryWidget::class.java, UpcomingWidget::class.java, ExpandedListWidget::class.java, QuickCaptureWidget::class.java)) {
             for (id in manager.getAppWidgetIds(ComponentName(context, type))) {
                 NockNockWidget.render(context, manager, id, type == QuickCaptureWidget::class.java)
             }
@@ -133,6 +133,31 @@ open class NockNockWidget : AppWidgetProvider() {
         }
         fun render(context: Context, manager: AppWidgetManager, id: Int, captureOnly: Boolean) {
             val state = WidgetStore.read(context)
+            val options = manager.getAppWidgetOptions(id)
+            val pendingOnly = manager.getAppWidgetInfo(id)?.provider?.className == UpcomingWidget::class.java.name
+            fun sized(width: Int, height: Int): RemoteViews {
+                val sizeOptions = android.os.Bundle(options).apply {
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, width)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, height)
+                }
+                return buildViews(context, id, captureOnly, state, sizeOptions, pendingOnly)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                @Suppress("DEPRECATION")
+                val sizes = options.getParcelableArrayList<android.util.SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+                if (!sizes.isNullOrEmpty()) {
+                    val layouts = sizes.distinct().take(16).associateWith { sized(it.width.toInt(), it.height.toInt()) }
+                    manager.updateAppWidget(id, RemoteViews(layouts))
+                    return
+                }
+            }
+            val minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 320)
+            val minHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 310)
+            val maxWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, minWidth)
+            val maxHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, minHeight)
+            manager.updateAppWidget(id, RemoteViews(sized(maxWidth, minHeight), sized(minWidth, maxHeight)))
+        }
+        internal fun buildViews(context: Context, id: Int, captureOnly: Boolean, state: JSONObject, options: android.os.Bundle, pendingOnly: Boolean = false): RemoteViews {
             val base = state.optJSONObject("snapshot") ?: JSONObject()
             val config = state.optJSONObject("configs")?.optJSONObject(id.toString())
             val catalog = base.optJSONArray("catalog") ?: JSONArray()
@@ -172,43 +197,73 @@ open class NockNockWidget : AppWidgetProvider() {
             val queued = state.optJSONArray("queue") ?: JSONArray()
             val queuedIds = (0 until queued.length()).mapNotNull { queued.optJSONObject(it)?.let { row -> row.optString("id") + ":" + row.optString("subtaskId") } }.toSet()
             val rows = snapshot.optJSONArray("rows") ?: JSONArray()
-            val visibleQueuedCount = (0 until rows.length()).count { queuedIds.contains(rows.optJSONObject(it)?.let { row -> row.optString("id") + ":" + row.optString("subtaskId") }) }
-            val views = RemoteViews(context.packageName, if (captureOnly) R.layout.widget_capture else R.layout.widget_pending)
+            fun isCompleted(row: JSONObject) = row.optBoolean("completed") || queuedIds.contains(row.optString("id") + ":" + row.optString("subtaskId"))
+            val completedCount = (0 until rows.length()).count { rows.optJSONObject(it)?.let(::isCompleted) == true }
+            val pendingCount = (if (config == null) snapshot.optInt("total") else rows.length()) - completedCount
+            val appearance = WidgetAppearance(context, base)
+            val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 310)
+            val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 320)
+            val sizeLayout = WidgetSizeLayout.choose(width, height, captureOnly)
+            val views = RemoteViews(context.packageName, sizeLayout.resource)
+            appearance.decorate(views, captureOnly, sizeLayout == WidgetSizeLayout.CAPTURE_SMALL)
             views.setOnClickPendingIntent(R.id.widget_capture, launch(context, "capture", owner, snapshot.optString("captureListId", "").let { if (it == "null") "" else it }))
             if (!captureOnly) {
                 val configure = Intent(context, WidgetConfigurationActivity::class.java)
                     .setData(Uri.parse("nocknock://configure/$id"))
                     .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                 views.setOnClickPendingIntent(R.id.widget_configure, PendingIntent.getActivity(context, id, configure, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                if (sizeLayout == WidgetSizeLayout.SUMMARY) {
+                    views.setTextViewTextSize(R.id.widget_title, android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+                }
+                if (sizeLayout == WidgetSizeLayout.COMPACT && width >= 230) {
+                    views.setTextViewText(R.id.widget_capture, "＋ Nueva nota")
+                    views.setTextViewTextSize(R.id.widget_capture, android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+                }
                 if (selected?.optBoolean("expenses") == true && !hidden) {
                     val expense = Intent(context, WidgetExpenseActivity::class.java)
                         .setData(Uri.parse("nocknock://expense/$id"))
                         .putExtra("boardId", selected.optString("listId")).putExtra("owner", owner)
-                    views.setTextViewText(R.id.widget_capture, "＋ Agregar gasto")
+                    views.setTextViewText(R.id.widget_capture, when {
+                        sizeLayout == WidgetSizeLayout.FULL -> "Agregar gasto"
+                        sizeLayout == WidgetSizeLayout.COMPACT && width >= 230 -> "＋ Agregar gasto"
+                        else -> "＋"
+                    })
+                    views.setContentDescription(R.id.widget_capture, "Agregar gasto")
                     views.setOnClickPendingIntent(R.id.widget_capture, PendingIntent.getActivity(context, id, expense, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                 }
                 views.setTextViewText(R.id.widget_title, snapshot.optString("title", "Hoy"))
                 views.setOnClickPendingIntent(R.id.widget_title, launch(context, "today", owner, snapshot.optString("listId", "").let { if (it == "null") "" else it }))
-                views.setTextViewText(R.id.widget_count, if (hidden) "Contenido oculto" else "${(snapshot.optInt("total") - visibleQueuedCount).coerceAtLeast(0)} pendientes")
+                views.setTextViewText(R.id.widget_count, if (hidden) "Contenido oculto" else "${pendingCount.coerceAtLeast(0)} ${if (pendingCount == 1) "pendiente" else "pendientes"}" + if (sizeLayout != WidgetSizeLayout.SUMMARY && config != null && completedCount > 0) " · $completedCount completadas" else "")
                 if (selected?.optBoolean("financial") == true && !hidden) {
                     views.setTextViewText(R.id.widget_count, "Total · " + selected.optString("summary").ifEmpty { "Sin movimientos" })
                 }
                 views.removeAllViews(R.id.widget_rows)
                 var shown = 0
-                val height = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 310)
-                // Reserve space for padding, configuration, headings, status and capture.
-                // Bound configured lists too: RemoteViews cannot host a ScrollView.
-                val rowLimit = ((height - 188) / 44).coerceIn(1, 20)
+                // Reserve header/footer space, including a link for truncated lists.
+                // Rows use a 44dp touch target plus a 4dp gap; account for font scaling.
+                val fontScale = context.resources.configuration.fontScale.coerceAtLeast(1f)
+                val rowHeight = (48 * fontScale).toInt()
+                if (sizeLayout == WidgetSizeLayout.SUMMARY && fontScale > 1.3f) views.setViewVisibility(R.id.widget_count, android.view.View.GONE)
+                val rowLimit = if (sizeLayout == WidgetSizeLayout.SUMMARY) 0 else ((height - sizeLayout.reservedHeight * fontScale) / rowHeight).toInt().coerceIn(0, when {
+                    sizeLayout == WidgetSizeLayout.WIDE -> 2
+                    sizeLayout == WidgetSizeLayout.COMPACT && width >= 230 -> 3
+                    else -> 20
+                })
+                if (sizeLayout == WidgetSizeLayout.WIDE && rowLimit == 0) views.setViewVisibility(R.id.widget_count, android.view.View.VISIBLE)
                 if (!hidden) for (i in 0 until rows.length()) {
                     val row = rows.optJSONObject(i) ?: continue
                     val noteId = row.optString("id")
                     val subtask = row.optString("subtaskId")
                     val completed = row.optBoolean("completed") || queuedIds.contains("$noteId:$subtask")
-                    if (config == null && completed) continue
+                    if ((config == null || pendingOnly) && completed) continue
                     if (shown >= rowLimit) break
                     val item = RemoteViews(context.packageName, R.layout.widget_note_row)
-                    item.setTextViewText(R.id.widget_note_title, row.optString("title"))
-                    item.setContentDescription(R.id.widget_check, if (row.optBoolean("canComplete")) "Completar ${row.optString("title")}" else "Abrir recordatorio recurrente ${row.optString("title")}")
+                    item.setTextViewText(R.id.widget_note_title, row.optString("title").trim())
+                    appearance.surface(item, R.id.widget_row, R.drawable.widget_row, R.drawable.widget_row_light, R.drawable.widget_row_dark)
+                    appearance.text(item, R.id.widget_note_title, if (completed) "muted" else "ink")
+                    appearance.icon(item, R.id.widget_check, if (completed) "muted" else "accent")
+                    item.setInt(R.id.widget_note_title, "setPaintFlags", android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.SUBPIXEL_TEXT_FLAG or (if (completed) android.graphics.Paint.STRIKE_THRU_TEXT_FLAG else 0))
+                    item.setContentDescription(R.id.widget_check, if (completed) "Abrir tarea completada: ${row.optString("title")}" else if (row.optBoolean("canComplete")) "Completar ${row.optString("title")}" else "Abrir ${row.optString("title")}")
                     val open = launch(context, "note", owner, row.optString("boardId"), noteId)
                     item.setOnClickPendingIntent(R.id.widget_note_title, open)
                     if (row.optBoolean("canComplete") && !completed) {
@@ -221,23 +276,32 @@ open class NockNockWidget : AppWidgetProvider() {
                                 .setData(Uri.parse("nocknock://subtask/${Uri.encode(owner)}/${Uri.encode(noteId)}/${Uri.encode(subtask)}"))
                                 .putExtra("row", JSONObject(row.toString()).put("owner", owner).toString())
                         }
-                        item.setTextViewText(R.id.widget_check, "○")
+                        item.setImageViewResource(R.id.widget_check, R.drawable.widget_checkbox_empty)
                         item.setOnClickPendingIntent(R.id.widget_check, PendingIntent.getBroadcast(context,
                             complete.data.toString().hashCode(), complete, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                     } else {
-                        item.setTextViewText(R.id.widget_check, if (completed) "✓" else "↗")
+                        item.setImageViewResource(R.id.widget_check, if (completed) R.drawable.widget_checkbox_checked else R.drawable.widget_open)
                         item.setOnClickPendingIntent(R.id.widget_check, open)
                     }
                     views.addView(R.id.widget_rows, item)
                     shown++
                 }
                 views.setTextViewText(R.id.widget_empty, if (hidden) "Abre NockNock para ver tus notas" else if (snapshot.length() == 0) "Abre NockNock para empezar" else "Sin pendientes para mostrar")
-                views.setViewVisibility(R.id.widget_empty, if (shown == 0) android.view.View.VISIBLE else android.view.View.GONE)
+                views.setViewVisibility(R.id.widget_empty, if (sizeLayout != WidgetSizeLayout.SUMMARY && shown == 0 && (rows.length() == 0 || hidden)) android.view.View.VISIBLE else android.view.View.GONE)
+                val available = if (config == null || pendingOnly) rows.length() - completedCount else rows.length()
+                val remaining = (available - shown).coerceAtLeast(0)
+                views.setTextViewText(R.id.widget_more, "Ver lista completa · $remaining más")
+                views.setViewVisibility(R.id.widget_more, if (sizeLayout == WidgetSizeLayout.FULL && !hidden && remaining > 0) android.view.View.VISIBLE else android.view.View.GONE)
+                views.setOnClickPendingIntent(R.id.widget_more, launch(context, "today", owner, snapshot.optString("listId", "")))
                 val updated = snapshot.optLong("updatedAt")
                 views.setTextViewText(R.id.widget_updated, if (queued.length() > 0) "${queued.length()} por sincronizar · abre NockNock" else if (updated > 0) "Actualizado ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(updated))}" else "")
             }
-            manager.updateAppWidget(id, views)
+            return views
         }
     }
 }
 class QuickCaptureWidget : NockNockWidget()
+
+class SummaryWidget : NockNockWidget()
+class UpcomingWidget : NockNockWidget()
+class ExpandedListWidget : NockNockWidget()

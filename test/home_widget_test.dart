@@ -1,3 +1,8 @@
+import 'package:nocknock/features/home_widgets/home_widget_kind.dart';
+import 'package:flutter/material.dart' show ThemeMode;
+import 'package:nocknock/core/theme/app_theme.dart';
+import 'package:nocknock/core/theme/app_theme_controller.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -171,8 +176,10 @@ void main() {
     late _Auth auth;
     late ListProtectionController protection;
     late HomeWidgetController controller;
+    late AppThemeController themeController;
     late List<Map<String, dynamic>> queue;
     late List<Map<String, dynamic>> published;
+    late List<String> pinnedKinds;
     Map<String, String>? launch;
 
     setUp(() async {
@@ -183,10 +190,14 @@ void main() {
       );
       queue = [];
       published = [];
+      pinnedKinds = [];
       launch = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             switch (call.method) {
+              case 'requestPin':
+                pinnedKinds.add((call.arguments as Map)['kind'] as String);
+                return true;
               case 'publish':
                 published.add(
                   Map<String, dynamic>.from(
@@ -208,19 +219,62 @@ void main() {
             }
             return null;
           });
+      themeController = AppThemeController();
       controller = HomeWidgetController(
         repository: repository,
         auth: auth,
         protection: protection,
+        themeController: themeController,
       );
     });
     tearDown(() async {
       controller.dispose();
+      themeController.dispose();
       protection.dispose();
       repository.dispose();
       await auth.events.close();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
+    });
+
+    test('each widget option requests its own launcher provider', () async {
+      for (final kind in HomeWidgetKind.values) {
+        expect(await controller.requestPin(kind: kind), isTrue);
+      }
+      expect(
+        pinnedKinds,
+        HomeWidgetKind.values.map((kind) => kind.name).toList(),
+      );
+      expect(
+        HomeWidgetKind.values.map((kind) => kind.sizeLabel).toSet().length,
+        5,
+      );
+    });
+
+    test('widget publishes both theme palettes and refreshes app appearance changes', () async {
+      await controller.start();
+      await controller.refreshNow();
+      final original = published.last['theme'] as Map;
+      expect(original['mode'], 'system');
+      expect(
+        (original['light'] as Map)['ink'],
+        isNot((original['dark'] as Map)['ink']),
+      );
+      await themeController.setThemeMode(ThemeMode.dark);
+      await themeController.setColorTheme(AppColorTheme.mint);
+      // The listener schedules a refresh even without a note or list change.
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      await controller.refreshNow();
+      final updated = published.last['theme'] as Map;
+      expect(updated['mode'], 'dark');
+      expect(
+        (updated['light'] as Map)['accent'],
+        AppTheme.lightFor(AppColorTheme.mint).colorScheme.primary.toARGB32(),
+      );
+      expect(
+        (updated['dark'] as Map)['accent'],
+        AppTheme.darkFor(AppColorTheme.mint).colorScheme.primary.toARGB32(),
+      );
     });
 
     test(

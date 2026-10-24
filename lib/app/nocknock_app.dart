@@ -63,6 +63,7 @@ class _NockNockAppState extends State<NockNockApp> {
     repository: widget.repository,
     auth: widget.authRepository,
     protection: _listProtectionController,
+    themeController: _themeController,
   );
 
   @override

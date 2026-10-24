@@ -1,3 +1,7 @@
+import 'package:nocknock/features/home_widgets/home_widget_kind.dart';
+import 'package:nocknock/core/theme/app_theme.dart';
+import 'package:nocknock/core/theme/app_theme_controller.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -100,12 +104,14 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     required this.repository,
     required this.auth,
     required this.protection,
+    this.themeController,
     this.channel = const MethodChannel('cl.nocknock/home_widgets'),
   });
   final NotesRepository repository;
   final AuthRepository auth;
   final ListProtectionController protection;
   final MethodChannel channel;
+  final AppThemeController? themeController;
   bool get supported =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
@@ -135,6 +141,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
       if (call.method == 'queueChanged') refresh();
     });
     protection.addListener(_privacyChanged);
+    themeController?.addListener(refresh);
     _events = repository.realtimeEvents.listen((event) {
       if (event is NotesSourceChanged || event is ListAccessRemoved) {
         _privacyChanged();
@@ -424,8 +431,45 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _publish(Map<String, dynamic> snapshot) =>
-      channel.invokeMethod<void>('publish', jsonEncode(snapshot));
+  Future<void> _publish(Map<String, dynamic> snapshot) {
+    final colorTheme = themeController?.colorTheme ?? AppColorTheme.sunset;
+    Map<String, int> palette(bool dark) {
+      final scheme =
+          (dark ? AppTheme.darkFor(colorTheme) : AppTheme.lightFor(colorTheme))
+              .colorScheme;
+      return {
+        'ink': scheme.onSurface.toARGB32(),
+        'muted': Color.alphaBlend(
+          scheme.onSurface.withValues(alpha: .65),
+          scheme.surface,
+        ).toARGB32(),
+        'accent': scheme.primary.toARGB32(),
+        'start': Color.alphaBlend(
+          scheme.primary.withValues(alpha: dark ? .24 : .12),
+          scheme.surface,
+        ).toARGB32(),
+        'end': Color.alphaBlend(
+          scheme.secondary.withValues(alpha: dark ? .14 : .07),
+          scheme.surface,
+        ).toARGB32(),
+      };
+    }
+
+    return channel.invokeMethod<void>(
+      'publish',
+      jsonEncode({
+        ...snapshot,
+        'theme': {
+          'mode': themeController?.themeMode.name ?? 'system',
+          'light': palette(false),
+          'dark': palette(true),
+        },
+      }),
+    );
+  }
+
+  @override
+  void didChangePlatformBrightness() => refresh();
 
   Future<void> _takeAction() async {
     try {
@@ -447,10 +491,11 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         : action;
   }
 
-  Future<bool> requestPin() async =>
+  Future<bool> requestPin({HomeWidgetKind kind = HomeWidgetKind.list}) async =>
       supported &&
       defaultTargetPlatform == TargetPlatform.android &&
-      (await channel.invokeMethod<bool>('requestPin') ?? false);
+      (await channel.invokeMethod<bool>('requestPin', {'kind': kind.name}) ??
+          false);
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -469,6 +514,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     _events?.cancel();
     _authEvents?.cancel();
     protection.removeListener(_privacyChanged);
+    themeController?.removeListener(refresh);
     WidgetsBinding.instance.removeObserver(this);
     if (supported) channel.setMethodCallHandler(null);
     super.dispose();

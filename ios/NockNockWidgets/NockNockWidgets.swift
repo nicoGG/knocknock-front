@@ -10,6 +10,7 @@ struct PendingRow: Identifiable {
 }
 struct PendingEntry: TimelineEntry {
   let date: Date
+  var theme: [String: Any] = [:]
   var owner = "guest"
   var title = "Hoy"
   var total = 0
@@ -51,6 +52,7 @@ struct PendingProvider: TimelineProvider {
     guard let snapshot = state["snapshot"] as? [String: Any] else { return PendingEntry(date: Date()) }
     var entry = PendingEntry(date: Date())
     entry.initialized = true
+    entry.theme = snapshot["theme"] as? [String: Any] ?? [:]
     entry.owner = snapshot["owner"] as? String ?? "guest"
     entry.title = snapshot["title"] as? String ?? "Hoy"
     entry.hidden = snapshot["hidden"] as? Bool ?? false
@@ -92,18 +94,31 @@ struct PendingWidgetView: View {
   @Environment(\.widgetFamily) private var family
   let entry: PendingEntry
   let captureOnly: Bool
-  private let ink = Color(red: 0.16, green: 0.15, blue: 0.12)
-  private let accent = Color(red: 0.45, green: 0.33, blue: 0.11)
-  private var rowLimit: Int { family == .systemLarge ? 5 : family == .systemMedium ? 3 : 1 }
+  @Environment(\.colorScheme) private var colorScheme
+  private var dark: Bool {
+    switch entry.theme["mode"] as? String { case "dark": return true; case "light": return false; default: return colorScheme == .dark }
+  }
+  private func color(_ name: String, light: UInt64, dark fallback: UInt64) -> Color {
+    let palette = entry.theme[dark ? "dark" : "light"] as? [String: Any] ?? [:]
+    let value = (palette[name] as? NSNumber)?.uint64Value ?? (dark ? fallback : light)
+    return Color(red: Double((value >> 16) & 255) / 255, green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
+  }
+  private var ink: Color { color("ink", light: 0xFF222D2B, dark: 0xFFEAF2EF) }
+  private var accent: Color { color("accent", light: 0xFF256C66, dark: 0xFF8BD7C5) }
+  private var background: some View {
+    LinearGradient(colors: [color("start", light: 0xFFEDF4EF, dark: 0xFF222835), color("end", light: 0xFFE8E8F6, dark: 0xFF17312E)], startPoint: .topLeading, endPoint: .bottomTrailing)
+      .overlay(alignment: .topTrailing) { Circle().fill(accent.opacity(0.05)).frame(width: 180, height: 180).offset(x: 60, y: -80) }
+  }
+  private var rowLimit: Int { family == .systemLarge ? 5 : family == .systemMedium ? 2 : 1 }
   var body: some View {
     if #available(iOS 17.0, *) {
-      content.containerBackground(for: .widget) { Color(red: 1, green: 0.97, blue: 0.92) }
+      content.containerBackground(for: .widget) { background }
     } else {
-      content.padding().background(Color(red: 1, green: 0.97, blue: 0.92))
+      content.padding().background(background)
     }
   }
   private var content: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .leading, spacing: family == .systemLarge ? 5 : 4) {
       if captureOnly {
         Text("NockNock").font(.caption.bold()).foregroundColor(accent)
         Spacer(minLength: 0)
@@ -112,11 +127,13 @@ struct PendingWidgetView: View {
             .font(.title3.bold()).frame(maxWidth: .infinity, maxHeight: .infinity)
         }.accessibilityLabel("Capturar una nueva nota")
       } else {
+        if family == .systemLarge { Text("NOCKNOCK · TUS LISTAS").font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundColor(ink.opacity(0.6)) }
         HStack {
           Link(entry.title, destination: entry.link("today")).font(.headline).lineLimit(1)
           Spacer(minLength: 4)
           if !entry.hidden { Text("\(entry.total)").font(.headline).foregroundColor(accent) }
         }
+        if !entry.hidden && family == .systemLarge { Text("\(entry.total) \(entry.total == 1 ? "pendiente" : "pendientes")").font(.caption).foregroundColor(ink.opacity(0.65)) }
         if entry.rows.isEmpty {
           Text(entry.hidden ? "Contenido oculto" : entry.initialized ? "Sin pendientes para mostrar" : "Abre NockNock para empezar")
             .font(.caption).foregroundColor(ink.opacity(0.65))
@@ -125,28 +142,32 @@ struct PendingWidgetView: View {
           HStack(spacing: 8) {
             if #available(iOS 17.0, *), row.canComplete {
               Button(intent: CompletePendingIntent(noteId: row.id, owner: entry.owner)) {
-                Image(systemName: "circle").font(.body).padding(.vertical, 1)
+                Image(systemName: "square").font(.system(size: 20, weight: .medium)).foregroundColor(accent).frame(minWidth: 28, minHeight: 28)
               }.buttonStyle(.plain).accessibilityLabel("Completar \(row.title)")
             } else {
               Link(destination: entry.link("note", row: row)) {
-                Image(systemName: row.canComplete ? "circle" : "arrow.clockwise")
+                Image(systemName: row.canComplete ? "square" : "arrow.clockwise")
               }.accessibilityLabel("Abrir \(row.title)")
             }
             Link(destination: entry.link("note", row: row)) {
               Text(row.title).font(.subheadline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             }
           }
+          .padding(.horizontal, 8).padding(.vertical, family == .systemLarge ? 4 : 1)
+          .background(ink.opacity(dark ? 0.05 : 0.035), in: RoundedRectangle(cornerRadius: 12))
         }
         Spacer(minLength: 0)
         if entry.queued > 0 {
           Text("\(entry.queued) por sincronizar · abre NockNock").font(.system(size: 10)).foregroundColor(accent)
-        } else if let updated = entry.updatedAt, family != .systemSmall {
+        } else if let updated = entry.updatedAt, family == .systemLarge {
           HStack(spacing: 3) { Text("Actualizado"); Text(updated, style: .date); Text(updated, style: .time) }
             .font(.system(size: 10)).foregroundColor(ink.opacity(0.6))
         }
         Link(destination: entry.link("capture")) {
           Label("Nueva nota", systemImage: "plus").font(.caption.bold())
         }.foregroundColor(accent)
+          .frame(maxWidth: .infinity).padding(.vertical, family == .systemLarge ? 9 : 4)
+          .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
       }
     }
     .foregroundColor(ink)

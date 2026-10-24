@@ -1,3 +1,4 @@
+import 'package:nocknock/features/home_widgets/home_widget_kind.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:flutter/material.dart';
@@ -60,6 +61,18 @@ class _HomeWidgetSettingsPageState extends State<HomeWidgetSettingsPage> {
     }
   }
 
+  Future<void> _addWidget(HomeWidgetKind kind) async {
+    final requested = await widget.controller.requestPin(kind: kind);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          requested ? 'Confirma ${kind.label} en tu pantalla de inicio.' : 'Mantén pulsada la pantalla de inicio, abre Widgets y busca NockNock.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Widgets de inicio')),
@@ -90,26 +103,55 @@ class _HomeWidgetSettingsPageState extends State<HomeWidgetSettingsPage> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Agrega “Mis pendientes” o “Captura rápida” desde la galería de widgets de tu teléfono. En Android, cada widget permite elegir su lista o una nota con subtareas desde “Elegir lista o nota”.',
+                  'Elige el widget que más te sirva. Cada lista permite seleccionar su contenido desde el botón de ajustes del widget. Mantén pulsado un widget y arrastra sus bordes para cambiar el tamaño.',
                 ),
                 const SizedBox(height: 16),
                 if (defaultTargetPlatform == TargetPlatform.android)
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.add_to_home_screen),
-                    label: const Text('Agregar Mis pendientes'),
-                    onPressed: () async {
-                      final added = await widget.controller.requestPin();
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            added
-                                ? 'Confirma el widget en tu pantalla de inicio.'
-                                : 'Mantén pulsada la pantalla de inicio, abre Widgets y busca NockNock.',
+                  ...HomeWidgetKind.values.map(
+                    (kind) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.primary
+                                .withValues(alpha: .15),
+                          ),
+                          gradient: LinearGradient(
+                            colors: [
+                              Theme.of(context).colorScheme.primary
+                                  .withValues(alpha: .10),
+                              Theme.of(context).colorScheme.secondary
+                                  .withValues(alpha: .04),
+                            ],
                           ),
                         ),
-                      );
-                    },
+                        child: ListTile(
+                          key: ValueKey('add-home-widget-${kind.name}'),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          leading: Icon(switch (kind) {
+                            HomeWidgetKind.capture => Icons.add_box_outlined,
+                            HomeWidgetKind.summary => Icons.dashboard_outlined,
+                            HomeWidgetKind.upcoming =>
+                              Icons.view_agenda_outlined,
+                            HomeWidgetKind.list => Icons.checklist_rounded,
+                            HomeWidgetKind.expanded => Icons.view_list_rounded,
+                          }, color: Theme.of(context).colorScheme.primary),
+                          title: Text(
+                            '${kind.label} · ${kind.sizeLabel}',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          subtitle: Text(kind.description),
+                          trailing: const Icon(
+                            Icons.add_circle_outline_rounded,
+                          ),
+                          onTap: () => _addWidget(kind),
+                        ),
+                      ),
+                    ),
                   )
                 else
                   const Text(

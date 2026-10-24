@@ -1,0 +1,10 @@
+<resources>
+    <color name="widget_start">#EDF4EF</color>
+    <color name="widget_end">#E8E8F6</color>
+    <color name="widget_ink">#222D2B</color>
+    <color name="widget_muted">#667370</color>
+    <color name="widget_accent">#256C66</color>
+    <color name="widget_row">#B3FFFFFF</color>
+    <color name="widget_border">#337F9993</color>
+    <color name="widget_button">#D4E9E1</color>
+</resources>
