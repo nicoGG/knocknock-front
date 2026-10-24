@@ -132,6 +132,9 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _serial = Future.value();
   bool _disposed = false;
   int _generation = 0;
+  Map<String, dynamic>? _lastSnapshot;
+  Set<String> _protectedIds = {};
+  final _revokedListIds = <String>{};
 
   Future<void> start() async {
     if (!supported) return;
@@ -140,18 +143,33 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
       if (call.method == 'actionAvailable') await _takeAction();
       if (call.method == 'queueChanged') refresh();
     });
-    protection.addListener(_privacyChanged);
+    _protectedIds = protection.protectedListIds;
+    protection.addListener(_protectionChanged);
     themeController?.addListener(refresh);
     _events = repository.realtimeEvents.listen((event) {
-      if (event is NotesSourceChanged || event is ListAccessRemoved) {
+      if (event is ListAccessRemoved) {
+        _revokedListIds.add(event.listId);
         _privacyChanged();
-      } else {
+      } else if (event is NotesSourceChanged) {
+        _privacyChanged();
+      } else if (event is! OfflineSyncStateChanged &&
+          event is! RealtimeConnectionAttemptStarted &&
+          !(event is RealtimeConnectionChanged && !event.isConnected)) {
         refresh();
       }
     });
     _authEvents = auth.authStateChanges.listen((_) => _privacyChanged());
     _preferences = await SharedPreferences.getInstance();
     _loadSettings();
+    final startupOwner = owner;
+    try {
+      final raw = await channel.invokeMethod<String>('readSnapshot');
+      if (raw != null && !_disposed && owner == startupOwner) {
+        _lastSnapshot = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      }
+    } on Object {
+      // Older native hosts can still refresh from the repository/cache.
+    }
     await _takeAction();
     _privacyChanged();
   }
@@ -181,22 +199,78 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     _privacyChanged();
   }
 
+  void _protectionChanged() {
+    final ids = protection.protectedListIds;
+    // Navigating, unlocking and backgrounding do not change which lists are
+    // eligible: protected lists are always excluded from home widgets.
+    if (setEquals(ids, _protectedIds)) return;
+    _protectedIds = ids;
+    _privacyChanged();
+  }
+
+  bool _allowed(String id) =>
+      !protection.isProtected(id) && !_revokedListIds.contains(id);
+
+  Map<String, dynamic> _safeSnapshot() {
+    final previous = _lastSnapshot;
+    if (hideContent ||
+        previous == null ||
+        previous['owner'] != owner ||
+        previous['hidden'] == true) {
+      return buildHomeWidgetSnapshot(
+        owner: owner,
+        lists: const [],
+        notes: const [],
+        isProtected: (_) => true,
+        now: DateTime.now(),
+        hideContent: true,
+      );
+    }
+    final safe = Map<String, dynamic>.from(previous);
+    final rows = (previous['rows'] as List? ?? const [])
+        .whereType<Map>()
+        .where(
+          (row) =>
+              row['boardId'] is String && _allowed(row['boardId'] as String),
+        )
+        .toList();
+    safe['catalog'] = (previous['catalog'] as List? ?? const [])
+        .whereType<Map>()
+        .where(
+          (list) =>
+              list['listId'] is String && _allowed(list['listId'] as String),
+        )
+        .toList();
+    safe['rows'] = rows;
+    final previousSource = previous['listId'];
+    if (previousSource != listId ||
+        (previousSource is String && !_allowed(previousSource))) {
+      safe['rows'] = <Object>[];
+      safe['total'] = 0;
+      safe['listId'] = null;
+      safe['title'] = listId == null ? 'Hoy' : 'Lista no disponible';
+    } else if (rows.length != (previous['rows'] as List? ?? const []).length) {
+      safe['total'] = rows.length;
+    }
+    if (safe['captureListId'] is String &&
+        !_allowed(safe['captureListId'] as String)) {
+      safe['captureListId'] = null;
+    }
+    return safe;
+  }
+
   void _privacyChanged() {
+    if (_disposed || !supported) return;
     _generation++;
     _loadSettings();
-    // Purge titles immediately, before asynchronous reads, even when unlocked.
-    _enqueue(
-      () => _publish(
-        buildHomeWidgetSnapshot(
-          owner: owner,
-          lists: const [],
-          notes: const [],
-          isProtected: (_) => true,
-          now: DateTime.now(),
-          hideContent: true,
-        ),
-      ),
-    );
+    final generation = _generation;
+    final account = owner;
+    final snapshot = _safeSnapshot();
+    // Privacy/account changes must reach the native store even while a remote
+    // refresh is waiting for the network. Older generations cannot republish.
+    if (generation == _generation && account == owner) {
+      unawaited(_publish(snapshot).catchError((Object _) {}));
+    }
     refresh();
   }
 
@@ -223,105 +297,182 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         });
   }
 
+  Map<String, dynamic> _snapshotFor(
+    List<NoteList> lists,
+    Map<String, List<Note>> notesByBoard,
+    List<Note>? defaultNotes,
+  ) {
+    final visible = lists
+        .where((list) => _allowed(list.id) && !list.isEncryptionKeyPending)
+        .toList();
+    final previous = _safeSnapshot();
+    final notes = listId == null ? defaultNotes : notesByBoard[listId];
+    final snapshot = buildHomeWidgetSnapshot(
+      owner: owner,
+      lists: visible,
+      notes: notes ?? const [],
+      isProtected: (id) => !_allowed(id),
+      now: DateTime.now(),
+      userId: auth.currentUser?.id,
+      listId: listId,
+      captureListId: captureListId,
+      hideContent: hideContent,
+    );
+    if (!hideContent &&
+        notes == null &&
+        previous['hidden'] != true &&
+        previous['listId'] == snapshot['listId']) {
+      snapshot['rows'] = previous['rows'] ?? <Object>[];
+      snapshot['total'] = previous['total'] ?? 0;
+    }
+    final catalog = <Map<String, dynamic>>[];
+    if (defaultTargetPlatform == TargetPlatform.android && !hideContent) {
+      for (final list in visible) {
+        final entries = notesByBoard[list.id];
+        if (entries == null) {
+          final cached = (previous['catalog'] as List? ?? const [])
+              .whereType<Map>()
+              .where((entry) => entry['listId'] == list.id)
+              .firstOrNull;
+          if (cached != null) {
+            catalog.add({
+              ...Map<String, dynamic>.from(cached),
+              'title': list.name,
+            });
+          }
+          continue;
+        }
+        final active = entries.where((n) => n.deletedAt == null).toList()
+          ..sort(compareNotes);
+        final summary = <String, int>{};
+        for (final note in active) {
+          final entry = note.financialEntry;
+          if (entry == null ||
+              entry.isBudget ||
+              entry.isSettlement ||
+              entry.status == 'rejected') {
+            continue;
+          }
+          summary.update(
+            entry.currency,
+            (value) => value + entry.amountMinor,
+            ifAbsent: () => entry.amountMinor,
+          );
+        }
+        catalog.add({
+          'listId': list.id,
+          'title': list.name,
+          'financial': list.isFinancial,
+          'expenses': list.configuration.type.name == 'expenses',
+          'currency': list.configuration.currency,
+          'summary': summary.entries
+              .map(
+                (entry) => FinancialEntry.formatAmount(entry.value, entry.key),
+              )
+              .join(' · '),
+          'rows': active
+              .map(
+                (note) => {
+                  'id': note.id,
+                  'boardId': list.id,
+                  'title': note.title.characters.take(120).toString(),
+                  'revision': note.revision,
+                  'completed': note.isCompleted,
+                  'canComplete':
+                      !note.isRecurring && note.financialEntry == null,
+                  'checklist': note.checklist
+                      .map((item) => item.toJson())
+                      .toList(),
+                },
+              )
+              .toList(),
+        });
+      }
+    }
+    return {...snapshot, 'catalog': catalog};
+  }
+
   Future<void> _refresh() async {
     final generation = _generation;
     final account = owner;
     bool current() =>
         !_disposed && generation == _generation && account == owner;
+    NotesCacheSnapshot? cache;
+    try {
+      final source = repository;
+      if (source is NotesCacheReader) {
+        cache = await (source as NotesCacheReader).readCache();
+      }
+      if (!current()) return;
+      if (cache != null && cache.lists.isNotEmpty) {
+        await _publish(
+          _snapshotFor(
+            cache.lists,
+            cache.notesByBoard,
+            cache.notesByBoard.values.expand((notes) => notes).toList(),
+          ),
+        );
+      }
+    } on Object {
+      // A missing/offline encryption cache must not prevent a server refresh.
+    }
+    if (!current()) return;
     try {
       final lists = await repository.fetchLists();
       if (!current()) return;
-      await _flushCompletions(lists, account);
+      _revokedListIds.removeWhere((id) => lists.any((list) => list.id == id));
+      try {
+        await _flushCompletions(lists, account);
+      } on Object {
+        /* Keep the durable queue; still publish readable lists. */
+      }
       if (!current()) return;
       final visible = lists
-          .where(
-            (list) =>
-                !protection.isProtected(list.id) &&
-                !list.isEncryptionKeyPending,
-          )
+          .where((list) => _allowed(list.id) && !list.isEncryptionKeyPending)
           .toList();
-      final notes = <Note>[];
-      if (listId != null) {
-        if (visible.any((list) => list.id == listId)) {
-          notes.addAll(await repository.fetchNotes(listId!));
+      final notesByBoard = <String, List<Note>>{...?(cache?.notesByBoard)};
+      var partialFailure = false;
+      // Android needs the catalog anyway. Build Today from the same notes instead
+      // of allowing an unrelated reminders request to block every widget.
+      final requested = defaultTargetPlatform == TargetPlatform.android
+          ? visible
+          : visible.where((list) => list.id == listId);
+      for (final list in requested) {
+        try {
+          notesByBoard[list.id] = await repository.fetchNotes(list.id);
+        } on Object {
+          partialFailure = true;
         }
-      } else {
-        notes.addAll(await repository.fetchReminderNotes());
-        if (repository is AssignedNotesRepository) {
-          notes.addAll(
-            await (repository as AssignedNotesRepository).fetchAssignedNotes(),
-          );
+        if (!current()) return;
+      }
+      List<Note>? defaultNotes;
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        if (notesByBoard.isNotEmpty || visible.isEmpty) {
+          defaultNotes = notesByBoard.entries
+              .where((entry) => visible.any((list) => list.id == entry.key))
+              .expand((entry) => entry.value)
+              .toList();
+        }
+      } else if (listId == null) {
+        try {
+          defaultNotes = [...await repository.fetchReminderNotes()];
+          if (repository is AssignedNotesRepository) {
+            defaultNotes.addAll(
+              await (repository as AssignedNotesRepository)
+                  .fetchAssignedNotes(),
+            );
+          }
+        } on Object {
+          partialFailure = true;
         }
       }
       if (!current()) return;
-      final catalog = <Map<String, dynamic>>[];
-      if (defaultTargetPlatform == TargetPlatform.android && !hideContent) {
-        for (final list in visible) {
-          final entries = await repository.fetchNotes(list.id);
-          if (!current()) return;
-          final active = entries.where((n) => n.deletedAt == null).toList()
-            ..sort(compareNotes);
-          final summary = <String, int>{};
-          for (final note in active) {
-            final entry = note.financialEntry;
-            if (entry == null ||
-                entry.isBudget ||
-                entry.isSettlement ||
-                entry.status == 'rejected') {
-              continue;
-            }
-            summary.update(
-              entry.currency,
-              (v) => v + entry.amountMinor,
-              ifAbsent: () => entry.amountMinor,
-            );
-          }
-          catalog.add({
-            'listId': list.id,
-            'title': list.name,
-            'financial': list.isFinancial,
-            'expenses': list.configuration.type.name == 'expenses',
-            'currency': list.configuration.currency,
-            'summary': summary.entries
-                .map((e) => FinancialEntry.formatAmount(e.value, e.key))
-                .join(' · '),
-            'rows': active
-                .map(
-                  (note) => {
-                    'id': note.id,
-                    'boardId': list.id,
-                    'title': note.title.characters.take(120).toString(),
-                    'revision': note.revision,
-                    'completed': note.isCompleted,
-                    'canComplete':
-                        !note.isRecurring && note.financialEntry == null,
-                    'checklist': note.checklist
-                        .map((item) => item.toJson())
-                        .toList(),
-                  },
-                )
-                .toList(),
-          });
-        }
-      }
-      await _publish({
-        ...buildHomeWidgetSnapshot(
-          owner: account,
-          lists: lists,
-          notes: notes,
-          isProtected: protection.isProtected,
-          now: DateTime.now(),
-          userId: auth.currentUser?.id,
-          listId: listId,
-          captureListId: captureListId,
-          hideContent: hideContent,
-        ),
-        'catalog': catalog,
-      });
-      error = null;
-    } catch (_) {
-      error =
-          'No se pudo actualizar. Abre la app con conexión para reintentar.';
+      await _publish(_snapshotFor(lists, notesByBoard, defaultNotes));
+      error = partialFailure
+          ? 'Algunas listas no se pudieron actualizar. Se conserva su última copia disponible.'
+          : null;
+    } on Object {
+      error = 'No se pudo actualizar. Se conserva la última copia disponible.';
     }
     if (current()) notifyListeners();
   }
@@ -431,7 +582,8 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _publish(Map<String, dynamic> snapshot) {
+  Future<void> _publish(Map<String, dynamic> snapshot) async {
+    final generation = _generation;
     final colorTheme = themeController?.colorTheme ?? AppColorTheme.sunset;
     Map<String, int> palette(bool dark) {
       final scheme =
@@ -455,7 +607,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
       };
     }
 
-    return channel.invokeMethod<void>(
+    await channel.invokeMethod<void>(
       'publish',
       jsonEncode({
         ...snapshot,
@@ -466,6 +618,9 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         },
       }),
     );
+    if (!_disposed && generation == _generation && snapshot['owner'] == owner) {
+      _lastSnapshot = Map<String, dynamic>.from(snapshot);
+    }
   }
 
   @override
@@ -513,7 +668,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
     _timer?.cancel();
     _events?.cancel();
     _authEvents?.cancel();
-    protection.removeListener(_privacyChanged);
+    protection.removeListener(_protectionChanged);
     themeController?.removeListener(refresh);
     WidgetsBinding.instance.removeObserver(this);
     if (supported) channel.setMethodCallHandler(null);

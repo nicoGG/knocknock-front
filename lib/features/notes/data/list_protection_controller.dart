@@ -83,6 +83,8 @@ class ListProtectionController extends ChangeNotifier {
   String? get activeListName => _activeListName;
   ListProtectionResult? get lastResult => _lastResult;
 
+  Set<String> get protectedListIds => Set.unmodifiable(_protectedListIds);
+
   bool isProtected(String listId) => _protectedListIds.contains(listId);
 
   bool canAccess(String listId) =>

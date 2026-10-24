@@ -22,6 +22,7 @@ class MainActivity : FlutterFragmentActivity() {
                 try {
                     when (call.method) {
                         "publish" -> { WidgetStore.publish(this, JSONObject(call.arguments as String)); result.success(null) }
+                        "readSnapshot" -> result.success(WidgetStore.read(this).optJSONObject("snapshot")?.toString())
                         "readQueue" -> result.success((WidgetStore.read(this).optJSONArray("queue") ?: org.json.JSONArray()).toString())
                         "acknowledge" -> { WidgetStore.acknowledge(this, call.arguments as String); result.success(null) }
                         "takeAction" -> { result.success(pendingWidgetAction); pendingWidgetAction = null }

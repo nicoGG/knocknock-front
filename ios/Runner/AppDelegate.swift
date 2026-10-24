@@ -69,6 +69,10 @@ import Vision
             result(FlutterError(code: "WIDGET_DATA", message: "Datos inválidos", details: nil)); return
           }
           try HomeWidgetStore.publish(snapshot); result(nil)
+        case "readSnapshot":
+          if let snapshot = HomeWidgetStore.read()["snapshot"] as? [String: Any] {
+            result(String(data: try JSONSerialization.data(withJSONObject: snapshot), encoding: .utf8))
+          } else { result(nil) }
         case "readQueue":
           let queue = HomeWidgetStore.read()["queue"] as? [[String: Any]] ?? []
           result(String(data: try JSONSerialization.data(withJSONObject: queue), encoding: .utf8))

@@ -17,6 +17,7 @@ import 'package:nocknock/features/auth/domain/app_user.dart';
 import 'package:nocknock/features/home_widgets/home_widget_controller.dart';
 import 'package:nocknock/features/notes/data/list_protection_controller.dart';
 import 'package:nocknock/features/notes/data/local_notes_repository.dart';
+import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -180,6 +181,7 @@ void main() {
     late List<Map<String, dynamic>> queue;
     late List<Map<String, dynamic>> published;
     late List<String> pinnedKinds;
+    Map<String, dynamic>? persistedSnapshot;
     Map<String, String>? launch;
 
     setUp(() async {
@@ -187,10 +189,12 @@ void main() {
       auth = _Auth();
       protection = ListProtectionController(
         preferences: await SharedPreferences.getInstance(),
+        authenticator: _Biometrics(),
       );
       queue = [];
       published = [];
       pinnedKinds = [];
+      persistedSnapshot = null;
       launch = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
@@ -198,7 +202,14 @@ void main() {
               case 'requestPin':
                 pinnedKinds.add((call.arguments as Map)['kind'] as String);
                 return true;
+              case 'readSnapshot':
+                return persistedSnapshot == null
+                    ? null
+                    : jsonEncode(persistedSnapshot);
               case 'publish':
+                persistedSnapshot = Map<String, dynamic>.from(
+                  jsonDecode(call.arguments as String) as Map,
+                );
                 published.add(
                   Map<String, dynamic>.from(
                     jsonDecode(call.arguments as String) as Map,
@@ -236,6 +247,198 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
     });
+
+    Future<Note> enqueue({String owner = 'guest'}) async {
+      final saved = await repository.createNote(
+        'home',
+        const NoteDraft(
+          title: 'Pendiente',
+          content: '',
+          color: NoteColor.none,
+          authorName: 'Invitado',
+        ),
+      );
+      queue.add({
+        'id': saved.id,
+        'boardId': 'home',
+        'owner': owner,
+        'revision': saved.revision,
+        'mutationId': 'widget-mutation',
+        'completedAt': now.millisecondsSinceEpoch,
+      });
+      return saved;
+    }
+
+    test(
+      'privacy changes are persisted while a network refresh is still blocked',
+      () async {
+        await enqueue();
+        final other = await repository.createList('Otra lista');
+        await controller.start();
+        await controller.refreshNow();
+        final pending = Completer<List<NoteList>>();
+        repository.pendingLists = pending;
+        final refresh = controller.refreshNow();
+        await Future<void>.delayed(Duration.zero);
+        await protection.setProtection('home', enabled: true);
+        await Future<void>.delayed(Duration.zero);
+        try {
+          expect(
+            (persistedSnapshot!['catalog'] as List).map(
+              (entry) => (entry as Map)['listId'],
+            ),
+            [other.id],
+          );
+        } finally {
+          pending.complete(await repository.fetchLocalLists());
+          await refresh;
+        }
+      },
+    );
+
+    test(
+      'protecting one list removes it offline without hiding other lists',
+      () async {
+        await enqueue();
+        final other = await repository.createList('Otra lista');
+        await controller.start();
+        await controller.refreshNow();
+        repository.failLists = true;
+        await protection.setProtection('home', enabled: true);
+        await controller.refreshNow();
+        final catalog = persistedSnapshot!['catalog'] as List;
+        expect(persistedSnapshot!['hidden'], false);
+        expect(catalog.map((entry) => (entry as Map)['listId']), [other.id]);
+        expect(persistedSnapshot!['rows'], isEmpty);
+      },
+    );
+    test(
+      'revoking one list purges only its widget content even offline',
+      () async {
+        await enqueue();
+        final other = await repository.createList('Otra lista');
+        await controller.start();
+        await controller.refreshNow();
+        repository.failLists = true;
+        repository.emit(const ListAccessRemoved('home'));
+        await Future<void>.delayed(Duration.zero);
+        await controller.refreshNow();
+        expect(persistedSnapshot!['hidden'], false);
+        expect(
+          (persistedSnapshot!['catalog'] as List).map(
+            (entry) => (entry as Map)['listId'],
+          ),
+          [other.id],
+        );
+      },
+    );
+
+    test('changing an ordinary active list does not hide widgets when a refresh fails', () async {
+      await enqueue();
+      await controller.start();
+      await controller.refreshNow();
+      expect(published.last['hidden'], false);
+      final count = published.length;
+      repository.failLists = true;
+      protection.setActiveList('home', name: 'Casa');
+      await controller.refreshNow();
+      expect(
+        published.skip(count).any((snapshot) => snapshot['hidden'] == true),
+        false,
+      );
+      expect(persistedSnapshot!['hidden'], false);
+      expect(persistedSnapshot!['catalog'], isNotEmpty);
+    });
+
+    test('a failing reminder query or unrelated list does not prevent the selected catalog from loading', () async {
+      await enqueue();
+      final other = await repository.createList('Sin conexión');
+      repository.failReminders = true;
+      repository.failedBoards.add(other.id);
+      await controller.start();
+      await controller.refreshNow();
+      expect(persistedSnapshot!['hidden'], false);
+      final home = (persistedSnapshot!['catalog'] as List)
+          .cast<Map>()
+          .firstWhere((list) => list['listId'] == 'home');
+      expect(home['rows'], isNotEmpty);
+    });
+
+    test('startup preserves the same account snapshot while offline', () async {
+      persistedSnapshot = {
+        'owner': 'guest',
+        'hidden': false,
+        'title': 'Hoy',
+        'rows': [],
+        'total': 0,
+        'catalog': [
+          {
+            'listId': 'home',
+            'title': 'Casa',
+            'rows': [
+              {'id': 'offline', 'boardId': 'home', 'title': 'Comprar pan'},
+            ],
+          },
+        ],
+      };
+      repository.failLists = true;
+      await controller.start();
+      await controller.refreshNow();
+      expect(persistedSnapshot!['hidden'], false);
+      expect(
+        ((persistedSnapshot!['catalog'] as List).single as Map)['title'],
+        'Casa',
+      );
+    });
+
+    test(
+      'a cached list recovers a previously hidden snapshot without network',
+      () async {
+        await enqueue();
+        final lists = await repository.fetchLists();
+        final notes = await repository.fetchNotes('home');
+        repository.cached = NotesCacheSnapshot(
+          lists: lists,
+          notesByBoard: {'home': notes},
+        );
+        persistedSnapshot = {
+          'owner': 'guest',
+          'hidden': true,
+          'catalog': [],
+          'rows': [],
+        };
+        repository.failLists = true;
+        await controller.start();
+        await controller.refreshNow();
+        expect(persistedSnapshot!['hidden'], false);
+        expect(
+          ((persistedSnapshot!['catalog'] as List).single as Map)['rows'],
+          isNotEmpty,
+        );
+      },
+    );
+
+    test(
+      'a persisted snapshot from another account is cleared offline',
+      () async {
+        persistedSnapshot = {
+          'owner': 'someone-else',
+          'hidden': false,
+          'rows': [
+            {'title': 'Private'},
+          ],
+          'catalog': [
+            {'listId': 'private', 'title': 'Private'},
+          ],
+        };
+        repository.failLists = true;
+        await controller.start();
+        await controller.refreshNow();
+        expect(persistedSnapshot!['owner'], 'guest');
+        expect(persistedSnapshot!['rows'], isEmpty);
+        expect(persistedSnapshot!['catalog'] ?? [], isEmpty);
+      },
+    );
 
     test('each widget option requests its own launcher provider', () async {
       for (final kind in HomeWidgetKind.values) {
@@ -302,27 +505,6 @@ void main() {
         expect(catalog.first['summary'], contains('5.000'));
       },
     );
-
-    Future<Note> enqueue({String owner = 'guest'}) async {
-      final saved = await repository.createNote(
-        'home',
-        const NoteDraft(
-          title: 'Pendiente',
-          content: '',
-          color: NoteColor.none,
-          authorName: 'Invitado',
-        ),
-      );
-      queue.add({
-        'id': saved.id,
-        'boardId': 'home',
-        'owner': owner,
-        'revision': saved.revision,
-        'mutationId': 'widget-mutation',
-        'completedAt': now.millisecondsSinceEpoch,
-      });
-      return saved;
-    }
 
     test(
       'widget subtasks persist without completing the parent or siblings',
@@ -450,20 +632,63 @@ void main() {
   });
 }
 
-class _Repository extends LocalNotesRepository {
+class _Repository extends LocalNotesRepository implements NotesCacheReader {
+  final _injectedEvents = StreamController<NotesRealtimeEvent>.broadcast();
+  StreamSubscription<NotesRealtimeEvent>? _forwarding;
+  @override
+  Stream<NotesRealtimeEvent> get realtimeEvents {
+    _forwarding ??= super.realtimeEvents.listen(_injectedEvents.add);
+    return _injectedEvents.stream;
+  }
+
+  void emit(NotesRealtimeEvent event) => _injectedEvents.add(event);
+  @override
+  void dispose() {
+    unawaited(_forwarding?.cancel());
+    unawaited(_injectedEvents.close());
+    super.dispose();
+  }
+
+  Completer<List<NoteList>>? pendingLists;
+  Future<List<NoteList>> fetchLocalLists() => super.fetchLists();
+  bool failLists = false;
+  bool failReminders = false;
+  final failedBoards = <String>{};
+  NotesCacheSnapshot? cached;
+  @override
+  Future<NotesCacheSnapshot?> readCache() async => cached;
+  @override
+  Future<List<Note>> fetchReminderNotes() {
+    if (failReminders) throw const FormatException('reminders unavailable');
+    return super.fetchReminderNotes();
+  }
+
+  @override
+  Future<List<Note>> fetchNotes(String boardId) {
+    if (failedBoards.contains(boardId)) {
+      throw const FormatException('list unavailable');
+    }
+    return super.fetchNotes(boardId);
+  }
+
   bool expenses = false;
   @override
-  Future<List<NoteList>> fetchLists() async => (await super.fetchLists())
-      .map(
-        (list) => expenses
-            ? list.copyWith(
-                configuration: const ListConfiguration(
-                  type: NoteListType.expenses,
-                ),
-              )
-            : list,
-      )
-      .toList();
+  Future<List<NoteList>> fetchLists() async {
+    if (pendingLists != null) return pendingLists!.future;
+    if (failLists) throw const FormatException('lists unavailable');
+    return (await super.fetchLists())
+        .map(
+          (list) => expenses
+              ? list.copyWith(
+                  configuration: const ListConfiguration(
+                    type: NoteListType.expenses,
+                  ),
+                )
+              : list,
+        )
+        .toList();
+  }
+
   bool fail = false;
   final changes = <Map<String, dynamic>>[];
   @override
@@ -493,4 +718,10 @@ class _Auth implements AuthRepository {
 
   @override
   Future<void> deleteAccount() => signOut();
+}
+
+class _Biometrics implements ListBiometricAuthenticator {
+  @override
+  Future<ListProtectionResult> authenticate({required String reason}) async =>
+      ListProtectionResult.success;
 }
