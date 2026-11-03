@@ -140,8 +140,18 @@ class LocalNotesRepository
   }
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) =>
-      throw const CollaborationRequiresSignInFailure();
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) => throw const CollaborationRequiresSignInFailure();
+
+  @override
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) => throw const CollaborationRequiresSignInFailure();
 
   @override
   Future<NoteList> removeCollaborator(String listId, String collaboratorUid) =>
@@ -244,9 +254,18 @@ class LocalNotesRepository
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
     await _ensureLoaded();
+    if (draft.clientNoteId != null) {
+      final previous = _notes!
+          .where((n) => n.id == draft.clientNoteId)
+          .firstOrNull;
+      if (previous != null) {
+        if (previous.boardId != boardId) throw const NotesPersistenceFailure();
+        return previous;
+      }
+    }
     final now = DateTime.now();
     final note = Note(
-      id: 'local-note-${uuid.v4()}',
+      id: draft.clientNoteId ?? 'local-note-${uuid.v4()}',
       boardId: boardId,
       title: draft.title,
       content: draft.content,

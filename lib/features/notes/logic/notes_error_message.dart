@@ -1,6 +1,8 @@
+import 'package:nocknock/features/notes/data/notes_repository.dart';
 import 'package:dio/dio.dart';
 
 String notesErrorMessage(Object error) {
+  if (error is ReadOnlyListFailure) return 'Esta lista es de solo lectura.';
   if (error is! DioException) {
     return 'Ocurrió un problema inesperado. Inténtalo nuevamente.';
   }

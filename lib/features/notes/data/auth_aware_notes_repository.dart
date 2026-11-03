@@ -107,10 +107,25 @@ class AuthAwareNotesRepository
       _whenReady((repository) => repository.deleteList(listId));
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) async {
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
     await _authTransition;
     if (!_isSignedIn) throw const CollaborationRequiresSignInFailure();
-    return remoteRepository.inviteCollaborator(listId, email);
+    return remoteRepository.inviteCollaborator(listId, email, role: role);
+  }
+
+  @override
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) async {
+    await _authTransition;
+    if (!_isSignedIn) throw const CollaborationRequiresSignInFailure();
+    return remoteRepository.changeCollaboratorRole(listId, uid, role);
   }
 
   @override

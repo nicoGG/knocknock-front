@@ -254,14 +254,29 @@ class E2eeNotesRepository
   }
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) async {
-    final raw = await _repository.inviteCollaborator(listId, email);
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
+    final raw = await _repository.inviteCollaborator(listId, email, role: role);
     _rawLists[listId] = raw;
     final key = await _requireListKey(listId);
     await _shareMissingKeys(raw, key);
     final clear = await _decryptList(raw);
     _clearLists[listId] = clear;
     return clear;
+  }
+
+  @override
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) async {
+    final raw = await _repository.changeCollaboratorRole(listId, uid, role);
+    _rawLists[listId] = raw;
+    return _clearLists[listId] = await _decryptList(raw);
   }
 
   @override
@@ -1087,6 +1102,7 @@ class E2eeNotesRepository
   }
 
   Future<void> _shareMissingKeys(NoteList raw, SecretKey key) async {
+    if (!raw.canEdit) return;
     if (raw.encryption.version != 1) return;
     final recipients = await _transport.fetchEncryptionRecipients(raw.id);
     for (final recipient in recipients.where((entry) => !entry.hasEnvelope)) {

@@ -27,6 +27,7 @@ Future<List<NoteAttachment>> pickNoteAttachments({
   required BuildContext context,
   int remaining = noteAttachmentMaxCount,
   bool includeCamera = false,
+  bool imagesOnly = false,
 }) async {
   if (remaining <= 0) return const [];
   final source = await showLiquidBottomSheet<NoteAttachmentSource>(
@@ -58,13 +59,15 @@ Future<List<NoteAttachment>> pickNoteAttachments({
             onTap: () =>
                 Navigator.pop(sheetContext, NoteAttachmentSource.photos),
           ),
-          ListTile(
-            key: const ValueKey('pick-note-pdf'),
-            leading: const Icon(Icons.picture_as_pdf_outlined),
-            title: const Text('Documento PDF'),
-            subtitle: const Text('Máximo 5 MB'),
-            onTap: () => Navigator.pop(sheetContext, NoteAttachmentSource.pdf),
-          ),
+          if (!imagesOnly)
+            ListTile(
+              key: const ValueKey('pick-note-pdf'),
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('Documento PDF'),
+              subtitle: const Text('Máximo 5 MB'),
+              onTap: () =>
+                  Navigator.pop(sheetContext, NoteAttachmentSource.pdf),
+            ),
         ],
       ),
     ),
@@ -94,7 +97,6 @@ Future<NoteAttachment?> pickNotePdf() async {
   return createNotePdfAttachment(name: file.name, bytes: bytes);
 }
 
-@visibleForTesting
 NoteAttachment createNotePdfAttachment({
   required String name,
   required Uint8List? bytes,
@@ -137,16 +139,17 @@ Future<List<NoteAttachment>> pickNotePhotos({
 }) async {
   if (remaining <= 0) return const [];
   final picker = imagePicker ?? ImagePicker();
-  final photo = camera
+  final single = camera || remaining == 1;
+  final photo = single
       ? await picker.pickImage(
-          source: ImageSource.camera,
+          source: camera ? ImageSource.camera : ImageSource.gallery,
           maxWidth: 1920,
           maxHeight: 1920,
           imageQuality: 85,
           requestFullMetadata: false,
         )
       : null;
-  final files = camera
+  final files = single
       ? <XFile>[?photo]
       : await picker.pickMultiImage(
           maxWidth: 1280,
@@ -157,67 +160,74 @@ Future<List<NoteAttachment>> pickNotePhotos({
         );
   final attachments = <NoteAttachment>[];
   for (final file in files.take(remaining)) {
-    final sourceBytes = await file.readAsBytes();
-    if (sourceBytes.isEmpty) {
-      throw const NoteAttachmentPickFailure(
-        'No pudimos leer esa foto. Intenta elegirla nuevamente.',
-      );
-    }
-    if (sourceBytes.length > noteAttachmentMaxSourceBytes) {
-      throw const NoteAttachmentPickFailure(
-        'La foto original puede pesar hasta 25 MB.',
-      );
-    }
-    final wasCompressed = sourceBytes.length > noteAttachmentMaxBytes;
-    final bytes = wasCompressed
-        ? await compute(compressNotePhoto, sourceBytes)
-        : sourceBytes;
-    if (bytes == null || bytes.length > noteAttachmentMaxBytes) {
-      throw const NoteAttachmentPickFailure(
-        'No pudimos comprimir esa foto. Prueba con otra imagen.',
-      );
-    }
-    final normalizedName = file.name.trim();
-    final extension = normalizedName.contains('.')
-        ? normalizedName.split('.').last.toLowerCase()
-        : '';
-    final mimeType = wasCompressed
-        ? 'image/jpeg'
-        : switch (file.mimeType?.toLowerCase()) {
-            'image/jpeg' => 'image/jpeg',
-            'image/png' => 'image/png',
-            'image/webp' => 'image/webp',
-            'image/heic' => 'image/heic',
-            'image/heif' => 'image/heif',
-            _ => switch (extension) {
-              'jpg' || 'jpeg' => 'image/jpeg',
-              'png' => 'image/png',
-              'webp' => 'image/webp',
-              'heic' => 'image/heic',
-              'heif' => 'image/heif',
-              _ => throw const NoteAttachmentPickFailure(
-                'Solo puedes agregar fotos JPG, PNG, WebP o HEIC.',
-              ),
-            },
-          };
-    final storedName = wasCompressed
-        ? _replaceImageExtension(normalizedName, 'jpg')
-        : normalizedName;
-    attachments.add(
-      NoteAttachment(
-        id: const Uuid().v4(),
-        name: storedName.isEmpty
-            ? 'Foto.jpg'
-            : storedName.length <= 120
-            ? storedName
-            : storedName.substring(storedName.length - 120),
-        mimeType: mimeType,
-        sizeBytes: bytes.length,
-        dataBase64: base64Encode(bytes),
-      ),
-    );
+    attachments.add(await createNotePhotoAttachment(file));
   }
   return attachments;
+}
+
+Future<NoteAttachment> createNotePhotoAttachment(XFile file) async {
+  if (await file.length() > noteAttachmentMaxSourceBytes) {
+    throw const NoteAttachmentPickFailure(
+      'La foto original puede pesar hasta 25 MB.',
+    );
+  }
+  final sourceBytes = await file.readAsBytes();
+  if (sourceBytes.isEmpty) {
+    throw const NoteAttachmentPickFailure(
+      'No pudimos leer esa foto. Intenta elegirla nuevamente.',
+    );
+  }
+  if (sourceBytes.length > noteAttachmentMaxSourceBytes) {
+    throw const NoteAttachmentPickFailure(
+      'La foto original puede pesar hasta 25 MB.',
+    );
+  }
+  final wasCompressed = sourceBytes.length > noteAttachmentMaxBytes;
+  final bytes = wasCompressed
+      ? await compute(compressNotePhoto, sourceBytes)
+      : sourceBytes;
+  if (bytes == null || bytes.length > noteAttachmentMaxBytes) {
+    throw const NoteAttachmentPickFailure(
+      'No pudimos comprimir esa foto. Prueba con otra imagen.',
+    );
+  }
+  final normalizedName = file.name.trim();
+  final extension = normalizedName.contains('.')
+      ? normalizedName.split('.').last.toLowerCase()
+      : '';
+  final mimeType = wasCompressed
+      ? 'image/jpeg'
+      : switch (file.mimeType?.toLowerCase()) {
+          'image/jpeg' => 'image/jpeg',
+          'image/png' => 'image/png',
+          'image/webp' => 'image/webp',
+          'image/heic' => 'image/heic',
+          'image/heif' => 'image/heif',
+          _ => switch (extension) {
+            'jpg' || 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'heic' => 'image/heic',
+            'heif' => 'image/heif',
+            _ => throw const NoteAttachmentPickFailure(
+              'Solo puedes agregar fotos JPG, PNG, WebP o HEIC.',
+            ),
+          },
+        };
+  final storedName = wasCompressed
+      ? _replaceImageExtension(normalizedName, 'jpg')
+      : normalizedName;
+  return NoteAttachment(
+    id: const Uuid().v4(),
+    name: storedName.isEmpty
+        ? 'Foto.jpg'
+        : storedName.length <= 120
+        ? storedName
+        : storedName.substring(storedName.length - 120),
+    mimeType: mimeType,
+    sizeBytes: bytes.length,
+    dataBase64: base64Encode(bytes),
+  );
 }
 
 @visibleForTesting

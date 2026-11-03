@@ -31,7 +31,9 @@ class _HomeWidgetSettingsPageState extends State<HomeWidgetSettingsPage> {
       ? widget.controller.listId!
       : '';
   late String _capture =
-      _lists.any((list) => list.id == widget.controller.captureListId)
+      _lists.any(
+        (list) => list.canEdit && list.id == widget.controller.captureListId,
+      )
       ? widget.controller.captureListId!
       : '';
   late bool _hidden = widget.controller.hideContent;
@@ -200,12 +202,17 @@ class _HomeWidgetSettingsPageState extends State<HomeWidgetSettingsPage> {
                       value: '',
                       child: Text('Última lista utilizada'),
                     ),
-                    ..._lists.map(
-                      (list) => DropdownMenuItem(
-                        value: list.id,
-                        child: Text(list.name, overflow: TextOverflow.ellipsis),
-                      ),
-                    ),
+                    ..._lists
+                        .where((l) => l.canEdit)
+                        .map(
+                          (list) => DropdownMenuItem(
+                            value: list.id,
+                            child: Text(
+                              list.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
                   ],
                   onChanged: _saving
                       ? null

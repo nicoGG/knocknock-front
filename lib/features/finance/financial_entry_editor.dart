@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:nocknock/features/finance/financial_installment_preview.dart';
 import 'package:nocknock/features/finance/receipt_scanner.dart';
 import 'package:nocknock/features/finance/payment_method_field.dart';
@@ -24,6 +25,10 @@ Future<bool?> showFinancialEntryEditor({
   required String author,
   required Future<void> Function(NoteDraft) onSave,
   Note? note,
+  NoteAttachment? initialReceipt,
+  FinancialEntry? initialEntry,
+  String? initialTitle,
+  String? initialDetail,
   Future<NoteAttachment> Function(String)? attachmentLoader,
   Future<void> Function()? onDelete,
   Future<bool> Function()? onHistory,
@@ -37,6 +42,10 @@ Future<bool?> showFinancialEntryEditor({
     author: author,
     onSave: onSave,
     note: note,
+    initialReceipt: initialReceipt,
+    initialEntry: initialEntry,
+    initialTitle: initialTitle,
+    initialDetail: initialDetail,
     attachmentLoader: attachmentLoader,
     onDelete: onDelete,
     onHistory: onHistory,
@@ -49,6 +58,10 @@ class FinancialEntryEditor extends StatefulWidget {
     required this.author,
     required this.onSave,
     this.note,
+    this.initialReceipt,
+    this.initialEntry,
+    this.initialTitle,
+    this.initialDetail,
     this.attachmentLoader,
     this.onDelete,
     this.onHistory,
@@ -57,6 +70,9 @@ class FinancialEntryEditor extends StatefulWidget {
   final NoteList list;
   final String author;
   final Note? note;
+  final NoteAttachment? initialReceipt;
+  final FinancialEntry? initialEntry;
+  final String? initialTitle, initialDetail;
   final Future<void> Function(NoteDraft) onSave;
   final Future<NoteAttachment> Function(String)? attachmentLoader;
   final Future<void> Function()? onDelete;
@@ -71,24 +87,32 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   late final _installments = TextEditingController(
     text: _existing?.installments?.toString() ?? '',
   );
-  late final _existing = widget.note?.financialEntry;
-  late final _title = TextEditingController(text: widget.note?.title ?? '');
+  late final _existing = widget.note?.financialEntry ?? widget.initialEntry;
+  late final _title = TextEditingController(
+    text:
+        widget.note?.title ??
+        widget.initialTitle ??
+        (widget.initialReceipt != null ? 'Gasto con boleta' : ''),
+  );
   late final _amount = TextEditingController(
     text: financialAmountInput(_existing?.editableAmount ?? '', _currency),
   );
   late final _party = TextEditingController(
     text: _existing?.counterparty ?? '',
   );
-  late final _detail = TextEditingController(text: widget.note?.content ?? '');
+  late final _detail = TextEditingController(
+    text: widget.note?.content ?? widget.initialDetail ?? '',
+  );
   late DateTime _date = _existing?.date ?? DateTime.now();
   late String _status =
       widget.list.configuration.statuses.contains(_existing?.status)
       ? _existing!.status
       : 'pending';
-  late final _currency =
+  late String _currency =
       _existing?.currency ?? widget.list.configuration.currency;
   late final List<NoteAttachment> _attachments = [
     ...?widget.note?.photoAttachments,
+    ?widget.initialReceipt,
   ];
   late final List<FinancialPayment> _payments = [...?_existing?.payments];
   late final _participants = TextEditingController(
@@ -131,7 +155,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   }
 
   Future<void> _save() async {
-    if (_readingReceipt) return;
+    if (_readingReceipt || _saving) return;
     if (!_form.currentState!.validate()) return;
     final amount = parseFinancialAmountInput(_amount.text, _currency)!;
     if (_paid > amount ||
@@ -212,8 +236,10 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
     final picked = await showDatePicker(
       context: context,
       initialDate: value ?? DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100, 12, 31),
+      firstDate: value != null && value.year < 2000 ? value : DateTime(2000),
+      lastDate: value != null && value.year > 2100
+          ? value
+          : DateTime(2100, 12, 31),
       helpText: label,
     );
     if (picked != null && mounted) setState(() => update(picked));
@@ -225,14 +251,12 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
       setState(() => _error = 'Ingresa un monto válido con saldo pendiente.');
       return;
     }
-    final result = await showDialog<(FinancialPayment, List<NoteAttachment>)>(
+    final result = await showFinancialPaymentDialog(
       context: context,
-      builder: (_) => _PaymentDialog(
-        currency: _currency,
-        balance: total - _paid + (existing?.amountMinor ?? 0),
-        existing: existing,
-        attachments: _attachments,
-      ),
+      currency: _currency,
+      balance: total - _paid + (existing?.amountMinor ?? 0),
+      existing: existing,
+      attachments: _attachments,
     );
     if (result != null && mounted) {
       setState(() {
@@ -285,6 +309,39 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
     }
   }
 
+  @override
+  void initState() {
+    super.initState();
+    final receipt = widget.initialReceipt;
+    if (receipt != null && widget.initialEntry == null) {
+      _readingReceipt = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scan(receipt);
+      });
+    }
+  }
+
+  Future<void> _scan(NoteAttachment attachment) async {
+    try {
+      final total = await suggestReceiptTotal(context, attachment, _currency);
+      if (mounted && total != null) {
+        setState(
+          () => _amount.text = financialAmountInput(
+            FinancialEntry(
+              amountMinor: total,
+              currency: _currency,
+              counterparty: '',
+              date: _date,
+            ).editableAmount,
+            _currency,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _readingReceipt = false);
+    }
+  }
+
   Future<void> _attach() async {
     try {
       final picked = await pickNoteAttachments(
@@ -297,28 +354,7 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
         _attachments.addAll(picked);
         _readingReceipt = true;
       });
-      try {
-        final total = await suggestReceiptTotal(
-          context,
-          picked.first,
-          _currency,
-        );
-        if (mounted && total != null) {
-          setState(
-            () => _amount.text = financialAmountInput(
-              FinancialEntry(
-                amountMinor: total,
-                currency: _currency,
-                counterparty: '',
-                date: _date,
-              ).editableAmount,
-              _currency,
-            ),
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _readingReceipt = false);
-      }
+      await _scan(picked.first);
     } on NoteAttachmentPickFailure catch (error) {
       if (mounted) setState(() => _error = error.message);
     }
@@ -472,7 +508,8 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                       controller: _title,
                       textCapitalization: TextCapitalization.sentences,
                       enabled: !_saving,
-                      autofocus: widget.note == null,
+                      autofocus:
+                          widget.note == null && widget.initialEntry == null,
                       maxLength: 80,
                       decoration: const InputDecoration(
                         labelText: 'Concepto',
@@ -484,6 +521,29 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                           : null,
                     ),
                     const SizedBox(height: 8),
+                    if (widget.initialEntry != null && widget.note == null) ...[
+                      LiquidDropdownFormField<String>(
+                        initialValue: _currency,
+                        decoration: const InputDecoration(
+                          labelText: 'Moneda del gasto',
+                        ),
+                        items: ListConfiguration.currencies
+                            .map(
+                              (c) => DropdownMenuItem(value: c, child: Text(c)),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (value) {
+                                if (value == null || value == _currency) return;
+                                setState(() {
+                                  _currency = value;
+                                  _amount.clear();
+                                });
+                              },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     TextFormField(
                       key: const ValueKey('financial-amount'),
                       controller: _amount,
@@ -615,17 +675,11 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
                       trailing: const Icon(Icons.edit_calendar_outlined),
                       onTap: _saving
                           ? null
-                          : () async {
-                              final date = await showDatePicker(
-                                context: context,
-                                initialDate: _date,
-                                firstDate: DateTime(2000),
-                                lastDate: DateTime(2100, 12, 31),
-                              );
-                              if (date != null && mounted) {
-                                setState(() => _date = date);
-                              }
-                            },
+                          : () => _pickDate(
+                              'Fecha del registro',
+                              _date,
+                              (date) => _date = date,
+                            ),
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -1163,13 +1217,33 @@ class _FinancialEntryEditorState extends State<FinancialEntryEditor> {
   }
 }
 
+Future<(FinancialPayment, List<NoteAttachment>)?> showFinancialPaymentDialog({
+  required BuildContext context,
+  required String currency,
+  required int balance,
+  required List<NoteAttachment> attachments,
+  FinancialPayment? existing,
+  String? agendaLabel,
+}) => showDialog<(FinancialPayment, List<NoteAttachment>)>(
+  context: context,
+  builder: (_) => _PaymentDialog(
+    currency: currency,
+    balance: balance,
+    attachments: attachments,
+    existing: existing,
+    agendaLabel: agendaLabel,
+  ),
+);
+
 class _PaymentDialog extends StatefulWidget {
   const _PaymentDialog({
     required this.currency,
     required this.balance,
     required this.attachments,
     this.existing,
+    this.agendaLabel,
   });
+  final String? agendaLabel;
   final FinancialPayment? existing;
   final String currency;
   final int balance;
@@ -1270,7 +1344,9 @@ class _PaymentDialogState extends State<_PaymentDialog> {
 
   @override
   Widget build(BuildContext context) => FinancialDialog(
-    title: widget.existing == null ? 'Registrar abono' : 'Editar abono',
+    title:
+        widget.agendaLabel ??
+        (widget.existing == null ? 'Registrar abono' : 'Editar abono'),
     icon: Icons.payments_outlined,
     content: Form(
       key: _form,
@@ -1456,7 +1532,13 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                   ));
                 }
               },
-        child: Text(widget.existing == null ? 'Agregar' : 'Guardar cambios'),
+        child: Text(
+          widget.agendaLabel != null
+              ? 'Guardar abono'
+              : widget.existing == null
+              ? 'Agregar'
+              : 'Guardar cambios',
+        ),
       ),
     ],
   );

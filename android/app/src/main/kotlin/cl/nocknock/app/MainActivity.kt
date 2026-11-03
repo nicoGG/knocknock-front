@@ -10,11 +10,24 @@ import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
 
 class MainActivity : FlutterFragmentActivity() {
+    private val receipts by lazy { ReceiptShareReceiver(applicationContext) }
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        receipts.intercept(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    override fun onDestroy() {
+        receipts.close()
+        super.onDestroy()
+    }
+
     private var widgetChannel: MethodChannel? = null
     private var pendingWidgetAction: Map<String, String>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        receipts.register(flutterEngine.dartExecutor.binaryMessenger)
         ReceiptScanner.register(this, flutterEngine.dartExecutor.binaryMessenger)
         captureWidgetAction(intent)
         widgetChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "cl.nocknock/home_widgets").also { channel ->
@@ -52,6 +65,7 @@ class MainActivity : FlutterFragmentActivity() {
         intent.data = null
     }
     override fun onNewIntent(intent: Intent) {
+        receipts.intercept(intent)
         captureWidgetAction(intent)
         super.onNewIntent(intent)
         widgetChannel?.invokeMethod("actionAvailable", null)

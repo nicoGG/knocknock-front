@@ -100,7 +100,12 @@ class CachedNotesRepository
   Future<List<NoteList>> fetchLists() async {
     final userId = _userIdProvider();
     final lists = await _repository.fetchLists();
-    unawaited(
+    await _rememberPermissions(userId, lists);
+    unawaited(syncPendingChanges());
+    return lists;
+  }
+
+  Future<void> _rememberPermissions(String? userId, List<NoteList> lists) =>
       _updateCache(userId, (cache) {
         cache.lists = List.of(lists);
         final validIds = lists.map((list) => list.id).toSet();
@@ -112,10 +117,13 @@ class CachedNotesRepository
         cache.reminderNotes?.removeWhere(
           (note) => !validIds.contains(note.boardId),
         );
-      }),
-    );
-    unawaited(syncPendingChanges());
-    return lists;
+      });
+
+  void _checkWrite(String? boardId) {
+    final list = _cacheFor(_userIdProvider())?.lists
+        .where((l) => l.id == boardId)
+        .firstOrNull;
+    if (list != null && !list.canEdit) throw const ReadOnlyListFailure();
   }
 
   @override
@@ -281,10 +289,30 @@ class CachedNotesRepository
   }
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) async {
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
     final userId = _userIdProvider();
-    final list = await _repository.inviteCollaborator(listId, email);
+    final list = await _repository.inviteCollaborator(
+      listId,
+      email,
+      role: role,
+    );
     unawaited(_updateCache(userId, (cache) => _replaceList(cache, list)));
+    return list;
+  }
+
+  @override
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) async {
+    final userId = _userIdProvider();
+    final list = await _repository.changeCollaboratorRole(listId, uid, role);
+    await _updateCache(userId, (cache) => _replaceList(cache, list));
     return list;
   }
 
@@ -304,6 +332,7 @@ class CachedNotesRepository
     String listId,
     ListAppearance appearance,
   ) async {
+    _checkWrite(listId);
     final userId = _userIdProvider();
     final list = await _repository.updateListAppearance(listId, appearance);
     unawaited(_updateCache(userId, (cache) => _replaceList(cache, list)));
@@ -400,6 +429,7 @@ class CachedNotesRepository
           )
           .firstOrNull;
       if (pending != null) {
+        _checkWrite(pending.boardId);
         final restored = Note.fromJson(
           Map<String, dynamic>.from(jsonDecode(pending.localNoteJson!) as Map),
         ).copyWith(clearDeletedAt: true);
@@ -574,6 +604,7 @@ class CachedNotesRepository
 
   @override
   Future<Note> createNote(String boardId, NoteDraft draft) async {
+    _checkWrite(boardId);
     final userId = _userIdProvider();
     if (userId == null || userId.isEmpty) {
       return _repository.createNote(boardId, draft);
@@ -698,6 +729,7 @@ class CachedNotesRepository
   Future<Note> updateNote(String id, Map<String, dynamic> changes) async {
     final userId = _userIdProvider();
     final current = _findCachedNote(userId, id);
+    _checkWrite(current?.boardId);
     final operationId =
         changes['clientMutationId'] as String? ?? const Uuid().v4();
     final expectedRevision =
@@ -739,6 +771,7 @@ class CachedNotesRepository
   Future<Note> setNoteReaction(String id, String emoji, bool active) async {
     final userId = _userIdProvider();
     final current = _findCachedNote(userId, id);
+    _checkWrite(current?.boardId);
     try {
       final note = await _repository.setNoteReaction(id, emoji, active);
       await _updateCache(userId, (cache) => _upsertNote(cache, note));
@@ -770,6 +803,7 @@ class CachedNotesRepository
     String boardId,
     List<String> orderedIds,
   ) async {
+    _checkWrite(boardId);
     final userId = _userIdProvider();
     final current = _cacheFor(userId)?.notesByBoard[boardId];
     try {
@@ -809,6 +843,7 @@ class CachedNotesRepository
   }) async {
     final userId = _userIdProvider();
     final current = _findCachedNote(userId, id);
+    _checkWrite(current?.boardId);
     final operationId = clientMutationId ?? const Uuid().v4();
     final revision = expectedRevision ?? current?.revision;
     try {
@@ -913,13 +948,37 @@ class CachedNotesRepository
   }
 
   @override
-  Future<void> syncPendingChanges() async {
+  Future<void> syncPendingChanges({bool refreshPermissions = false}) async {
     final userId = _userIdProvider();
     if (_isSyncing || userId == null || userId.isEmpty) return;
     _isSyncing = true;
     await _emitSyncState();
     try {
       final mutations = await _mutationStore.listForUser(userId);
+      if (!refreshPermissions &&
+          !mutations.any((m) => m.status == StoredMutationStatus.pending)) {
+        return;
+      }
+      // A role may have changed while this device was disconnected.
+      late final Map<String, NoteList> permissions;
+      try {
+        final lists = await _repository.fetchLists();
+        if (_userIdProvider() != userId) return;
+        permissions = {for (final l in lists) l.id: l};
+        final previous = List<NoteList>.of(_cacheFor(userId)?.lists ?? []);
+        await _rememberPermissions(userId, lists);
+        for (final list in previous) {
+          final current = permissions[list.id];
+          if (current == null) {
+            _events.add(ListAccessRemoved(list.id));
+          } else if (current.currentUserRole != list.currentUserRole) {
+            _events.add(ListMembersChanged(list.id));
+          }
+        }
+      } catch (_) {
+        return;
+      }
+      final refreshed = <String>{};
       final blockedBoardIds = mutations
           .where((item) => item.status == StoredMutationStatus.conflict)
           .map((item) => item.boardId)
@@ -928,6 +987,19 @@ class CachedNotesRepository
         (item) => item.status == StoredMutationStatus.pending,
       )) {
         if (_userIdProvider() != userId) break;
+        if (permissions[mutation.boardId]?.canEdit != true) {
+          await _mutationStore.put(
+            mutation.copyWith(
+              status: StoredMutationStatus.conflict,
+              errorMessage: 'Tu permiso cambió. El cambio se conservó en este dispositivo.',
+            ),
+          );
+          if (permissions.containsKey(mutation.boardId) &&
+              refreshed.add(mutation.boardId)) {
+            await _restoreBoardAfterDiscard(mutation);
+          }
+          continue;
+        }
         if (blockedBoardIds.contains(mutation.boardId)) continue;
         try {
           await _executeMutation(mutation);
@@ -935,6 +1007,18 @@ class CachedNotesRepository
         } catch (error) {
           if (_isDeleteAlreadyApplied(mutation, error)) {
             await _mutationStore.remove(mutation.id);
+            continue;
+          }
+          if (error is DioException && error.response?.statusCode == 403) {
+            await _mutationStore.put(
+              mutation.copyWith(
+                status: StoredMutationStatus.conflict,
+                errorMessage: 'Ya no tienes permiso para aplicar este cambio.',
+              ),
+            );
+            if (refreshed.add(mutation.boardId)) {
+              await _restoreBoardAfterDiscard(mutation);
+            }
             continue;
           }
           final remote = _conflictingNote(error);
@@ -1147,7 +1231,10 @@ class CachedNotesRepository
     final existingCreate = noteMutations
         .where((item) => item.kind == StoredMutationKind.create)
         .firstOrNull;
-    if (existingCreate != null) {
+    // A collaborator can create the same monthly record before offline replay.
+    // Keep any subsequent payment as a revision-checked update of that record.
+    final sharedMonthlyCreate = _isMonthlyCreate(existingCreate);
+    if (existingCreate != null && !sharedMonthlyCreate) {
       final draft = Map<String, dynamic>.from(
         jsonDecode(existingCreate.payload) as Map,
       )..addAll(storedChanges);
@@ -1186,7 +1273,7 @@ class CachedNotesRepository
         boardId: current.boardId,
         kind: StoredMutationKind.update,
         payload: jsonEncode(storedChanges),
-        baseRevision: current.revision,
+        baseRevision: sharedMonthlyCreate ? 1 : current.revision,
         createdAt: DateTime.now(),
         status: remote == null
             ? StoredMutationStatus.pending
@@ -1262,6 +1349,13 @@ class CachedNotesRepository
     );
   }
 
+  bool _isMonthlyCreate(StoredOfflineMutation? mutation) =>
+      mutation != null &&
+      mutation.kind == StoredMutationKind.create &&
+      mutation.id == mutation.entityId &&
+      mutation.id.length == 36 &&
+      mutation.id[14] == '5';
+
   Future<void> _queueDelete({
     required String userId,
     required String operationId,
@@ -1271,15 +1365,15 @@ class CachedNotesRepository
     final existing = (await _mutationStore.listForUser(userId))
         .where((item) => item.entityId == current.id)
         .toList();
-    if (existing.any((item) => item.kind == StoredMutationKind.create)) {
-      for (final item in existing) {
-        await _mutationStore.remove(item.id);
-      }
-      return;
-    }
+    final create = existing
+        .where((m) => m.kind == StoredMutationKind.create)
+        .firstOrNull;
+    final monthly = _isMonthlyCreate(create);
     for (final item in existing) {
-      await _mutationStore.remove(item.id);
+      // Another member may already have created this month on the server.
+      if (!monthly || item != create) await _mutationStore.remove(item.id);
     }
+    if (create != null && !monthly) return;
     await _mutationStore.put(
       StoredOfflineMutation(
         id: operationId,
@@ -1288,7 +1382,7 @@ class CachedNotesRepository
         boardId: current.boardId,
         kind: StoredMutationKind.delete,
         payload: '{}',
-        baseRevision: current.revision,
+        baseRevision: monthly ? 1 : current.revision,
         createdAt: DateTime.now(),
         status: remote == null
             ? StoredMutationStatus.pending
@@ -1460,12 +1554,31 @@ class CachedNotesRepository
 
   Future<void> _restoreBoardAfterDiscard(StoredOfflineMutation mutation) async {
     try {
-      final notes = await _repository.fetchNotes(mutation.boardId);
+      final remote = await _repository.fetchNotes(mutation.boardId);
+      if (_userIdProvider() != mutation.userId) return;
+      final previous = {
+        for (final n
+            in _cacheFor(mutation.userId)?.notesByBoard[mutation.boardId] ??
+                const <Note>[])
+          n.id: n,
+      };
+      final notes = remote
+          .map((n) => _preserveAttachmentData(n, previous[n.id]))
+          .toList();
       await _updateCache(mutation.userId, (cache) {
         cache.notesByBoard[mutation.boardId] = _sortedNotes(notes);
+        cache.pinnedNotes?.removeWhere((n) => n.boardId == mutation.boardId);
+        cache.reminderNotes?.removeWhere((n) => n.boardId == mutation.boardId);
         _replaceKnownPinnedNotes(cache, notes);
         _replaceKnownReminderNotes(cache, notes);
       });
+      final savedIds = notes.map((n) => n.id).toSet();
+      for (final id in previous.keys.where((id) => !savedIds.contains(id))) {
+        _events.add(NoteRemoved(id, mutation.boardId));
+      }
+      for (final n in notes.where((n) => n != previous[n.id])) {
+        _events.add(NoteChanged(n));
+      }
       _events.add(NotesReordered(mutation.boardId, notes));
     } on Object {
       // Access may have been removed; the realtime access event will clean up.
@@ -1603,7 +1716,7 @@ class CachedNotesRepository
         break;
     }
     if (event case RealtimeConnectionChanged(isConnected: true)) {
-      unawaited(syncPendingChanges());
+      unawaited(syncPendingChanges(refreshPermissions: true));
     }
     _events.add(event);
   }

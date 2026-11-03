@@ -292,8 +292,18 @@ class _TrackingNotesRepository
   Future<void> deleteList(String listId) => throw UnimplementedError();
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) =>
-      throw UnimplementedError();
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) => throw UnimplementedError();
 
   @override
   Future<NoteList> removeCollaborator(String listId, String collaboratorUid) =>

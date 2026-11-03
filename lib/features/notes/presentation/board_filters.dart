@@ -4,6 +4,7 @@ part of 'board_page.dart';
 
 class _BoardHeader extends StatelessWidget {
   const _BoardHeader({
+    required this.newNoteDock,
     required this.title,
     required this.isEditingTitle,
     required this.onEditingTitleChanged,
@@ -33,6 +34,7 @@ class _BoardHeader extends StatelessWidget {
     required this.isCompact,
   });
 
+  final GlobalKey newNoteDock;
   final bool isEditingTitle;
   final ValueChanged<bool> onEditingTitleChanged;
   final String title;
@@ -134,15 +136,18 @@ class _BoardHeader extends StatelessWidget {
                       ),
                     ),
                   if (showAddButton)
-                    GlassNewNoteButton(
-                      label: list?.isFinancial == true
-                          ? list!.configuration.entryLabel
-                          : 'Nueva nota',
-                      onLongPress: onQuickCapture,
-                      key: const ValueKey('new-note-button'),
-                      onPressed: onAdd,
-                      backgroundColor: colorScheme.primary,
-                      foregroundColor: colorScheme.onPrimary,
+                    KeyedSubtree(
+                      key: newNoteDock,
+                      child: GlassNewNoteButton(
+                        label: list?.isFinancial == true
+                            ? list!.configuration.entryLabel
+                            : 'Nueva nota',
+                        onLongPress: onQuickCapture,
+                        key: const ValueKey('new-note-button'),
+                        onPressed: onAdd,
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: colorScheme.onPrimary,
+                      ),
                     ),
                   if (onShare != null ||
                       onCustomizeBackground != null ||

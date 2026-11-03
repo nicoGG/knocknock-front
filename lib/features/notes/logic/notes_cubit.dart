@@ -1,6 +1,10 @@
+import 'package:nocknock/features/finance/monthly_finance_series.dart';
 import 'package:nocknock/features/finance/list_configuration.dart';
 
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:nocknock/features/finance/financial_entry.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,6 +22,7 @@ class NotesCubit extends Cubit<NotesState> {
       super(const NotesState());
 
   final NotesRepository _repository;
+  late final _monthly = MonthlyFinanceSeries(_repository);
   Set<String> _financialListIds = {};
   final SelectedListStore _selectedListStore;
   StreamSubscription<NotesRealtimeEvent>? _realtimeSubscription;
@@ -61,6 +66,10 @@ class NotesCubit extends Cubit<NotesState> {
     final cached = await _readCache();
     if (generation != _loadGeneration || isClosed) return;
 
+    _readerListIds = {
+      for (final l in cached?.lists ?? const <NoteList>[])
+        if (!l.canEdit) l.id,
+    };
     _financialListIds = {
       for (final list in cached?.lists ?? <NoteList>[])
         if (list.isFinancial) list.id,
@@ -112,6 +121,10 @@ class NotesCubit extends Cubit<NotesState> {
     try {
       final lists = await _repository.fetchLists();
       if (generation != _loadGeneration || isClosed) return;
+      _readerListIds = {
+        for (final l in lists)
+          if (!l.canEdit) l.id,
+      };
       _financialListIds = {
         for (final list in lists)
           if (list.isFinancial) list.id,
@@ -410,22 +423,67 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Future<NoteList> _createConfiguredList(
+    String name,
+    ListConfiguration configuration,
+  ) async {
+    final repository = _repository;
+    final list = configuration.isFinancial
+        ? await (repository is TypedListsRepository
+              ? (repository as TypedListsRepository).createTypedList(
+                  name,
+                  configuration,
+                )
+              : Future<NoteList>.error(const NotesPersistenceFailure()))
+        : await repository.createList(name);
+    if (list.isFinancial) _financialListIds.add(list.id);
+    return list;
+  }
+
+  /// Creates the reviewed destination without navigating away from the receipt.
+  Future<NoteList> createExpenseListForCapture(
+    String name,
+    String currency,
+  ) async {
+    final list = await _createConfiguredList(
+      name,
+      ListConfiguration(type: NoteListType.expenses, currency: currency),
+    );
+    if (!isClosed && !state.lists.any((item) => item.id == list.id)) {
+      emit(state.copyWith(lists: [...state.lists, list]));
+    }
+    return list;
+  }
+
+  Future<void> saveReviewedNoteChanges(
+    Note original,
+    Map<String, dynamic> changes,
+    String mutationId,
+  ) async {
+    final patch = {
+      ...changes,
+      'expectedRevision': original.revision,
+      'clientMutationId': mutationId,
+    };
+    // Use the same confirmed revision-checked write as history restoration.
+    // The normal offline editor may queue conflicts and return an optimistic note.
+    final repository = _repository;
+    final updated = repository is NoteHistoryRepository
+        ? await (repository as NoteHistoryRepository).restoreNoteContent(
+            original.id,
+            patch,
+          )
+        : await repository.updateNote(original.id, patch);
+    if (!isClosed) _upsert(updated);
+  }
+
   Future<void> createList(
     String name, {
     ListConfiguration configuration = const ListConfiguration(),
   }) async {
     emit(state.copyWith(isSavingList: true));
     try {
-      final repository = _repository;
-      final list = configuration.isFinancial
-          ? await (repository is TypedListsRepository
-                ? (repository as TypedListsRepository).createTypedList(
-                    name,
-                    configuration,
-                  )
-                : Future<NoteList>.error(const NotesPersistenceFailure()))
-          : await repository.createList(name);
-      if (list.isFinancial) _financialListIds.add(list.id);
+      final list = await _createConfiguredList(name, configuration);
       final lists = [...state.lists, list];
       emit(
         state.copyWith(
@@ -581,12 +639,16 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
-  Future<bool> inviteCollaborator(String email) async {
+  Future<bool> inviteCollaborator(
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
     emit(state.copyWith(isInviting: true));
     try {
       final updated = await _repository.inviteCollaborator(
         state.selectedListId,
         email.trim(),
+        role: role,
       );
       final lists = state.lists
           .map((list) => list.id == updated.id ? updated : list)
@@ -602,6 +664,26 @@ class NotesCubit extends Cubit<NotesState> {
     } catch (error) {
       emit(state.copyWith(isInviting: false, message: _friendlyMessage(error)));
       return false;
+    }
+  }
+
+  Future<void> changeCollaboratorRole(String uid, ListMemberRole role) async {
+    final list = state.selectedList;
+    if (list == null || !list.canInvite) return;
+    try {
+      final updated = await _repository.changeCollaboratorRole(
+        list.id,
+        uid,
+        role,
+      );
+      emit(
+        state.copyWith(
+          lists: _replaceList(updated),
+          message: 'Permiso actualizado.',
+        ),
+      );
+    } catch (error) {
+      emit(state.copyWith(message: _friendlyMessage(error)));
     }
   }
 
@@ -751,10 +833,18 @@ class NotesCubit extends Cubit<NotesState> {
     }
   }
 
+  Set<String> _readerListIds = {};
+  bool _canMaterialize(String id) =>
+      !_readerListIds.contains(id) &&
+      state.lists.where((l) => l.id == id).firstOrNull?.canEdit != false;
+
   Future<NotesPage> _fetchNotesPage(String boardId) async {
     final repository = _repository;
     if (_financialListIds.contains(boardId)) {
-      final notes = await repository.fetchNotes(boardId);
+      final notes = await _monthly.load(
+        boardId,
+        materialize: _canMaterialize(boardId),
+      );
       if (repository is NotesCacheReader) {
         final cached = await (repository as NotesCacheReader).readCache();
         if (cached != null && !cached.fullyLoadedBoardIds.contains(boardId)) {
@@ -804,7 +894,10 @@ class NotesCubit extends Cubit<NotesState> {
   }
 
   List<Note> _sortedNotes(Iterable<Note> notes) =>
-      List<Note>.of(notes)..sort(compareNotes);
+      notes
+          .where((n) => MonthlyFinanceRule.decode(n.financialData) == null)
+          .toList()
+        ..sort(compareNotes);
 
   bool _acceptAssigneeCount(List<String> uids, List<String> names) {
     if (uids.toSet().length +
@@ -852,6 +945,26 @@ class NotesCubit extends Cubit<NotesState> {
     if (!isClosed) _remove(note.id);
   }
 
+  Future<List<Note>> monthlyRules(String boardId) async =>
+      (await _repository.fetchNotes(boardId))
+          .where(
+            (n) =>
+                n.deletedAt == null &&
+                MonthlyFinanceRule.decode(n.financialData) != null,
+          )
+          .toList();
+
+  Future<void> createMonthlyRule(String boardId, NoteDraft template) async {
+    await _repository.createNote(boardId, template);
+    final notes = await _monthly.afterCreate(boardId);
+    if (!isClosed && state.selectedListId == boardId) {
+      emit(state.copyWith(notes: _sortedNotes(notes)));
+    }
+  }
+
+  Future<void> stopMonthlyRule(Note template) =>
+      _repository.deleteNote(template.id, expectedRevision: template.revision);
+
   Future<void> saveFinancialEntry(
     String listId,
     NoteDraft draft, {
@@ -876,6 +989,48 @@ class NotesCubit extends Cubit<NotesState> {
                   .toList(),
           });
     if (!isClosed) _upsert(note);
+  }
+
+  Future<void> recordAgendaPayment(
+    NoteSearchResult source,
+    FinancialPayment payment,
+    List<NoteAttachment> attachments,
+  ) async {
+    final note = source.note;
+    final entry = note.financialEntry;
+    if (entry == null ||
+        entry.isClosed ||
+        entry.kind != 'entry' ||
+        payment.amountMinor <= 0 ||
+        payment.amountMinor > entry.balanceMinor ||
+        entry.payments.length >= 50) {
+      throw const NotesPersistenceFailure();
+    }
+    final paid = payment.amountMinor == entry.balanceMinor;
+    final data = jsonDecode(entry.encoded) as Map<String, dynamic>;
+    // Preserve the implicit due date when upgrading a v1 receivable to v2.
+    if (entry.legacyDateAsDue &&
+        entry.dueDate == null &&
+        source.list.configuration.type == NoteListType.receivables) {
+      data['dueDate'] = data['date'];
+    }
+    data['payments'] = [
+      ...entry.payments,
+      payment,
+    ].map((p) => p.toJson()).toList();
+    if (paid) data['status'] = 'paid';
+    final updated = await _repository.updateNote(note.id, {
+      'expectedRevision': note.revision,
+      'clientMutationId': payment.id,
+      'financialData': jsonEncode(data),
+      if (attachments.isNotEmpty)
+        'attachments': [
+          ...note.photoAttachments,
+          ...attachments,
+        ].map((a) => a.toJson()).toList(),
+      if (paid) ...{'reminderAt': null, 'reminderRecurrence': null},
+    });
+    if (!isClosed) _upsert(updated);
   }
 
   Future<void> restoreNoteVersion(Note current, NoteVersion version) async {
@@ -1321,13 +1476,15 @@ class NotesCubit extends Cubit<NotesState> {
   }
 
   /// Reads all lists through the decrypted, offline-aware repository.
-  Future<List<NoteSearchResult>> fetchTodayNotes({
+  Future<List<NoteSearchResult>> fetchVisibleListNotes({
     required bool Function(String listId) canShowList,
   }) async {
     final results = <NoteSearchResult>[];
     for (final list in state.lists) {
       if (!canShowList(list.id)) continue;
-      final notes = await _repository.fetchNotes(list.id);
+      final notes = list.isFinancial
+          ? await _monthly.load(list.id, materialize: list.canEdit)
+          : await _repository.fetchNotes(list.id);
       if (!canShowList(list.id)) continue;
       results.addAll(
         notes
@@ -1427,6 +1584,11 @@ class NotesCubit extends Cubit<NotesState> {
       final updated = lists.where((list) => list.id == listId).firstOrNull;
       if (updated == null || !state.lists.any((list) => list.id == listId)) {
         return;
+      }
+      if (updated.canEdit) {
+        _readerListIds.remove(listId);
+      } else {
+        _readerListIds.add(listId);
       }
       emit(state.copyWith(lists: _replaceList(updated)));
     } catch (_) {
@@ -1572,6 +1734,7 @@ class NotesCubit extends Cubit<NotesState> {
   }
 
   void _upsert(Note note) {
+    if (MonthlyFinanceRule.decode(note.financialData) != null) return;
     final notes = [...state.notes];
     if (note.boardId == state.selectedListId) {
       final index = notes.indexWhere((item) => item.id == note.id);

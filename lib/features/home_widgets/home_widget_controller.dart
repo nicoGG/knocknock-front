@@ -1,3 +1,4 @@
+import 'package:nocknock/features/finance/monthly_finance_series.dart';
 import 'package:nocknock/features/home_widgets/home_widget_kind.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:nocknock/core/theme/app_theme_controller.dart';
@@ -37,7 +38,8 @@ Map<String, dynamic> buildHomeWidgetSnapshot({
   final end = DateTime(now.year, now.month, now.day + 1);
   final unique = <String, Note>{};
   for (final note in notes) {
-    if (!visibleLists.containsKey(note.boardId) ||
+    if (MonthlyFinanceRule.decode(note.financialData) != null ||
+        !visibleLists.containsKey(note.boardId) ||
         (note.financialEntry != null &&
             (note.financialEntry!.isBudget ||
                 note.financialEntry!.status != 'pending')) ||
@@ -77,7 +79,7 @@ Map<String, dynamic> buildHomeWidgetSnapshot({
     'total': hideContent ? 0 : pending.length,
     'hidden': hideContent,
     'updatedAt': now.millisecondsSinceEpoch,
-    'captureListId': visibleLists.containsKey(captureListId)
+    'captureListId': visibleLists[captureListId]?.canEdit == true
         ? captureListId
         : null,
     'rows': hideContent
@@ -92,7 +94,9 @@ Map<String, dynamic> buildHomeWidgetSnapshot({
                   'revision': note.revision,
                   // Recurring notes are opened in the app, matching the board behavior.
                   'canComplete':
-                      !note.isRecurring && note.financialEntry == null,
+                      visibleLists[note.boardId]?.canEdit == true &&
+                      !note.isRecurring &&
+                      note.financialEntry == null,
                 },
               )
               .toList(),
@@ -322,7 +326,16 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         notes == null &&
         previous['hidden'] != true &&
         previous['listId'] == snapshot['listId']) {
-      snapshot['rows'] = previous['rows'] ?? <Object>[];
+      snapshot['rows'] = (previous['rows'] as List? ?? [])
+          .whereType<Map>()
+          .map(
+            (row) => {
+              ...row,
+              if (!visible.any((l) => l.id == row['boardId'] && l.canEdit))
+                'canComplete': false,
+            },
+          )
+          .toList();
       snapshot['total'] = previous['total'] ?? 0;
     }
     final catalog = <Map<String, dynamic>>[];
@@ -338,12 +351,20 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
             catalog.add({
               ...Map<String, dynamic>.from(cached),
               'title': list.name,
+              'canEdit': list.canEdit,
             });
           }
           continue;
         }
-        final active = entries.where((n) => n.deletedAt == null).toList()
-          ..sort(compareNotes);
+        final active =
+            entries
+                .where(
+                  (n) =>
+                      n.deletedAt == null &&
+                      MonthlyFinanceRule.decode(n.financialData) == null,
+                )
+                .toList()
+              ..sort(compareNotes);
         final summary = <String, int>{};
         for (final note in active) {
           final entry = note.financialEntry;
@@ -361,6 +382,7 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
         }
         catalog.add({
           'listId': list.id,
+          'canEdit': list.canEdit,
           'title': list.name,
           'financial': list.isFinancial,
           'expenses': list.configuration.type.name == 'expenses',
@@ -379,7 +401,9 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
                   'revision': note.revision,
                   'completed': note.isCompleted,
                   'canComplete':
-                      !note.isRecurring && note.financialEntry == null,
+                      list.canEdit &&
+                      !note.isRecurring &&
+                      note.financialEntry == null,
                   'checklist': note.checklist
                       .map((item) => item.toJson())
                       .toList(),
@@ -487,7 +511,10 @@ class HomeWidgetController extends ChangeNotifier with WidgetsBindingObserver {
       final allowed =
           action['owner'] == account &&
           lists.any(
-            (list) => list.id == board && !list.isEncryptionKeyPending,
+            (list) =>
+                list.id == board &&
+                list.canEdit &&
+                !list.isEncryptionKeyPending,
           ) &&
           !protection.isProtected(board as String);
       if (!allowed) {

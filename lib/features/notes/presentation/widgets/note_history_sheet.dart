@@ -12,7 +12,7 @@ Future<bool> showNoteHistorySheet({
   required BuildContext context,
   required Note Function() currentNote,
   required Future<List<NoteVersion>> Function() load,
-  required Future<void> Function(Note, NoteVersion) restore,
+  Future<void> Function(Note, NoteVersion)? restore,
   required Listenable protectionChanges,
   required bool Function() canAccess,
 }) async {
@@ -48,7 +48,7 @@ class _NoteHistorySheet extends StatefulWidget {
   });
   final Note Function() currentNote;
   final Future<List<NoteVersion>> Function() load;
-  final Future<void> Function(Note, NoteVersion) restore;
+  final Future<void> Function(Note, NoteVersion)? restore;
   final Listenable protectionChanges;
   final bool Function() canAccess;
   @override
@@ -91,7 +91,7 @@ class _NoteHistorySheetState extends State<_NoteHistorySheet> {
       _error = null;
     });
     try {
-      await widget.restore(widget.currentNote(), version);
+      await widget.restore?.call(widget.currentNote(), version);
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
       if (mounted) setState(() => _error = notesErrorMessage(error));
@@ -431,34 +431,35 @@ class _NoteHistorySheetState extends State<_NoteHistorySheet> {
                                       children: [
                                         NoteVersionPreview(note: version.note),
                                         const SizedBox(height: 12),
-                                        Align(
-                                          alignment: Alignment.centerRight,
-                                          child: FilledButton.tonalIcon(
-                                            key: ValueKey(
-                                              'restore-version-${version.revision}',
-                                            ),
-                                            onPressed: _saving
-                                                ? null
-                                                : () => _restore(version),
-                                            style: FilledButton.styleFrom(
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
+                                        if (widget.restore != null)
+                                          Align(
+                                            alignment: Alignment.centerRight,
+                                            child: FilledButton.tonalIcon(
+                                              key: ValueKey(
+                                                'restore-version-${version.revision}',
+                                              ),
+                                              onPressed: _saving
+                                                  ? null
+                                                  : () => _restore(version),
+                                              style: FilledButton.styleFrom(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(16),
+                                                ),
+                                              ),
+                                              icon: const Icon(
+                                                Icons.restore_rounded,
+                                                size: 18,
+                                              ),
+                                              label: Text(
+                                                _saving
+                                                    ? 'Recuperando…'
+                                                    : 'Recuperar versión',
                                               ),
                                             ),
-                                            icon: const Icon(
-                                              Icons.restore_rounded,
-                                              size: 18,
-                                            ),
-                                            label: Text(
-                                              _saving
-                                                  ? 'Recuperando…'
-                                                  : 'Recuperar versión',
-                                            ),
                                           ),
-                                        ),
                                       ],
                                     ),
                                   );

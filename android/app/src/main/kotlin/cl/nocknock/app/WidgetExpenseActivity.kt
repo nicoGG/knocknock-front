@@ -19,7 +19,7 @@ class WidgetExpenseActivity : Activity() {
         val board = intent.getStringExtra("boardId") ?: ""
         val lists = state?.optJSONArray("catalog")
         val list = (0 until (lists?.length() ?: 0)).mapNotNull { lists?.optJSONObject(it) }
-            .firstOrNull { it.optString("listId") == board && it.optBoolean("expenses") }
+            .firstOrNull { it.optString("listId") == board && it.optBoolean("canEdit", true) && it.optBoolean("expenses") }
         if (state?.optBoolean("hidden") != false || state.optString("owner") != owner || list == null) { finish(); return }
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 0) }
         val title = EditText(this).apply { hint = "Descripción"; maxLines = 1 }

@@ -1,7 +1,7 @@
 import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:equatable/equatable.dart';
 
-enum ListMemberRole { owner, editor }
+enum ListMemberRole { owner, editor, viewer }
 
 enum ListBackgroundPreset {
   paper,
@@ -224,24 +224,33 @@ class ListCollaborator extends Equatable {
 }
 
 class ListPendingInvitation extends Equatable {
-  const ListPendingInvitation({required this.email, required this.invitedAt});
+  const ListPendingInvitation({
+    required this.email,
+    required this.invitedAt,
+    this.role = ListMemberRole.editor,
+  });
 
   factory ListPendingInvitation.fromJson(Map<String, dynamic> json) =>
       ListPendingInvitation(
         email: json['email'] as String,
+        role: json['role'] == 'viewer'
+            ? ListMemberRole.viewer
+            : ListMemberRole.editor,
         invitedAt: DateTime.parse(json['invitedAt'] as String),
       );
 
+  final ListMemberRole role;
   final String email;
   final DateTime invitedAt;
 
   Map<String, dynamic> toJson() => {
     'email': email,
+    'role': role.name,
     'invitedAt': invitedAt.toIso8601String(),
   };
 
   @override
-  List<Object?> get props => [email, invitedAt];
+  List<Object?> get props => [email, invitedAt, role];
 }
 
 class NoteList extends Equatable {
@@ -267,7 +276,9 @@ class NoteList extends Equatable {
     updatedAt: DateTime.parse(json['updatedAt'] as String),
     currentUserRole: ListMemberRole.values.firstWhere(
       (role) => role.name == json['currentUserRole'],
-      orElse: () => ListMemberRole.owner,
+      orElse: () => json['currentUserRole'] == null
+          ? ListMemberRole.owner
+          : ListMemberRole.viewer,
     ),
     collaborators: (json['collaborators'] as List<dynamic>? ?? const [])
         .map(
@@ -309,6 +320,7 @@ class NoteList extends Equatable {
   final ListConfiguration configuration;
   bool get isFinancial => configuration.isFinancial;
 
+  bool get canEdit => currentUserRole != ListMemberRole.viewer;
   bool get canInvite => currentUserRole == ListMemberRole.owner;
   bool get isShared =>
       collaborators.length > 1 || pendingInvitations.isNotEmpty;

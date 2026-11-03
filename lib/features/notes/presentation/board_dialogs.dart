@@ -12,6 +12,7 @@ class _CollaboratorsDialog extends StatefulWidget {
 }
 
 class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
+  ListMemberRole _role = ListMemberRole.viewer;
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   String? _removingCollaboratorUid;
@@ -179,7 +180,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                       child: Text(
                                         list.canInvite
                                             ? 'Invita a otras personas. La lista aparecerá '
-                                                  'cuando ingresen con ese correo.'
+                                                  'cuando ingresen con ese correo. Toca un colaborador para cambiar su permiso.'
                                             : 'Aquí puedes ver quiénes participan. Solo la '
                                                   'persona propietaria gestiona los accesos.',
                                         style: Theme.of(context)
@@ -214,6 +215,30 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
+                                      DropdownButtonFormField<ListMemberRole>(
+                                        key: const ValueKey('invitation-role'),
+                                        initialValue: _role,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Permiso de la invitación',
+                                        ),
+                                        items: const [
+                                          DropdownMenuItem(
+                                            value: ListMemberRole.editor,
+                                            child: Text('Puede editar'),
+                                          ),
+                                          DropdownMenuItem(
+                                            value: ListMemberRole.viewer,
+                                            child: Text('Solo lectura'),
+                                          ),
+                                        ],
+                                        onChanged: state.isInviting
+                                            ? null
+                                            : (r) {
+                                                if (r != null) {
+                                                  setState(() => _role = r);
+                                                }
+                                              },
+                                      ),
                                       Form(
                                         key: _formKey,
                                         child: TextFormField(
@@ -316,10 +341,59 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                       ),
                                     ),
                                     subtitle: Text(
-                                      person.email,
+                                      person.role == ListMemberRole.viewer
+                                          ? '${person.email} · Solo lectura'
+                                          : person.email,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
+                                    onTap:
+                                        list.canInvite &&
+                                            person.role != ListMemberRole.owner
+                                        ? () async {
+                                            final role =
+                                                await showDialog<
+                                                  ListMemberRole
+                                                >(
+                                                  context: context,
+                                                  builder: (ctx) => SimpleDialog(
+                                                    title: Text(
+                                                      'Permiso de ${person.displayName}',
+                                                    ),
+                                                    children: [
+                                                      for (final r in [
+                                                        ListMemberRole.viewer,
+                                                        ListMemberRole.editor,
+                                                      ])
+                                                        SimpleDialogOption(
+                                                          onPressed: () =>
+                                                              Navigator.pop(
+                                                                ctx,
+                                                                r,
+                                                              ),
+                                                          child: Text(
+                                                            r ==
+                                                                    ListMemberRole
+                                                                        .viewer
+                                                                ? 'Solo lectura'
+                                                                : 'Puede editar',
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                );
+                                            if (role != null &&
+                                                role != person.role &&
+                                                context.mounted) {
+                                              await context
+                                                  .read<NotesCubit>()
+                                                  .changeCollaboratorRole(
+                                                    person.uid,
+                                                    role,
+                                                  );
+                                            }
+                                          }
+                                        : null,
                                     trailing:
                                         person.role == ListMemberRole.owner
                                         ? Text(
@@ -361,7 +435,9 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                                   ),
                                           )
                                         : Text(
-                                            'Puede editar',
+                                            person.role == ListMemberRole.viewer
+                                                ? 'Solo lectura'
+                                                : 'Puede editar',
                                             style: Theme.of(context)
                                                 .textTheme
                                                 .labelSmall,
@@ -393,8 +469,10 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    subtitle: const Text(
-                                      'Tendrá acceso cuando inicie sesión',
+                                    subtitle: Text(
+                                      invitation.role == ListMemberRole.viewer
+                                          ? 'Solo lectura al iniciar sesión'
+                                          : 'Tendrá acceso cuando inicie sesión',
                                     ),
                                   ),
                                 ),
@@ -429,6 +507,7 @@ class _CollaboratorsDialogState extends State<_CollaboratorsDialog> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final sent = await context.read<NotesCubit>().inviteCollaborator(
       _emailController.text,
+      role: _role,
     );
     if (sent && mounted) {
       _emailController.clear();
@@ -522,7 +601,13 @@ class _CollaboratorAvatar extends StatelessWidget {
 }
 
 class _CreateListDialog extends StatefulWidget {
-  const _CreateListDialog({this.customTypes = const []});
+  const _CreateListDialog({
+    this.customTypes = const [],
+    this.proposal,
+    this.suggest,
+  });
+  final AssistantListDraft? proposal;
+  final Future<AssistantListDraft?> Function(String)? suggest;
   final List<String> customTypes;
 
   @override
@@ -536,6 +621,20 @@ class _CreateListDialogState extends State<_CreateListDialog> {
   NoteListType _type = NoteListType.normal;
   String _currency = 'CLP';
   FinancialListTemplate? _template;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.proposal case final proposal?) _apply(proposal);
+  }
+
+  void _apply(AssistantListDraft proposal) {
+    _template = null;
+    _controller.text = proposal.name;
+    _type = proposal.configuration.type;
+    _currency = proposal.configuration.currency;
+    _customType.text = proposal.configuration.customTypeName ?? '';
+  }
 
   @override
   void dispose() {
@@ -613,6 +712,22 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                             style: Theme.of(context).textTheme.headlineMedium
                                 ?.copyWith(fontWeight: FontWeight.w900),
                           ),
+                          if (widget.suggest != null)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                icon: const Icon(Icons.smart_toy_outlined),
+                                label: const Text('Diseñar lista con Nock'),
+                                onPressed: () async {
+                                  final proposal = await widget.suggest!(
+                                    _controller.text,
+                                  );
+                                  if (mounted && proposal != null) {
+                                    setState(() => _apply(proposal));
+                                  }
+                                },
+                              ),
+                            ),
                           const SizedBox(height: 24),
                           LiquidDropdownFormField<FinancialListTemplate>(
                             key: const ValueKey('list-template'),

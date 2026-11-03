@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Usa el micrófono para dictar un mensaje a Nock cuando tú lo elijas.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>El reconocimiento de voz convierte tu dictado en texto que puedes revisar antes de enviar.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

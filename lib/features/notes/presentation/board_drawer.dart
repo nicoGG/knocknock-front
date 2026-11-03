@@ -21,6 +21,8 @@ class _AppDrawer extends StatelessWidget {
     required this.onOpenSettings,
     required this.onOpenTrash,
     required this.onOpenToday,
+    required this.onOpenAgenda,
+    required this.onOpenAssistant,
     required this.favoriteListIds,
     required this.recentListIds,
     required this.onToggleFavorite,
@@ -47,6 +49,8 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenTrash;
   final VoidCallback onOpenToday;
+  final VoidCallback onOpenAgenda;
+  final VoidCallback onOpenAssistant;
   final Set<String> favoriteListIds;
   final List<String> recentListIds;
   final Future<bool> Function(String) onToggleFavorite;
@@ -146,12 +150,25 @@ class _AppDrawer extends StatelessWidget {
                       const Expanded(
                         child: Text(
                           'NockNock',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,
                             letterSpacing: -0.7,
                           ),
                         ),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        label: const Text('Asistente'),
+                        icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          onOpenAssistant();
+                        },
                       ),
                     ],
                   ),
@@ -175,6 +192,15 @@ class _AppDrawer extends StatelessWidget {
                       onOpenToday();
                     },
                   ),
+                ),
+                ListTile(
+                  key: const ValueKey('financial-agenda-menu-button'),
+                  leading: const Icon(Icons.calendar_month_outlined),
+                  title: const Text('Agenda de pagos y cobros'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    onOpenAgenda();
+                  },
                 ),
                 const SizedBox(height: 10),
                 Padding(

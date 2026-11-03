@@ -6936,12 +6936,36 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.invitedEmail, 'ana@example.com');
+    expect(repository.invitedRole, ListMemberRole.viewer);
     expect(
       find.text('Invitación creada para ana@example.com.'),
       findsOneWidget,
     );
   });
 
+  testWidgets(
+    'viewer can open the content but has no board creation or note edit actions',
+    (tester) async {
+      final repo = _FakeNotesRepository();
+      repo._lists[0] = NoteList.fromJson({
+        ...repo._lists.first.toJson(),
+        'currentUserRole': 'viewer',
+      });
+      await tester.pumpWidget(
+        NockNockApp(repository: repo, authRepository: _FakeAuthRepository()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('new-note-fab')), findsNothing);
+      await tester.tap(find.text('Comprar café'));
+      await tester.pumpAndSettle();
+      expect(find.text('Solo lectura'), findsWidgets);
+      expect(find.text('Para la reunión de mañana'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('quick-edit-note-button')),
+        findsNothing,
+      );
+    },
+  );
   testWidgets('owner confirms before removing a collaborator', (tester) async {
     const user = AppUser(
       id: 'google-user',
@@ -6970,6 +6994,29 @@ void main() {
       findsNothing,
     );
 
+    final member = find.byKey(const ValueKey('collaborator-person-ana'));
+    await tester.ensureVisible(member);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: member, matching: find.text('Ana Torres')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(SimpleDialogOption, 'Solo lectura'));
+    await tester.pumpAndSettle();
+    expect(
+      repository._lists.first.collaborators
+          .singleWhere((m) => m.uid == 'person-ana')
+          .role,
+      ListMemberRole.viewer,
+    );
+
+    // The permission update toast precedes the removal confirmation.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('remove-collaborator-person-ana')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('remove-collaborator-person-ana')),
     );
@@ -7262,6 +7309,7 @@ class _FakeNotesRepository
   final List<NoteList> _lists;
   bool didClearLocalData = false;
   String? deletedNoteId;
+  ListMemberRole? invitedRole;
   String? invitedEmail;
   String? removedCollaboratorUid;
   Map<String, dynamic>? lastChanges;
@@ -7342,8 +7390,30 @@ class _FakeNotesRepository
   }
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) async {
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) async {
+    final index = _lists.indexWhere((l) => l.id == listId);
+    final current = _lists[index];
+    return _lists[index] = NoteList.fromJson({
+      ...current.toJson(),
+      'collaborators': [
+        for (final member in current.collaborators)
+          {...member.toJson(), if (member.uid == uid) 'role': role.name},
+      ],
+    });
+  }
+
+  @override
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
     invitedEmail = email;
+    invitedRole = role;
     return _lists.firstWhere((list) => list.id == listId);
   }
 

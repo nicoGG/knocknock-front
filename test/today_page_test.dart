@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nocknock/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -247,6 +249,86 @@ void main() {
       });
       expect(pending.completedAt, isNull);
       await cubit.close();
+    },
+  );
+
+  testWidgets(
+    'returning from a task keeps content and scroll while refreshing',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final repository = _DelayedTodayRepository();
+      await tester.runAsync(() async {
+        for (var i = 0; i < 15; i++) {
+          await repository.createNote(
+            'home',
+            NoteDraft(
+              title: 'Tarea ${i.toString().padLeft(2, '0')}',
+              content: '',
+              color: NoteColor.blue,
+              authorName: 'Nico',
+              reminderAt: DateTime.now(),
+            ),
+          );
+        }
+      });
+      final cubit = NotesCubit(repository);
+      await tester.runAsync(cubit.load);
+      final protection = ListProtectionController();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: TodayPage(
+            cubit: cubit,
+            protection: protection,
+            userId: null,
+            onCreateNote: (_, _) async {},
+            onPreviewNote: (context, result) async {
+              await showDialog<void>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Volver'),
+                    ),
+                  ],
+                ),
+              );
+              return false;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Tarea 10'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      final scroll = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
+      final offset = scroll.position.pixels;
+      await tester.tap(find.text('Tarea 10'));
+      await tester.pumpAndSettle();
+      repository.pending = Completer<void>();
+      await tester.tap(find.text('Volver'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tarea 10'), findsOneWidget);
+      expect(
+        tester.state<ScrollableState>(find.byType(Scrollable).first),
+        same(scroll),
+      );
+      expect(scroll.position.pixels, offset);
+      repository.pending!.completeError(StateError('offline'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tarea 10'), findsOneWidget);
+      expect(scroll.position.pixels, offset);
+      repository.pending = null;
+      await tester.pumpWidget(const SizedBox());
+      protection.dispose();
+      await tester.runAsync(cubit.close);
     },
   );
 
@@ -515,12 +597,13 @@ void main() {
       final cubit = NotesCubit(repository);
       await tester.runAsync(cubit.load);
       expect(
-        (await cubit.fetchTodayNotes(canShowList: (id) => id != second.id))
-            .where((r) => r.note.id == note.id),
+        (await cubit.fetchVisibleListNotes(
+          canShowList: (id) => id != second.id,
+        )).where((r) => r.note.id == note.id),
         isEmpty,
       );
       expect(
-        (await cubit.fetchTodayNotes(canShowList: (_) => true))
+        (await cubit.fetchVisibleListNotes(canShowList: (_) => true))
             .any((r) => r.note.id == note.id),
         isTrue,
       );
@@ -639,5 +722,15 @@ class _FailingTodayRepository extends LocalNotesRepository {
   Future<Note> updateNote(String id, Map<String, dynamic> changes) {
     if (failUpdates) throw const NotesPersistenceFailure();
     return super.updateNote(id, changes);
+  }
+}
+
+class _DelayedTodayRepository extends LocalNotesRepository {
+  Completer<void>? pending;
+
+  @override
+  Future<List<Note>> fetchNotes(String boardId) async {
+    if (pending != null) await pending!.future;
+    return super.fetchNotes(boardId);
   }
 }

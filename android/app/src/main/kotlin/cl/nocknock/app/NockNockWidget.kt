@@ -172,7 +172,7 @@ open class NockNockWidget : AppWidgetProvider() {
                 put("rows", selected?.optJSONArray("rows") ?: JSONArray())
                 put("title", selected?.optString("title") ?: "Lista no disponible")
                 put("listId", selected?.optString("listId") ?: "")
-                put("captureListId", selected?.optString("listId") ?: "")
+                put("captureListId", selected?.takeIf { it.optBoolean("canEdit", true) }?.optString("listId") ?: "")
             }
             val noteFilter = config?.optString("note") ?: ""
             if (selected != null) {
@@ -187,7 +187,7 @@ open class NockNockWidget : AppWidgetProvider() {
                         val sub = checklist.optJSONObject(j) ?: continue
                         flat.put(JSONObject(row.toString()).put("subtaskId", sub.optString("id"))
                             .put("title", "  " + sub.optString("text"))
-                            .put("completed", sub.optBoolean("isCompleted")).put("canComplete", !sub.optBoolean("isCompleted")))
+                            .put("completed", sub.optBoolean("isCompleted")).put("canComplete", selected.optBoolean("canEdit", true) && !sub.optBoolean("isCompleted")))
                     }
                 }
                 snapshot.put("rows", flat).put("total", flat.length())
@@ -219,7 +219,7 @@ open class NockNockWidget : AppWidgetProvider() {
                     views.setTextViewText(R.id.widget_capture, "＋ Nueva nota")
                     views.setTextViewTextSize(R.id.widget_capture, android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
                 }
-                if (selected?.optBoolean("expenses") == true && !hidden) {
+                if (selected?.optBoolean("expenses") == true && selected.optBoolean("canEdit", true) && !hidden) {
                     val expense = Intent(context, WidgetExpenseActivity::class.java)
                         .setData(Uri.parse("nocknock://expense/$id"))
                         .putExtra("boardId", selected.optString("listId")).putExtra("owner", owner)
@@ -266,7 +266,7 @@ open class NockNockWidget : AppWidgetProvider() {
                     item.setContentDescription(R.id.widget_check, if (completed) "Abrir tarea completada: ${row.optString("title")}" else if (row.optBoolean("canComplete")) "Completar ${row.optString("title")}" else "Abrir ${row.optString("title")}")
                     val open = launch(context, "note", owner, row.optString("boardId"), noteId)
                     item.setOnClickPendingIntent(R.id.widget_note_title, open)
-                    if (row.optBoolean("canComplete") && !completed) {
+                    if (row.optBoolean("canComplete") && selected?.optBoolean("canEdit", true) != false && !completed) {
                         val complete = Intent(context, NockNockWidget::class.java)
                             .setAction("cl.nocknock.WIDGET_COMPLETE")
                             .setData(Uri.parse("nocknock://complete/${Uri.encode(owner)}/${Uri.encode(noteId)}"))

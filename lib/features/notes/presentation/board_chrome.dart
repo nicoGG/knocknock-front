@@ -15,8 +15,10 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onOpenNotifications,
     required this.scrollProgress,
     this.notificationsController,
+    this.pendingReceiptAction,
   });
 
+  final Widget? pendingReceiptAction;
   final bool isConnected;
   final bool isConnecting;
   final bool isEncrypted;
@@ -116,6 +118,7 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
           key: const ValueKey('appbar-actions'),
           mainAxisSize: MainAxisSize.min,
           children: [
+            ?pendingReceiptAction,
             _AnimatedConnectionIndicator(
               isConnected: isConnected,
               isConnecting: isConnecting,

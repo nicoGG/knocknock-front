@@ -20,6 +20,64 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  test('downgrade while offline keeps the draft pending review and restores the shared version', () async {
+    final lists = [_list()];
+    final remote = _FakeRemoteRepository(
+      lists: lists,
+      notes: [_note(title: 'Original', revision: 1)],
+    );
+    final cache = CachedNotesRepository(
+      repository: remote,
+      preferences: await SharedPreferences.getInstance(),
+      userIdProvider: () => 'reader',
+      mutationStore: InMemoryOfflineMutationStore(),
+    );
+    await cache.fetchLists();
+    await cache.fetchNotes('list-1');
+    remote.isOffline = true;
+    await cache.updateNote('note-1', {'title': 'Edición offline'});
+    lists[0] = NoteList.fromJson({
+      ...lists[0].toJson(),
+      'currentUserRole': 'viewer',
+    });
+    remote.isOffline = false;
+    await cache.syncPendingChanges();
+    expect(remote.notes.single.title, 'Original');
+    final pending = (await cache.fetchPendingNoteChanges()).single;
+    expect(pending.needsReview, isTrue);
+    expect(pending.note?.title, 'Edición offline');
+    expect(
+      (await cache.readCache())!.notesByBoard['list-1']!.single.title,
+      'Original',
+    );
+    remote.isOffline = true;
+    await expectLater(
+      cache.updateNote('note-1', {'title': 'No'}),
+      throwsA(isA<ReadOnlyListFailure>()),
+    );
+    await expectLater(
+      cache.createNote(
+        'list-1',
+        const NoteDraft(
+          title: 'No',
+          content: '',
+          authorName: 'Yo',
+          color: NoteColor.green,
+        ),
+      ),
+      throwsA(isA<ReadOnlyListFailure>()),
+    );
+    await expectLater(
+      cache.deleteNote('note-1'),
+      throwsA(isA<ReadOnlyListFailure>()),
+    );
+    await expectLater(
+      cache.setNoteReaction('note-1', '🔥', true),
+      throwsA(isA<ReadOnlyListFailure>()),
+    );
+    expect(await cache.fetchPendingNoteChanges(), hasLength(1));
+    cache.dispose();
+  });
   test('persists a complete snapshot and isolates it by account', () async {
     var currentUserId = 'user-1';
     final preferences = await SharedPreferences.getInstance();
@@ -483,6 +541,49 @@ void main() {
       repository.dispose();
     },
   );
+
+  test('a monthly record created offline keeps its subsequent payment as a separate checked mutation', () async {
+    final remote = _FakeRemoteRepository(lists: [_list()], notes: []);
+    final store = InMemoryOfflineMutationStore();
+    final repository = CachedNotesRepository(
+      repository: remote,
+      preferences: await SharedPreferences.getInstance(),
+      userIdProvider: () => 'user-1',
+      mutationStore: store,
+    );
+    await repository.fetchLists();
+    await repository.fetchNotes('list-1');
+    remote.isOffline = true;
+    const id = 'da80cb38-02cf-5bdb-992b-a02a19439d91';
+    await repository.createNote(
+      'list-1',
+      const NoteDraft(
+        title: 'Arriendo',
+        content: '',
+        color: NoteColor.green,
+        authorName: 'Ana',
+        clientNoteId: id,
+        clientMutationId: id,
+        financialData: 'initial',
+      ),
+    );
+    await repository.updateNote(id, {'financialData': 'with-payment'});
+    final pending = await store.listForUser('user-1');
+    expect(pending.length, 2);
+    final create = pending.singleWhere(
+      (m) => m.kind == StoredMutationKind.create,
+    );
+    final update = pending.singleWhere(
+      (m) => m.kind == StoredMutationKind.update,
+    );
+    expect(jsonDecode(create.payload)['financialData'], 'initial');
+    expect(jsonDecode(update.payload)['financialData'], 'with-payment');
+    expect(update.baseRevision, 1);
+    remote.isOffline = false;
+    await repository.syncPendingChanges();
+    expect((await repository.offlineSyncSummary()).pendingCount, 0);
+    repository.dispose();
+  });
 
   test('keeps optimized photo bytes available in the device cache', () async {
     final preferences = await SharedPreferences.getInstance();

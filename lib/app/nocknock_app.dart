@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/assistant_client.dart';
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
 import 'package:nocknock/features/home_widgets/home_widget_controller.dart';
 import 'package:nocknock/features/notes/data/quick_capture_inbox.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +28,7 @@ class NockNockApp extends StatefulWidget {
     this.listProtectionController,
     this.notificationsController,
     this.navigatorObservers = const [],
+    this.createAssistantClient,
     this.preferences,
     super.key,
   });
@@ -37,6 +40,7 @@ class NockNockApp extends StatefulWidget {
   final ListProtectionController? listProtectionController;
   final NotificationsController? notificationsController;
   final List<NavigatorObserver> navigatorObservers;
+  final AssistantClient Function()? createAssistantClient;
   final SharedPreferences? preferences;
 
   @override
@@ -45,6 +49,21 @@ class NockNockApp extends StatefulWidget {
 
 class _NockNockAppState extends State<NockNockApp> {
   late final _captureInbox = QuickCaptureInbox(preferences: widget.preferences);
+  late final _mascotPosition = ValueNotifier<Alignment?>(
+    _savedMascotPosition(),
+  );
+  late final _dismissedTips =
+      (widget.preferences?.getStringList('nock_dismissed_tips_v1') ??
+              <String>[])
+          .toSet();
+
+  Alignment? _savedMascotPosition() {
+    final x = widget.preferences?.getDouble('nock_position_x');
+    final y = widget.preferences?.getDouble('nock_position_y');
+    if (x == null || y == null || !x.isFinite || !y.isFinite) return null;
+    return Alignment(x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0));
+  }
+
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final AppThemeController _themeController =
       widget.themeController ?? AppThemeController();
@@ -79,6 +98,7 @@ class _NockNockAppState extends State<NockNockApp> {
   void dispose() {
     if (_ownsThemeController) _themeController.dispose();
     if (_ownsBoardViewModeController) _boardViewModeController.dispose();
+    _mascotPosition.dispose();
     _homeWidgets.dispose();
     if (_ownsListProtectionController) _listProtectionController.dispose();
     _captureInbox.dispose();
@@ -126,7 +146,22 @@ class _NockNockAppState extends State<NockNockApp> {
                 );
           return ListProtectionPrivacyGuard(
             controller: _listProtectionController,
-            child: appWithUpdatePrompt,
+            child: MascotPosition(
+              position: _mascotPosition,
+              dismissedTips: _dismissedTips,
+              onDismiss: (tip) {
+                _dismissedTips.add(tip.name);
+                widget.preferences?.setStringList(
+                  'nock_dismissed_tips_v1',
+                  _dismissedTips.toList(),
+                );
+              },
+              onPlaced: (point) {
+                widget.preferences?.setDouble('nock_position_x', point.x);
+                widget.preferences?.setDouble('nock_position_y', point.y);
+              },
+              child: appWithUpdatePrompt,
+            ),
           );
         },
       ),
@@ -141,6 +176,7 @@ class _NockNockAppState extends State<NockNockApp> {
         child: BlocProvider(
           create: (_) => NotesCubit(widget.repository)..load(),
           child: BoardPage(
+            createAssistantClient: widget.createAssistantClient,
             captureInbox: _captureInbox,
             homeWidgets: _homeWidgets,
             themeController: _themeController,

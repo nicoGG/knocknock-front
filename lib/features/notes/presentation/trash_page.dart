@@ -299,11 +299,30 @@ class _TrashPageState extends State<TrashPage> {
                         child: OutlinedButton.icon(
                           key: const ValueKey('empty-trash-button'),
                           onPressed:
-                              _isEmptying ||
+                              !notes.any(
+                                    (n) =>
+                                        widget.cubit.state.lists
+                                            .where((l) => l.id == n.boardId)
+                                            .firstOrNull
+                                            ?.canEdit !=
+                                        false,
+                                  ) ||
+                                  _isEmptying ||
                                   _restoringIds.isNotEmpty ||
                                   _deletingIds.isNotEmpty
                               ? null
-                              : () => _emptyTrash(notes),
+                              : () => _emptyTrash(
+                                  notes
+                                      .where(
+                                        (n) =>
+                                            widget.cubit.state.lists
+                                                .where((l) => l.id == n.boardId)
+                                                .firstOrNull
+                                                ?.canEdit !=
+                                            false,
+                                      )
+                                      .toList(),
+                                ),
                           icon: _isEmptying
                               ? const SizedBox.square(
                                   dimension: 20,
@@ -383,7 +402,13 @@ class _TrashPageState extends State<TrashPage> {
                           listName: _listName(note.boardId),
                           isRestoring: _restoringIds.contains(note.id),
                           isDeleting: _deletingIds.contains(note.id),
-                          isDisabled: _isEmptying,
+                          isDisabled:
+                              _isEmptying ||
+                              widget.cubit.state.lists
+                                      .where((l) => l.id == note.boardId)
+                                      .firstOrNull
+                                      ?.canEdit ==
+                                  false,
                           onRestore: () => _restore(note),
                           onDelete: () => _deletePermanently(note),
                         ),

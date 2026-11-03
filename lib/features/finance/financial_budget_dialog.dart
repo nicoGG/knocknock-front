@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
+import 'package:nocknock/features/assistant/assistant_view.dart';
 import 'package:nocknock/features/finance/financial_amount_input.dart';
 import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/finance/financial_style.dart';
@@ -7,16 +9,27 @@ import 'package:nocknock/features/finance/financial_reports.dart';
 import 'package:nocknock/features/finance/list_configuration.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 
+typedef BudgetAssistant = void Function(
+  BudgetSelection selection, [
+  MascotTip? tip,
+]);
+
 Future<void> showFinancialBudgetDialog(
   BuildContext context, {
   required String currency,
   required List<Note> notes,
   required Future<void> Function(NoteDraft, Note?) save,
+  BudgetAssistant? onAnalyze,
   String? month,
 }) => showDialog<void>(
   context: context,
-  builder: (_) =>
-      _BudgetDialog(currency: currency, notes: notes, save: save, month: month),
+  builder: (_) => _BudgetDialog(
+    currency: currency,
+    notes: notes,
+    save: save,
+    month: month,
+    onAnalyze: onAnalyze,
+  ),
 );
 
 class _BudgetDialog extends StatefulWidget {
@@ -25,9 +38,11 @@ class _BudgetDialog extends StatefulWidget {
     required this.notes,
     required this.save,
     this.month,
+    this.onAnalyze,
   });
   final String currency;
   final List<Note> notes;
+  final BudgetAssistant? onAnalyze;
   final String? month;
   final Future<void> Function(NoteDraft, Note?) save;
   @override
@@ -110,109 +125,127 @@ class _BudgetDialogState extends State<_BudgetDialog> {
     }
   }
 
+  void _analyze([MascotTip? tip]) => widget.onAnalyze?.call((
+    currency: _currency,
+    period: _period,
+    proposedLimit: parseFinancialAmountInput(_amount.text, _currency),
+  ), tip);
+
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !_saving,
-    child: FinancialDialog(
-      title: 'Presupuesto de la lista',
-      icon: Icons.savings_outlined,
-      content: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Se comparte con los miembros de la lista. Suma los montos registrados, salvo los descartados.',
-            ),
-            const SizedBox(height: 14),
-            LiquidDropdownFormField<String>(
-              initialValue: _currency,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Moneda',
-                prefixIcon: Icon(Icons.currency_exchange_rounded),
+  Widget build(BuildContext context) => AssistantSurface(
+    label: 'Presupuesto',
+    topic: MascotTopic.budget,
+    hint: 'Revisar gasto y saldo en $_currency con Nock',
+    onOpen: _saving || widget.onAnalyze == null ? null : _analyze,
+    child: PopScope(
+      canPop: !_saving,
+      child: FinancialDialog(
+        title: 'Presupuesto de la lista',
+        icon: Icons.savings_outlined,
+        content: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Se comparte con los miembros de la lista. Suma los montos registrados, salvo los descartados.',
               ),
-              items: ListConfiguration.currencies
-                  .map(
-                    (c) => DropdownMenuItem(
-                      value: c,
-                      child: FinancialOptionLabel(
-                        icon: FinancialStyle.currencyIcon(c),
-                        label: FinancialStyle.currencyLabel(c),
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: _saving
-                  ? null
-                  : (v) => setState(() {
-                      _currency = v!;
-                      _load();
-                    }),
-            ),
-            const SizedBox(height: 14),
-            LiquidDropdownFormField<String>(
-              initialValue: _period,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Período',
-                prefixIcon: Icon(Icons.calendar_month_rounded),
-              ),
-              items: [
-                const DropdownMenuItem(
-                  value: 'all',
-                  child: Text('Toda la lista'),
+              const SizedBox(height: 14),
+              LiquidDropdownFormField<String>(
+                initialValue: _currency,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Moneda',
+                  prefixIcon: Icon(Icons.currency_exchange_rounded),
                 ),
-                for (final m in {
-                  financialMonth(DateTime.now()),
-                  if (widget.month != null) widget.month!,
-                  ...widget.notes
-                      .where((n) => n.financialEntry != null)
-                      .map((n) => financialMonth(n.financialEntry!.date)),
-                }.toList()..sort((a, b) => b.compareTo(a)))
-                  DropdownMenuItem(value: m, child: Text(m)),
-              ],
-              onChanged: _saving
-                  ? null
-                  : (v) => setState(() {
-                      _period = v!;
-                      _load();
-                    }),
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              key: const ValueKey('budget-amount'),
-              controller: _amount,
-              inputFormatters: _currency == 'CLP'
-                  ? [ClpThousandsInputFormatter()]
-                  : null,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                labelText: 'Límite ($_currency)',
-                prefixText: _currency == 'EUR' ? '€ ' : r'$ ',
+                items: ListConfiguration.currencies
+                    .map(
+                      (c) => DropdownMenuItem(
+                        value: c,
+                        child: FinancialOptionLabel(
+                          icon: FinancialStyle.currencyIcon(c),
+                          label: FinancialStyle.currencyLabel(c),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: _saving
+                    ? null
+                    : (v) => setState(() {
+                        _currency = v!;
+                        _load();
+                      }),
               ),
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+              const SizedBox(height: 14),
+              LiquidDropdownFormField<String>(
+                initialValue: _period,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Período',
+                  prefixIcon: Icon(Icons.calendar_month_rounded),
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: 'all',
+                    child: Text('Toda la lista'),
+                  ),
+                  for (final m in {
+                    financialMonth(DateTime.now()),
+                    if (widget.month != null) widget.month!,
+                    ...widget.notes
+                        .where((n) => n.financialEntry != null)
+                        .map((n) => financialMonth(n.financialEntry!.date)),
+                  }.toList()..sort((a, b) => b.compareTo(a)))
+                    DropdownMenuItem(value: m, child: Text(m)),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (v) => setState(() {
+                        _period = v!;
+                        _load();
+                      }),
               ),
-              validator: (v) =>
-                  parseFinancialAmountInput(v ?? '', _currency) == null
-                  ? 'Ingresa un límite mayor que cero'
-                  : null,
-            ),
-            if (_error != null) Text(_error!),
-          ],
+              const SizedBox(height: 14),
+              TextFormField(
+                key: const ValueKey('budget-amount'),
+                controller: _amount,
+                inputFormatters: _currency == 'CLP'
+                    ? [ClpThousandsInputFormatter()]
+                    : null,
+                enabled: !_saving,
+                decoration: InputDecoration(
+                  labelText: 'Límite ($_currency)',
+                  prefixText: _currency == 'EUR' ? '€ ' : r'$ ',
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                validator: (v) =>
+                    parseFinancialAmountInput(v ?? '', _currency) == null
+                    ? 'Ingresa un límite mayor que cero'
+                    : null,
+              ),
+              if (widget.onAnalyze != null)
+                TextButton.icon(
+                  icon: const Icon(Icons.smart_toy_outlined),
+                  label: const Text('Analizar con Nock'),
+                  onPressed: _saving ? null : () => _analyze(MascotTip.balance),
+                ),
+              if (_error != null) Text(_error!),
+            ],
+          ),
         ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: Text(_saving ? 'Guardando…' : 'Guardar'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: Text(_saving ? 'Guardando…' : 'Guardar'),
-        ),
-      ],
     ),
   );
 }

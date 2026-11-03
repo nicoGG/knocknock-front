@@ -418,6 +418,11 @@ void main() {
     );
     final search = find.byKey(const ValueKey('financial-search'));
     await tester.ensureVisible(search);
+    for (final query in ['luis', 'USD 10,50']) {
+      await tester.enterText(search, query);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('financial-entry-qa')), findsOneWidget);
+    }
     await tester.enterText(search, 'inexistente');
     await tester.pumpAndSettle();
     expect(find.text('0 resultados'), findsOneWidget);

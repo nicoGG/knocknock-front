@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/mascot_tip.dart';
+import 'package:nocknock/features/notes/data/note_search.dart';
 import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
 import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/finance/financial_reports.dart';
@@ -42,6 +44,12 @@ Map<String, Map<String, int>> financialTotals(
   return totals;
 }
 
+typedef FinancialBoardSelection = ({
+  String listId,
+  String? month,
+  Set<String> ids,
+});
+
 class FinancialListBoard extends StatefulWidget {
   const FinancialListBoard({
     required this.list,
@@ -51,6 +59,10 @@ class FinancialListBoard extends StatefulWidget {
     this.onSave,
     this.listView = false,
     this.onViewChanged,
+    this.onOpenAgenda,
+    this.onAnalyzeBudget,
+    this.onVisibleRecords,
+    this.onOpenSeries,
     this.loadAttachment,
     super.key,
   });
@@ -59,7 +71,11 @@ class FinancialListBoard extends StatefulWidget {
   final ValueChanged<bool>? onViewChanged;
   final List<Note> notes;
   final ValueChanged<Note> onEdit;
-  final VoidCallback onAdd;
+  final VoidCallback? onAdd;
+  final ValueChanged<FinancialBoardSelection>? onVisibleRecords;
+  final BudgetAssistant? onAnalyzeBudget;
+  final VoidCallback? onOpenAgenda;
+  final VoidCallback? onOpenSeries;
   final Future<void> Function(NoteDraft, Note?)? onSave;
   final Future<NoteAttachment> Function(Note, String)? loadAttachment;
   @override
@@ -243,11 +259,14 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                         receivable: config.type == NoteListType.receivables,
                       ) ==
                       true) &&
-              '${note.title} ${note.financialEntry?.counterparty ?? ''}'
-                  .toLowerCase()
-                  .contains(_query.trim().toLowerCase()),
+              (_query.trim().isEmpty || noteMatchesQuery(note, _query)),
         )
         .toList();
+    widget.onVisibleRecords?.call((
+      listId: widget.list.id,
+      month: _month,
+      ids: notes.map((n) => n.id).toSet(),
+    ));
     final missing = allRecords
         .where((note) => note.financialEntry == null)
         .length;
@@ -360,6 +379,26 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                       }),
                     ),
                   ),
+                  if (widget.onOpenSeries != null &&
+                      (config.type == NoteListType.expenses ||
+                          config.type == NoteListType.receivables))
+                    FinancialActionButton(
+                      width: ((MediaQuery.sizeOf(context).width - 80) / 2)
+                          .clamp(110, 200),
+                      label: 'Series mensuales',
+                      icon: Icons.repeat_rounded,
+                      onPressed: widget.onOpenSeries!,
+                    ),
+                  if (widget.onOpenAgenda != null &&
+                      (config.type == NoteListType.expenses ||
+                          config.type == NoteListType.receivables))
+                    FinancialActionButton(
+                      width: ((MediaQuery.sizeOf(context).width - 80) / 2)
+                          .clamp(110, 200),
+                      onPressed: widget.onOpenAgenda!,
+                      icon: Icons.calendar_month_outlined,
+                      label: 'Agenda',
+                    ),
                   if (widget.onSave != null &&
                       [
                         NoteListType.expenses,
@@ -374,6 +413,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                         notes: widget.notes,
                         save: widget.onSave!,
                         month: _month,
+                        onAnalyze: widget.onAnalyzeBudget,
                       ),
                       icon: Icons.savings_rounded,
                       label: 'Presupuesto',
@@ -595,7 +635,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
                     setState(() => _query = '');
                   },
                 ),
-                hintText: 'Buscar movimientos',
+                hintText: 'Comercio, persona o monto',
                 hintStyle: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -900,6 +940,16 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
               color: remaining < 0 ? Theme.of(context).colorScheme.error : null,
             ),
           ),
+          if (widget.onAnalyzeBudget != null)
+            TextButton.icon(
+              onPressed: () => widget.onAnalyzeBudget!((
+                currency: budget.currency,
+                period: budget.period,
+                proposedLimit: null,
+              ), MascotTip.balance),
+              icon: const Icon(Icons.smart_toy_outlined),
+              label: const Text('Analizar presupuesto'),
+            ),
         ],
       ),
     );

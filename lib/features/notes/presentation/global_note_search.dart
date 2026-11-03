@@ -178,7 +178,7 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
                         textInputAction: TextInputAction.search,
                         onChanged: _scheduleSearch,
                         decoration: InputDecoration(
-                          hintText: 'Título, contenido o subtarea',
+                          hintText: 'Nota, comercio, persona o monto',
                           contentPadding: const EdgeInsets.symmetric(
                             vertical: 16,
                             horizontal: 16,
@@ -233,7 +233,9 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
                           ),
                           if (!_isLoading && _results.isNotEmpty)
                             Text(
-                              '${_results.length} resultados',
+                              _results.length == 1
+                                  ? '1 resultado'
+                                  : '${_results.length} resultados',
                               style: Theme.of(context).textTheme.labelMedium
                                   ?.copyWith(color: colorScheme.primary),
                             ),
@@ -291,7 +293,14 @@ class _GlobalNoteSearchSheetState extends State<_GlobalNoteSearchSheet> {
             : note.checklist
                   .map((item) => noteChecklistDisplayText(item.text))
                   .join(' · ');
-        final subtitle = detail.isEmpty
+        final entry = note.financialEntry;
+        final subtitle = entry != null
+            ? [
+                result.list.name,
+                entry.counterparty,
+                entry.formattedAmount,
+              ].where((v) => v.isNotEmpty).join(' · ')
+            : detail.isEmpty
             ? result.list.name
             : '${result.list.name} · $detail';
         final textScale = MediaQuery.textScalerOf(context).scale(1);

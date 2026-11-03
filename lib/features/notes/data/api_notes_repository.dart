@@ -333,10 +333,27 @@ class ApiNotesRepository
   Future<void> deleteList(String listId) => _dio.delete<void>('/lists/$listId');
 
   @override
-  Future<NoteList> inviteCollaborator(String listId, String email) async {
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/lists/$listId/invitations',
-      data: {'email': email},
+      data: {'email': email, 'role': role.name},
+    );
+    return NoteList.fromJson(response.data!);
+  }
+
+  @override
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/lists/$listId/collaborators/${Uri.encodeComponent(uid)}',
+      data: {'role': role.name},
     );
     return NoteList.fromJson(response.data!);
   }

@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
+import 'package:nocknock/features/assistant/assistant_client.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_history_sheet.dart';
 import 'package:nocknock/features/notes/domain/note_drawing.dart';
 import 'package:nocknock/features/notes/presentation/widgets/note_drawing_canvas.dart';
@@ -56,6 +58,7 @@ Future<bool> showNotePreviewDialog({
   required NotePreviewAssigneesProvider assigneesProvider,
   required NoteQuickSaveCallback onSave,
   required NotePreviewDeleteCallback onDelete,
+  void Function([MascotTip? tip])? onAnalyze,
   bool showOpenNoteButton = false,
   Future<bool> Function(BuildContext)? onHistory,
   Stream<Object?>? noteChanges,
@@ -71,16 +74,21 @@ Future<bool> showNotePreviewDialog({
         : const Duration(milliseconds: 230),
     pageBuilder: (dialogContext, animation, _) => StreamBuilder<Object?>(
       stream: noteChanges,
-      builder: (_, _) => _NotePreviewDialog(
-        transitionAnimation: animation,
-        disableAnimations: disableAnimations,
-        cardBuilder: cardBuilder,
-        noteProvider: noteProvider,
-        assigneesProvider: assigneesProvider,
-        onSave: onSave,
-        onDelete: onDelete,
-        showOpenNoteButton: showOpenNoteButton,
-        onHistory: onHistory,
+      builder: (_, _) => AssistantSurface(
+        label: 'Vista previa de nota',
+        topic: MascotTopic.note,
+        onOpen: onAnalyze,
+        child: _NotePreviewDialog(
+          transitionAnimation: animation,
+          disableAnimations: disableAnimations,
+          cardBuilder: cardBuilder,
+          noteProvider: noteProvider,
+          assigneesProvider: assigneesProvider,
+          onSave: onSave,
+          onDelete: onDelete,
+          showOpenNoteButton: showOpenNoteButton,
+          onHistory: onHistory,
+        ),
       ),
     ),
     transitionBuilder: (context, animation, secondaryAnimation, child) => child,
@@ -93,6 +101,7 @@ Future<NoteDraft?> showCreateNoteDialog({
   required String defaultAuthorName,
   required bool showAuthorField,
   required List<ListCollaborator> assignees,
+  Future<AssistantDraft?> Function(String)? suggest,
   Note? initialNote,
 }) {
   final disableAnimations = MediaQuery.disableAnimationsOf(context);
@@ -122,6 +131,7 @@ Future<NoteDraft?> showCreateNoteDialog({
         : const Duration(milliseconds: 320),
     pageBuilder: (dialogContext, _, _) => _CreateNoteDialog(
       note: emptyNote,
+      suggest: suggest,
       assignees: assignees,
       showAuthorField: showAuthorField,
     ),
@@ -146,10 +156,12 @@ Future<NoteDraft?> showCreateNoteDialog({
 class _CreateNoteDialog extends StatelessWidget {
   const _CreateNoteDialog({
     required this.note,
+    this.suggest,
     required this.assignees,
     required this.showAuthorField,
   });
 
+  final Future<AssistantDraft?> Function(String)? suggest;
   final Note note;
   final List<ListCollaborator> assignees;
   final bool showAuthorField;
@@ -206,6 +218,7 @@ class _CreateNoteDialog extends StatelessWidget {
                           assignees: assignees,
                           isSaving: false,
                           isCreating: true,
+                          suggest: suggest,
                           showAuthorField: showAuthorField,
                           onCancel: () => Navigator.pop(context),
                           onSave: (draft) => Navigator.pop(context, draft),
@@ -832,9 +845,11 @@ class _QuickNoteEditor extends StatefulWidget {
     required this.onCancel,
     required this.onSave,
     this.isCreating = false,
+    this.suggest,
     this.showAuthorField = false,
   });
 
+  final Future<AssistantDraft?> Function(String)? suggest;
   final Note note;
   final List<ListCollaborator> assignees;
   final bool isSaving;
@@ -906,6 +921,34 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
     _titleController.dispose();
     _authorController.dispose();
     super.dispose();
+  }
+
+  Future<void> _suggest() async {
+    final result = await widget.suggest!(_titleController.text.trim());
+    if (!mounted || result == null) return;
+    setState(() {
+      if (_titleController.text.trim().isEmpty) {
+        _titleController.text = result.title;
+      }
+      if (_content.plainText.trim().isEmpty && _drawing == null) {
+        _content = noteRichContentFromDocument(
+          noteDocumentFromContent(plainText: result.content),
+        );
+        _descriptionExpanded = result.content.isNotEmpty;
+      }
+      final existing = _checklist
+          .map((i) => i.text.trim().toLowerCase())
+          .toSet();
+      _checklist = [
+        ..._checklist,
+        ...result.checklist
+            .where((t) => existing.add(t.trim().toLowerCase()))
+            .take((100 - _checklist.length).clamp(0, 100))
+            .map(
+              (text) => NoteChecklistItem(id: const Uuid().v4(), text: text),
+            ),
+      ];
+    });
   }
 
   int _titleInputLineCount(
@@ -1026,6 +1069,19 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
+                                if (widget.suggest != null)
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: TextButton.icon(
+                                      onPressed: _suggest,
+                                      icon: const Icon(
+                                        Icons.smart_toy_outlined,
+                                      ),
+                                      label: const Text(
+                                        'Completar nota con Nock',
+                                      ),
+                                    ),
+                                  ),
                                 LayoutBuilder(
                                   builder: (context, constraints) {
                                     const titleStyle = TextStyle(

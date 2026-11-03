@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/mascot_tip.dart';
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -344,6 +346,8 @@ void main() {
     'budget dialog saves encrypted-transport-compatible metadata without creating an expense',
     (tester) async {
       NoteDraft? saved;
+      MascotTip? suggestion;
+      int? proposedLimit;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -354,6 +358,10 @@ void main() {
                   currency: 'CLP',
                   notes: [],
                   save: (draft, _) async => saved = draft,
+                  onAnalyze: (selection, [tip]) {
+                    suggestion = tip;
+                    proposedLimit = selection.proposedLimit;
+                  },
                   month: '2026-10',
                 ),
                 child: const Text('Presupuesto'),
@@ -368,6 +376,11 @@ void main() {
         find.byKey(const ValueKey('budget-amount')),
         '30000',
       );
+      await tester.ensureVisible(find.text('Analizar con Nock'));
+      await tester.tap(find.text('Analizar con Nock'));
+      expect(suggestion?.usesExcerpt, isTrue);
+      expect(proposedLimit, 30000);
+      expect(saved, isNull);
       await tester.tap(find.text('Guardar'));
       await tester.pumpAndSettle();
       expect(FinancialEntry.tryDecode(saved!.financialData)!.kind, 'budget');

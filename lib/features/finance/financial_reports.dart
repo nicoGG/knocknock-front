@@ -80,16 +80,22 @@ List<SharedTransfer> sharedTransfers(Iterable<Note> notes) {
 }
 
 int budgetSpent(Iterable<Note> notes, FinancialEntry budget) =>
-    financialRecords(
-      notes,
-      month: budget.period == 'all' ? null : budget.period,
-    ).fold(0, (sum, n) {
-      final e = n.financialEntry;
-      return sum +
-          (e == null ||
-                  e.isSettlement ||
-                  e.currency != budget.currency ||
-                  e.status == 'rejected'
-              ? 0
-              : e.amountInMonth(budget.period == 'all' ? null : budget.period));
-    });
+    budgetSpentFor(notes, currency: budget.currency, period: budget.period);
+
+int budgetSpentFor(
+  Iterable<Note> notes, {
+  required String currency,
+  required String period,
+}) => financialRecords(notes, month: period == 'all' ? null : period).fold(0, (
+  sum,
+  n,
+) {
+  final e = n.financialEntry;
+  return sum +
+      (e == null ||
+              e.isSettlement ||
+              e.currency != currency ||
+              e.status == 'rejected'
+          ? 0
+          : e.amountInMonth(period == 'all' ? null : period));
+});

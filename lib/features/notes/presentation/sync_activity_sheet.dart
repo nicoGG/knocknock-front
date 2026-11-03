@@ -30,7 +30,7 @@ class SyncPresentation {
         state.syncConflictCount == 1
             ? '1 cambio necesita revisión'
             : '${state.syncConflictCount} cambios necesitan revisión',
-        'Hay dos versiones de una nota. Compáralas antes de elegir cuál conservar.',
+        'Revisa los cambios guardados en este dispositivo antes de continuar.',
         Icons.sync_problem_rounded,
       );
     }
@@ -157,6 +157,34 @@ class _SyncActivitySheetState extends State<_SyncActivitySheet> {
         await _load();
       }
     }
+  }
+
+  Future<void> _discardDraft(PendingNoteChange change) async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Descartar el cambio local?'),
+        content: const Text(
+          'Se eliminará la copia de este cambio guardada en tu dispositivo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Descartar'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || discard != true) return;
+    await widget.cubit.resolveSyncConflict(
+      change.id,
+      NoteConflictResolution.keepRemote,
+    );
+    if (mounted) await _load();
   }
 
   @override
@@ -439,15 +467,30 @@ class _SyncActivitySheetState extends State<_SyncActivitySheet> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${change.needsReview ? 'Necesita revisión' : 'Guardado aquí'} · ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format(change.createdAt.toLocal())}',
+                                          '${accessible && !list.canEdit
+                                              ? 'Solo lectura · Cambio local sin enviar'
+                                              : change.needsReview
+                                              ? 'Necesita revisión'
+                                              : 'Guardado aquí'} · ${DateFormat('dd-MM-yyyy · HH:mm', 'es').format(change.createdAt.toLocal())}',
                                           style: theme.textTheme.bodySmall
                                               ?.copyWith(
                                                 color: colors.onSurfaceVariant,
                                               ),
                                         ),
                                         if (change.needsReview &&
+                                            accessible &&
+                                            !list.canEdit)
+                                          TextButton(
+                                            onPressed: () =>
+                                                _discardDraft(change),
+                                            child: const Text(
+                                              'Descartar cambio local',
+                                            ),
+                                          ),
+                                        if (change.needsReview &&
                                             !change.canCompare &&
-                                            accessible)
+                                            accessible &&
+                                            list.canEdit)
                                           TextButton(
                                             onPressed: _retrying
                                                 ? null

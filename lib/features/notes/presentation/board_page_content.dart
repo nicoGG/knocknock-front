@@ -58,15 +58,59 @@ extension _BoardPageContent on _BoardPageState {
             listView ? BoardViewMode.list : BoardViewMode.grid,
           ),
           notes: state.notes,
-          onSave: (draft, note) => context
-              .read<NotesCubit>()
-              .saveFinancialEntry(state.selectedListId, draft, existing: note),
+          onVisibleRecords: (view) => _financialView = view,
+          onSave: !state.selectedList!.canEdit
+              ? null
+              : (draft, note) => context.read<NotesCubit>().saveFinancialEntry(
+                  state.selectedListId,
+                  draft,
+                  existing: note,
+                ),
           loadAttachment: (note, id) =>
               context.read<NotesCubit>().loadAttachment(note, id),
           onEdit: (note) => _openFinancialEditor(note: note),
-          onAdd: () => _openFinancialEditor(),
+          onAdd: state.selectedList!.canEdit
+              ? () => _openFinancialEditor()
+              : null,
+          onOpenAgenda: _openFinancialAgenda,
+          onAnalyzeBudget: (selection, [tip]) =>
+              _analyzeBudget(state.selectedListId, selection, tip),
+          onOpenSeries: !state.selectedList!.canEdit
+              ? null
+              : () {
+                  final cubit = context.read<NotesCubit>();
+                  final author =
+                      context.read<AuthRepository>().currentUser?.displayName ??
+                      'Invitado';
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => _assistantSurface(
+                        'Series mensuales',
+                        MonthlyFinancePage(
+                          list: state.selectedList!,
+                          cubit: cubit,
+                          protection: widget.listProtectionController,
+                          author: author,
+                        ),
+                      ),
+                    ),
+                  );
+                },
         ),
       );
+    }
+    if (_scope == _BoardScope.list && state.selectedList?.canEdit == false) {
+      return notes.isEmpty
+          ? const SliverToBoxAdapter(
+              child: ListTile(
+                title: Text('Sin notas para mostrar'),
+                subtitle: Text('Lista de solo lectura'),
+              ),
+            )
+          : SliverList.builder(
+              itemCount: notes.length,
+              itemBuilder: (_, i) => _readerCard(notes[i]),
+            );
     }
     final Widget content;
     if (notes.isEmpty) {
@@ -251,6 +295,7 @@ extension _BoardPageContent on _BoardPageState {
     final noteList = state.lists
         .where((list) => list.id == note.boardId)
         .firstOrNull;
+    if (noteList?.canEdit == false) return _readerCard(note);
     final collaborators = noteList?.collaborators ?? const [];
     final assignee = resolveNoteAssignee(note, collaborators);
     final normalizedAuthorName = note.authorName.trim().toLowerCase();
@@ -409,6 +454,194 @@ extension _BoardPageContent on _BoardPageState {
         note.id,
   }.length;
 
+  Future<AssistantReply?> _openAssistant({
+    List<NoteSearchResult>? todayNotes,
+    List<NoteSearchResult>? scopedNotes,
+    String? section,
+    Set<String>? visibleIds,
+    String? noteId,
+    BudgetSelection? budget,
+    String? sourceListId,
+    AssistantMode? compose,
+    String initialPrompt = '',
+    MascotTip? tip,
+  }) async {
+    final auth = context.read<AuthRepository>();
+    final uid = auth.currentUser?.id;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Inicia sesión para usar el asistente.')),
+      );
+      _openProfile();
+      return null;
+    }
+    final cubit = context.read<NotesCubit>(),
+        protection = widget.listProtectionController;
+    final aggregate =
+        todayNotes != null ||
+        scopedNotes != null ||
+        section != null ||
+        compose != null;
+    final id =
+        sourceListId ??
+        (!aggregate && _scope == _BoardScope.list
+            ? cubit.state.selectedListId
+            : null);
+    final finance =
+        _financialView?.listId == id &&
+            cubit.state.selectedList?.isFinancial == true
+        ? _financialView
+        : null;
+    AssistantView view(NotesState state) {
+      if (compose != null) {
+        return compose == AssistantMode.list
+            ? const AssistantView(
+                'createList',
+                'Nueva lista',
+                'Proponer una lista',
+                '',
+              )
+            : const AssistantView(
+                'createNote',
+                'Nueva nota',
+                'Preparar una nota',
+                '',
+              );
+      }
+      if (todayNotes != null) {
+        return AssistantView.today(todayNotes, state, protection, uid);
+      }
+      if (scopedNotes != null) {
+        return AssistantView.selection(
+          section!,
+          scopedNotes,
+          state,
+          protection,
+        );
+      }
+      final list = state.selectedList;
+      if (id != null &&
+          list != null &&
+          list.id == id &&
+          !protection.isProtected(id) &&
+          !list.isEncryptionKeyPending) {
+        if (noteId != null) {
+          final note =
+              [
+                    ...state.notes,
+                    ...state.pinnedNotes,
+                    ...state.assignedNotes,
+                    ...state.reminderNotes,
+                  ]
+                  .where(
+                    (n) =>
+                        n.id == noteId &&
+                        n.boardId == list.id &&
+                        n.deletedAt == null,
+                  )
+                  .firstOrNull;
+          if (note == null) {
+            return const AssistantView(
+              'general',
+              'NockNock',
+              'Ayuda con la app',
+              '¿Cómo organizo mis notas?',
+            );
+          }
+          return AssistantView(
+            'list/${list.id}/note/$noteId',
+            note.title,
+            'Desglosar esta nota',
+            'A partir del extracto, identifica el objetivo de esta nota y propón los siguientes pasos.',
+            detail: 'Nota de «${list.name}»',
+            excerpt: AssistantView.list(
+              list,
+              state.copyWith(notes: [note], hasMoreNotes: false),
+            ).excerpt,
+          );
+        }
+        if (budget != null) return AssistantView.budget(list, state, budget);
+        final filterIds = visibleIds ?? finance?.ids;
+        final filtered = filterIds == null
+            ? state
+            : state.copyWith(
+                notes: state.notes
+                    .where((n) => filterIds.contains(n.id))
+                    .toList(),
+              );
+        return AssistantView.list(list, filtered, month: finance?.month);
+      }
+      final label = section ?? 'NockNock';
+      final suggestion = switch (label) {
+        'Agenda de pagos y cobros' =>
+          '¿Cómo organizo los próximos pagos y cobros en la agenda?',
+        'Series mensuales' => '¿Cómo organizo gastos que se repiten cada mes?',
+        'Papelera' => '¿Cómo recupero una nota desde la papelera?',
+        'Widgets de inicio' =>
+          '¿Cómo elijo qué información mostrar en un widget?',
+        'Configuración' => '¿Dónde configuro mis preferencias en NockNock?',
+        'Perfil' => '¿Cómo administro mi cuenta en NockNock?',
+        'Notificaciones' =>
+          '¿Cómo puedo revisar mis recordatorios y notificaciones?',
+        _ => '¿Cómo uso las listas y las notas en NockNock?',
+      };
+      return AssistantView(
+        'general/$label',
+        label,
+        'Ayuda con esta pantalla',
+        suggestion,
+      );
+    }
+
+    return Navigator.of(context).push<AssistantReply>(
+      AssistantChatRoute(
+        context: context,
+        builder: (_) => AssistantPage(
+          auth: auth,
+          userId: uid,
+          cubit: cubit,
+          listId: id,
+          noteId: noteId,
+          protection: protection,
+          viewBuilder: view,
+          createClient: widget.createAssistantClient,
+          compose: compose,
+          initialPrompt: tip?.prompt ?? initialPrompt,
+          initialUsesExcerpt: tip?.usesExcerpt ?? false,
+          memory: compose == null ? _assistantMemory : null,
+          onReviewList: (proposal) => _createList(proposal: proposal),
+        ),
+      ),
+    );
+  }
+
+  void _analyzeBudget(String id, BudgetSelection selection, [MascotTip? tip]) {
+    _openAssistant(sourceListId: id, budget: selection, tip: tip);
+  }
+
+  Widget _assistantSurface(String section, Widget child) => AssistantSurface(
+    label: section,
+    onOpen: context.read<AuthRepository>().currentUser == null
+        ? null
+        : ([tip]) => _openAssistant(section: section, tip: tip),
+    child: child,
+  );
+
+  void _openFinancialAgenda() {
+    final cubit = context.read<NotesCubit>();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _assistantSurface(
+          'Agenda de pagos y cobros',
+          FinancialAgendaPage(
+            cubit: cubit,
+            protection: widget.listProtectionController,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openToday() async {
     final cubit = context.read<NotesCubit>();
     final userId = context.read<AuthRepository>().currentUser?.id;
@@ -418,6 +651,9 @@ extension _BoardPageContent on _BoardPageState {
           cubit: cubit,
           protection: widget.listProtectionController,
           userId: userId,
+          onAssistant: (notes, [tip]) async {
+            await _openAssistant(todayNotes: notes, tip: tip);
+          },
           onCreateNote: (editorContext, listId) async {
             if (!await _selectList(listId) || !editorContext.mounted) return;
             await _openEditor(editorContext: editorContext);
@@ -564,27 +800,161 @@ extension _BoardPageContent on _BoardPageState {
         context: context,
         builder: (_) => BlocProvider<NotesCubit>.value(
           value: cubit,
-          child: NoteDetailPage(
-            noteId: note.id,
-            initialNote: note,
-            listName:
-                sourceList?.name ??
-                cubit.state.selectedList?.name ??
-                'Mis notas',
-            defaultAuthorName: currentUser?.displayName ?? note.authorName,
-            heroTag: noteHeroTag(
-              note.id,
-              variant: switch (_viewMode) {
-                BoardViewMode.grid => PostItCardLayout.grid.name,
-                BoardViewMode.list => PostItCardLayout.compact.name,
-              },
+          child: AssistantSurface(
+            label: 'Detalle de nota',
+            topic: MascotTopic.note,
+            onOpen:
+                sourceList == null ||
+                    widget.listProtectionController.isProtected(note.boardId)
+                ? null
+                : ([tip]) => _openAssistant(
+                    tip: tip,
+                    sourceListId: note.boardId,
+                    noteId: note.id,
+                  ),
+            child: NoteDetailPage(
+              noteId: note.id,
+              initialNote: note,
+              listName:
+                  sourceList?.name ??
+                  cubit.state.selectedList?.name ??
+                  'Mis notas',
+              defaultAuthorName: currentUser?.displayName ?? note.authorName,
+              heroTag: noteHeroTag(
+                note.id,
+                variant: switch (_viewMode) {
+                  BoardViewMode.grid => PostItCardLayout.grid.name,
+                  BoardViewMode.list => PostItCardLayout.compact.name,
+                },
+              ),
+              currentUserId: currentUser?.id,
+              currentUserPhotoUrl: currentUser?.photoUrl,
             ),
-            currentUserId: currentUser?.id,
-            currentUserPhotoUrl: currentUser?.photoUrl,
           ),
         ),
       ),
     );
+  }
+
+  Widget _readerCard(Note note) => Card(
+    child: ListTile(
+      leading: const Icon(Icons.visibility_outlined),
+      title: Text(note.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        note.content.isEmpty ? 'Solo lectura' : note.content,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: () => _openNotePreview(note),
+    ),
+  );
+
+  Future<void> _readNote(Note note) async {
+    final cubit = context.read<NotesCubit>();
+    final protection = widget.listProtectionController;
+    bool accessible() =>
+        protection.canAccess(note.boardId) &&
+        cubit.state.lists.any(
+          (l) => l.id == note.boardId && !l.isEncryptionKeyPending,
+        );
+    if (!accessible()) return;
+    final nav = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Solo lectura'),
+        content: SizedBox(
+          width: 450,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                NoteVersionPreview(note: note),
+                for (final file in note.photoAttachments)
+                  ListTile(
+                    leading: const Icon(Icons.attachment),
+                    title: Text(file.name),
+                    onTap: () async {
+                      if (!widget.listProtectionController.canAccess(
+                        note.boardId,
+                      )) {
+                        return;
+                      }
+                      try {
+                        if (file.isPdf) {
+                          await showNotePdfViewer(
+                            ctx,
+                            attachment: file,
+                            loader: (id) => cubit.loadAttachment(note, id),
+                          );
+                          return;
+                        }
+                        final loaded = file.dataBase64 != null
+                            ? file
+                            : await cubit.loadAttachment(note, file.id);
+                        if (ctx.mounted &&
+                            widget.listProtectionController.canAccess(
+                              note.boardId,
+                            )) {
+                          await showDialog<void>(
+                            context: ctx,
+                            builder: (c) => Dialog(
+                              child: InteractiveViewer(
+                                child: Image.memory(
+                                  decodeNoteAttachmentBytes(loaded),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                      } catch (_) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('No se pudo abrir el adjunto.'),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => showNoteHistorySheet(
+              context: ctx,
+              currentNote: () => note,
+              load: () => cubit.loadNoteHistory(note.id),
+              protectionChanges: protection,
+              canAccess: accessible,
+            ),
+            child: const Text('Historial'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+    void closeIfInaccessible() {
+      if (!accessible() && route.isActive) {
+        nav.popUntil((r) => r == route);
+        nav.pop();
+      }
+    }
+
+    final changes = cubit.stream.listen((_) => closeIfInaccessible());
+    protection.addListener(closeIfInaccessible);
+    try {
+      await nav.push(route);
+    } finally {
+      protection.removeListener(closeIfInaccessible);
+      await changes.cancel();
+    }
   }
 
   Future<bool> _openNotePreview(
@@ -599,6 +969,10 @@ extension _BoardPageContent on _BoardPageState {
         .lists
         .where((list) => list.id == initialNote.boardId)
         .firstOrNull;
+    if (financialList?.canEdit == false) {
+      await _readNote(initialNote);
+      return false;
+    }
     if (financialList?.isFinancial == true) {
       if (await _selectList(financialList!.id) && mounted) {
         await _openFinancialEditor(note: initialNote);
@@ -619,6 +993,14 @@ extension _BoardPageContent on _BoardPageState {
         initialNote;
 
     final shouldOpen = await showNotePreviewDialog(
+      onAnalyze:
+          widget.listProtectionController.isProtected(initialNote.boardId)
+          ? null
+          : ([tip]) => _openAssistant(
+              tip: tip,
+              sourceListId: initialNote.boardId,
+              noteId: initialNote.id,
+            ),
       context: previewContext ?? context,
       showOpenNoteButton: showOpenNoteButton,
       noteChanges: cubit.stream,
@@ -759,6 +1141,7 @@ extension _BoardPageContent on _BoardPageState {
       await _openFinancialEditor(note: note, editorContext: editorContext);
       return;
     }
+    final destination = context.read<NotesCubit>().state.selectedList;
     final currentUser = context.read<AuthRepository>().currentUser;
     final assignees = context
         .read<NotesCubit>()
@@ -778,6 +1161,15 @@ extension _BoardPageContent on _BoardPageState {
             showAuthorField: currentUser == null,
             assignees: availableAssignees,
             initialNote: initialNote,
+            suggest:
+                currentUser == null ||
+                    destination == null ||
+                    widget.listProtectionController.isProtected(destination.id)
+                ? null
+                : (seed) async => (await _openAssistant(
+                    compose: AssistantMode.draft,
+                    initialPrompt: seed,
+                  ))?.draft,
           )
         : await showNoteEditor(
             context,
@@ -788,6 +1180,15 @@ extension _BoardPageContent on _BoardPageState {
           );
     if (draft == null || !mounted) return;
     final cubit = context.read<NotesCubit>();
+    final selected = cubit.state.selectedList;
+    if (destination == null ||
+        selected?.id != destination.id ||
+        !selected!.canEdit ||
+        selected.isEncryptionKeyPending ||
+        !widget.listProtectionController.canAccess(destination.id) ||
+        context.read<AuthRepository>().currentUser?.id != currentUser?.id) {
+      return;
+    }
     if (note == null) {
       await cubit.createNote(draft);
     } else {
@@ -795,8 +1196,9 @@ extension _BoardPageContent on _BoardPageState {
     }
   }
 
-  Future<void> _openFinancialEditor({
+  Future<bool?> _openFinancialEditor({
     Note? note,
+    NoteAttachment? initialReceipt,
     BuildContext? editorContext,
   }) async {
     final cubit = context.read<NotesCubit>();
@@ -804,11 +1206,17 @@ extension _BoardPageContent on _BoardPageState {
     if (list == null ||
         !widget.listProtectionController.canAccess(list.id) ||
         list.isEncryptionKeyPending) {
-      return;
+      return null;
+    }
+    if (!list.canEdit) {
+      if (note != null) await _readNote(note);
+      return null;
     }
     if (note?.financialEntry?.isBudget == true) {
       await showFinancialBudgetDialog(
         context,
+        onAnalyze: (selection, [tip]) =>
+            _analyzeBudget(list.id, selection, tip),
         currency: note!.financialEntry!.currency,
         notes: cubit.state.notes,
         month: note.financialEntry!.period == 'all'
@@ -817,9 +1225,10 @@ extension _BoardPageContent on _BoardPageState {
         save: (draft, existing) =>
             cubit.saveFinancialEntry(list.id, draft, existing: existing),
       );
-      return;
+      return null;
     }
-    await showFinancialEntryEditor(
+    return showFinancialEntryEditor(
+      initialReceipt: initialReceipt,
       context: editorContext ?? context,
       list: list,
       author:
@@ -932,12 +1341,22 @@ extension _BoardPageContent on _BoardPageState {
     );
   }
 
-  Future<void> _createList() async {
+  Future<bool> _createList({AssistantListDraft? proposal}) async {
+    final auth = context.read<AuthRepository>(), uid = auth.currentUser?.id;
+    final cubit = context.read<NotesCubit>();
+    final previousIds = cubit.state.lists.map((l) => l.id).toSet();
     final result = await showDialog<_CreateListResult>(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.4),
       builder: (_) => _CreateListDialog(
+        proposal: proposal,
+        suggest: uid == null
+            ? null
+            : (seed) async => (await _openAssistant(
+                compose: AssistantMode.list,
+                initialPrompt: seed,
+              ))?.listDraft,
         customTypes: context
             .read<NotesCubit>()
             .state
@@ -954,7 +1373,7 @@ extension _BoardPageContent on _BoardPageState {
             .toList(),
       ),
     );
-    if (result == null || !mounted) return;
+    if (result == null || !mounted || auth.currentUser?.id != uid) return false;
     widget.listProtectionController.lockAll();
     await context.read<NotesCubit>().createList(
       result.name,
@@ -966,6 +1385,8 @@ extension _BoardPageContent on _BoardPageState {
         _assigneeFilterUid = null;
       });
     }
+    return !previousIds.contains(cubit.state.selectedListId) &&
+        cubit.state.selectedList != null;
   }
 
   Future<void> _openListReorder() async {
@@ -1119,26 +1540,32 @@ extension _BoardPageContent on _BoardPageState {
     final notesCubit = context.read<NotesCubit>();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SettingsPage(
-          authRepository: authRepository,
-          onOpenProfile: _openProfile,
-          onOpenHomeWidgets: widget.homeWidgets?.supported == true
-              ? () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => HomeWidgetSettingsPage(
-                        controller: widget.homeWidgets!,
-                        lists: notesCubit.state.lists,
+        builder: (_) => _assistantSurface(
+          'Configuración',
+          SettingsPage(
+            authRepository: authRepository,
+            onOpenProfile: _openProfile,
+            onOpenHomeWidgets: widget.homeWidgets?.supported == true
+                ? () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => _assistantSurface(
+                          'Widgets de inicio',
+                          HomeWidgetSettingsPage(
+                            controller: widget.homeWidgets!,
+                            lists: notesCubit.state.lists,
+                          ),
+                        ),
                       ),
-                    ),
-                  );
-                }
-              : null,
-          onClearLocalData: notesCubit.clearLocalData,
-          notificationsController: widget.notificationsController,
-          onOpenNotifications: widget.notificationsController == null
-              ? null
-              : _openNotifications,
+                    );
+                  }
+                : null,
+            onClearLocalData: notesCubit.clearLocalData,
+            notificationsController: widget.notificationsController,
+            onOpenNotifications: widget.notificationsController == null
+                ? null
+                : _openNotifications,
+          ),
         ),
       ),
     );
@@ -1167,8 +1594,11 @@ extension _BoardPageContent on _BoardPageState {
 
   Future<void> _openTrash() async {
     final cubit = context.read<NotesCubit>();
-    await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => TrashPage(cubit: cubit)));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _assistantSurface('Papelera', TrashPage(cubit: cubit)),
+      ),
+    );
     if (mounted) await _refreshTrashCount();
   }
 
@@ -1367,7 +1797,10 @@ extension _BoardPageContent on _BoardPageState {
       MaterialPageRoute<void>(
         builder: (_) => RepositoryProvider<AuthRepository>.value(
           value: authRepository,
-          child: ProfilePage(themeController: widget.themeController),
+          child: _assistantSurface(
+            'Perfil',
+            ProfilePage(themeController: widget.themeController),
+          ),
         ),
       ),
     );
@@ -1378,7 +1811,10 @@ extension _BoardPageContent on _BoardPageState {
     if (controller == null) return;
     final notification = await Navigator.of(context).push<AppNotification>(
       MaterialPageRoute<AppNotification>(
-        builder: (_) => NotificationsPage(controller: controller),
+        builder: (_) => _assistantSurface(
+          'Notificaciones',
+          NotificationsPage(controller: controller),
+        ),
       ),
     );
     if (notification != null && mounted) {

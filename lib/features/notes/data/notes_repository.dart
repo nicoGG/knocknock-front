@@ -147,6 +147,10 @@ abstract interface class AggregateBoardAppearancesRepository {
   );
 }
 
+class ReadOnlyListFailure implements Exception {
+  const ReadOnlyListFailure();
+}
+
 class NotesPersistenceFailure implements Exception {
   const NotesPersistenceFailure();
 }
@@ -362,7 +366,17 @@ abstract interface class NotesRepository {
 
   Future<void> deleteList(String listId);
 
-  Future<NoteList> inviteCollaborator(String listId, String email);
+  Future<NoteList> inviteCollaborator(
+    String listId,
+    String email, {
+    ListMemberRole role = ListMemberRole.editor,
+  });
+
+  Future<NoteList> changeCollaboratorRole(
+    String listId,
+    String uid,
+    ListMemberRole role,
+  );
 
   Future<NoteList> removeCollaborator(String listId, String collaboratorUid);
 

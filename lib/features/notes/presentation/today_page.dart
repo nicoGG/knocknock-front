@@ -1,3 +1,5 @@
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
+
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -122,9 +124,12 @@ class TodayPage extends StatefulWidget {
     required this.userId,
     required this.onPreviewNote,
     required this.onCreateNote,
+    this.onAssistant,
     super.key,
   });
 
+  final Future<void> Function(List<NoteSearchResult>, [MascotTip? tip])?
+  onAssistant;
   final NotesCubit cubit;
   final ListProtectionController protection;
   final String? userId;
@@ -139,6 +144,7 @@ class TodayPage extends StatefulWidget {
 class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   List<NoteSearchResult> _notes = const [];
   bool _loading = true;
+  bool _hasLoaded = false;
   bool _failed = false;
   int _generation = 0;
   Timer? _clock;
@@ -147,6 +153,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   bool _confirmingCompletion = false;
   String? _filter;
   final Set<String> _busyIds = {};
+  final _newNoteDock = GlobalKey();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   @override
@@ -189,7 +196,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       _failed = false;
     });
     try {
-      final notes = await widget.cubit.fetchTodayNotes(
+      final notes = await widget.cubit.fetchVisibleListNotes(
         canShowList: widget.protection.canAccess,
       );
       if (!mounted || generation != _generation) return;
@@ -198,14 +205,19 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             .where((r) => widget.protection.canAccess(r.list.id))
             .toList();
         _loading = false;
+        _hasLoaded = true;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
-        _failed = true;
-        _notes = const [];
+        _failed = !_hasLoaded;
       });
+      if (_hasLoaded) {
+        _messengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(notesErrorMessage(error))),
+        );
+      }
     }
   }
 
@@ -400,7 +412,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   Future<void> _createNote() async {
     if (_creating || _previewing) return;
     final lists = widget.cubit.state.lists
-        .where((list) => widget.protection.canAccess(list.id))
+        .where((list) => list.canEdit && widget.protection.canAccess(list.id))
         .toList();
     if (lists.isEmpty) {
       _messengerKey.currentState?.showSnackBar(
@@ -471,7 +483,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         ? groups.entries.where((entry) => entry.key != 'Completadas hoy')
         : groups.entries.where((entry) => entry.key == _filter);
     final hasVisible = visibleGroups.any((entry) => entry.value.isNotEmpty);
-    return ScaffoldMessenger(
+    final today = ScaffoldMessenger(
       key: _messengerKey,
       child: Scaffold(
         extendBodyBehindAppBar: true,
@@ -488,18 +500,21 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
             const SizedBox(width: 8),
           ],
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          key: const ValueKey('today-create-note-button'),
-          onPressed: _creating || _loading ? null : _createNote,
-          icon: const Icon(Icons.add_rounded),
-          label: const Text('Nueva nota'),
+        floatingActionButton: KeyedSubtree(
+          key: _newNoteDock,
+          child: FloatingActionButton.extended(
+            key: const ValueKey('today-create-note-button'),
+            onPressed: _creating || _loading ? null : _createNote,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Nueva nota'),
+          ),
         ),
         body: Stack(
           fit: StackFit.expand,
           children: [
             const AmbientPageBackground(),
             SafeArea(
-              child: _loading
+              child: _loading && !_hasLoaded
                   ? TodayLoadingState(horizontalPadding: horizontal)
                   : RefreshIndicator(
                       onRefresh: () async {
@@ -750,6 +765,22 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         ),
       ),
     );
+    return AssistantSurface(
+      label: 'Hoy',
+      dock: _newNoteDock,
+      topic: MascotTopic.today,
+      hint: 'Planificar mi día con Nock',
+      onOpen: widget.onAssistant == null || _loading || _failed
+          ? null
+          : ([tip]) async {
+              await widget.onAssistant!([
+                for (final group in groups.entries)
+                  if (_filter == null || _filter == group.key) ...group.value,
+              ], tip);
+              if (mounted) await _load();
+            },
+      child: today,
+    );
   }
 
   Widget _sectionHeading(BuildContext context, String title, int count) {
@@ -798,7 +829,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
           note: note,
           layout: PostItCardLayout.compact,
           compactSubtitle: _subtitle(context, result),
-          compactLeading: !note.isCompleted && !note.isRecurring
+          compactLeading:
+              result.list.canEdit && !note.isCompleted && !note.isRecurring
               ? IconButton(
                   key: ValueKey('today-complete-${note.id}'),
                   tooltip: 'Completar nota',
@@ -833,7 +865,9 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                   ),
                 )
               : null,
-          compactTrailing: canPostponeTodayReminder(note, DateTime.now())
+          compactTrailing:
+              result.list.canEdit &&
+                  canPostponeTodayReminder(note, DateTime.now())
               ? IconButton(
                   key: ValueKey('today-postpone-${note.id}'),
                   tooltip: 'Posponer recordatorio',
