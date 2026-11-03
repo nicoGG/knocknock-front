@@ -125,17 +125,53 @@ Antes de publicar, guarda una copia segura de `nocknock-upload.jks`, su alias y
 sus contrasenas. Si se pierde la clave de subida, no se podran firmar nuevas
 versiones con ella sin iniciar el proceso de reemplazo de clave en Google Play.
 
+## Versiones y GitHub Releases
+
+Los cambios de la app en `main` ejecutan `.github/workflows/release-github.yml`
+para generar un APK firmado. Los pushes que solo cambian `.github/`, `docs/`
+o `README.md` no publican un APK. Tambien se puede ejecutar manualmente.
+
+APK y AAB toman la version de `pubspec.yaml`: `1.4.4+535` produce
+`versionName=1.4.4`, `versionCode=535` y el tag `v1.4.4-build-535`. Antes de
+publicar codigo nuevo, incrementa el build; los reintentos no lo incrementan.
+
+Una release existente se puede completar con el APK y su checksum si su tag
+apunta exactamente al commit compilado, incluso si ya contiene un AAB. La
+comprobacion resuelve tags anotados y no usa `target_commitish`, que puede ser
+una rama movil como `main`. Si el tag corresponde a otro commit, el workflow
+falla antes de preparar Flutter o acceder a la firma.
+
+Si ya existen el APK y su checksum, el workflow termina sin reconstruirlos.
+Las cargas parciales solo se completan si los archivos existentes coinciden
+con los locales. No se sobrescriben assets, no se mueven tags y no se altera
+el AAB. Los errores de GitHub, permisos o red detienen la publicacion.
+
+Para recuperar el APK de una version ya publicada, ejecuta manualmente el
+workflow corregido e indica el commit o tag original en `source_ref`, por
+ejemplo `v1.4.4-build-535`. El codigo se descarga de esa referencia y las
+herramientas de publicacion se descargan del commit del workflow seleccionado.
+Dejar `source_ref` vacio compila el commit de la rama seleccionada. Reintentar
+una ejecucion antigua utiliza su workflow antiguo; no incorpora esta correccion.
+Esta recuperacion no vuelve a subir el AAB a Google Play.
+
+Las pruebas de la logica de publicacion no usan red ni credenciales:
+
+```sh
+python3 -m unittest discover -s .github/scripts/tests -v
+```
+
 ## Publicacion automatica en Google Play
 
 Cada push a la rama `release` (incluido un merge) ejecuta
 `.github/workflows/release-google-play.yml`. El workflow analiza y prueba la
 app, genera un AAB firmado y lo publica como version completada en **Pruebas
-internas** de Google Play. Tambien se puede ejecutar manualmente desde GitHub
-Actions.
+cerradas (alpha)** de Google Play. Tambien se puede ejecutar manualmente desde
+GitHub Actions. Este workflow no crea GitHub Releases.
 
-El `versionName` se toma de `pubspec.yaml`. El `versionCode` se calcula con el
-numero y el intento de la ejecucion de GitHub Actions, por lo que cada entrega
-puede subirse a Play sin reutilizar el codigo de una version anterior.
+El `versionName` y el `versionCode` se toman de `pubspec.yaml`, igual que en el
+workflow del APK. Para distribuir el mismo codigo en ambos canales, promueve
+a `release` el commit de `main` que contiene la version nueva. No reintentes
+una subida a Play ya completada con el mismo `versionCode`.
 
 Configura estos secretos en el repositorio de GitHub antes del primer merge a
 `release`:

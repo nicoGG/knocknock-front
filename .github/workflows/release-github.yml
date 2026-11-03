@@ -4,13 +4,22 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'README.md'
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Commit o tag a compilar; vacio usa la rama seleccionada'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: nocknock-github-release-${{ github.ref }}
+  group: nocknock-github-release
   cancel-in-progress: false
 
 jobs:
@@ -23,9 +32,28 @@ jobs:
       - name: Descargar codigo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
 
+      - name: Descargar herramientas del workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Probar logica de releases
+        run: python3 -m unittest discover -s .release-tools/.github/scripts/tests -v
+
+      - name: Comprobar version, commit y archivos existentes
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .release-tools/.github/scripts/github_release.py check
+
       - name: Configurar Java
+        if: steps.release_state.outputs.needs_build == 'true'
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -33,6 +61,7 @@ jobs:
           cache: gradle
 
       - name: Configurar Flutter
+        if: steps.release_state.outputs.needs_build == 'true'
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
@@ -40,54 +69,19 @@ jobs:
           cache: true
 
       - name: Resolver dependencias
+        if: steps.release_state.outputs.needs_build == 'true'
         run: flutter pub get
 
       - name: Analizar codigo
+        if: steps.release_state.outputs.needs_build == 'true'
         run: flutter analyze
 
       - name: Ejecutar pruebas
+        if: steps.release_state.outputs.needs_build == 'true'
         run: flutter test
 
-      - name: Preparar version del release
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="$(awk '/^version:/ { print $2 }' pubspec.yaml)"
-
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[1-9][0-9]*$ ]]; then
-            echo "La version de pubspec.yaml no es valida: $version" >&2
-            exit 1
-          fi
-
-          build_name="${version%+*}"
-          build_number="${version##*+}"
-          release_tag="v${build_name}-build-${build_number}"
-          apk_name="NockNock-${build_name}-build-${build_number}-release.apk"
-
-          echo "BUILD_NAME=$build_name" >> "$GITHUB_ENV"
-          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
-          echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
-
-      - name: Verificar que la version sea nueva
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Ya existe el release $RELEASE_TAG. Incrementa la version en pubspec.yaml." >&2
-            exit 1
-          fi
-
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Ya existe el tag $RELEASE_TAG. Incrementa la version en pubspec.yaml." >&2
-            exit 1
-          fi
-
       - name: Restaurar firma Android
+        if: steps.release_state.outputs.needs_build == 'true'
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -128,6 +122,7 @@ jobs:
           chmod 600 android/app/nocknock-upload.jks android/key.properties
 
       - name: Generar APK firmado
+        if: steps.release_state.outputs.needs_build == 'true'
         env:
           GOOGLE_PLAY_BILLING_ENABLED: ${{ vars.GOOGLE_PLAY_BILLING_ENABLED || 'false' }}
         run: >-
@@ -137,6 +132,7 @@ jobs:
           --build-number "$BUILD_NUMBER"
 
       - name: Verificar y preparar APK
+        if: steps.release_state.outputs.needs_build == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,6 +142,7 @@ jobs:
           shasum -a 256 "$APK_NAME" > "${APK_NAME}.sha256"
 
       - name: Guardar APK del pipeline
+        if: steps.release_state.outputs.needs_build == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nocknock-${{ env.BUILD_NAME }}-${{ env.BUILD_NUMBER }}-apk
@@ -155,17 +152,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Crear GitHub Release
-        shell: bash
+      - name: Completar GitHub Release
+        if: steps.release_state.outputs.needs_build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          gh release create "$RELEASE_TAG" \
-            "$APK_NAME" \
-            "${APK_NAME}.sha256" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "NockNock $BUILD_NAME ($BUILD_NUMBER)" \
-            --generate-notes
+        run: python3 .release-tools/.github/scripts/github_release.py publish
