@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+import 'package:nocknock/core/config/app_config.dart';
 import 'package:nocknock/features/subscriptions/plus_page.dart';
 import 'package:nocknock/core/widgets/liquid_alert_dialog.dart';
 
@@ -40,6 +42,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
   late final Future<String> _appVersion = _loadAppVersion();
+  bool _isRequestingSurvey = false;
   bool _isClearingData = false;
   bool _notificationPreviewsEnabled = true;
   bool _isLoadingPreferences = true;
@@ -138,6 +141,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 640),
                       child: _SettingsContent(
+                        onRequestSurvey: _isRequestingSurvey
+                            ? null
+                            : _requestSurvey,
                         onOpenPlus: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) =>
@@ -206,6 +212,44 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     } catch (_) {
       // Keep the preference for this session if persistence is unavailable.
+    }
+  }
+
+  Future<void> _requestSurvey() async {
+    if (_isRequestingSurvey) return;
+    setState(() => _isRequestingSurvey = true);
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppConfig.apiBaseUrl,
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 20),
+      ),
+    );
+    String message;
+    try {
+      final token = await widget.authRepository.getIdToken();
+      if (token == null || token.isEmpty) throw StateError('Sesión vencida');
+      await dio.post<void>(
+        '/feedback/invitations',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      message = 'Te enviamos la encuesta. Revisa tu correo.';
+    } on DioException catch (error) {
+      message = switch (error.response?.statusCode) {
+        429 => 'Ya pediste una encuesta hoy. Revisa tu correo.',
+        403 => 'Verifica el correo de tu cuenta para recibir la encuesta.',
+        401 => 'Vuelve a iniciar sesión para pedir la encuesta.',
+        _ => 'No pudimos solicitar la encuesta. Inténtalo de nuevo.',
+      };
+    } catch (_) {
+      message = 'Vuelve a iniciar sesión para pedir la encuesta.';
+    } finally {
+      dio.close();
+      if (mounted) setState(() => _isRequestingSurvey = false);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -317,6 +361,7 @@ class _SettingsPageState extends State<SettingsPage> {
 class _SettingsContent extends StatelessWidget {
   const _SettingsContent({
     required this.onOpenPlus,
+    required this.onRequestSurvey,
     required this.user,
     required this.appVersion,
     required this.isClearingData,
@@ -332,6 +377,7 @@ class _SettingsContent extends StatelessWidget {
   });
 
   final VoidCallback onOpenPlus;
+  final VoidCallback? onRequestSurvey;
   final AppUser? user;
   final Future<String> appVersion;
   final bool isClearingData;
@@ -525,6 +571,20 @@ class _SettingsContent extends StatelessWidget {
                 ),
               ),
               const _SettingsDivider(),
+              if (user != null && user!.email.isNotEmpty) ...[
+                _SettingsTile(
+                  leading: const _SettingsIcon(
+                    icon: Icons.mark_email_read_outlined,
+                    tone: _SettingsIconTone.primary,
+                  ),
+                  title: 'Recibir encuesta por correo',
+                  subtitle:
+                      'Cuéntanos cómo te ha ido con NockNock en un minuto.',
+                  enabled: onRequestSurvey != null,
+                  onTap: onRequestSurvey,
+                ),
+                const _SettingsDivider(),
+              ],
               _SettingsTile(
                 key: const ValueKey('settings-privacy-button'),
                 leading: const _SettingsIcon(
