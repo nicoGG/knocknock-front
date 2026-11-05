@@ -61,6 +61,7 @@ class FinancialListBoard extends StatefulWidget {
     this.onViewChanged,
     this.onOpenAgenda,
     this.onAnalyzeBudget,
+    this.onAnalyzeSummary,
     this.onVisibleRecords,
     this.onOpenSeries,
     this.loadAttachment,
@@ -74,6 +75,7 @@ class FinancialListBoard extends StatefulWidget {
   final VoidCallback? onAdd;
   final ValueChanged<FinancialBoardSelection>? onVisibleRecords;
   final BudgetAssistant? onAnalyzeBudget;
+  final SummaryAssistant? onAnalyzeSummary;
   final VoidCallback? onOpenAgenda;
   final VoidCallback? onOpenSeries;
   final Future<void> Function(NoteDraft, Note?)? onSave;
@@ -1177,6 +1179,7 @@ class _FinancialListBoardState extends State<FinancialListBoard> {
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => FinancialSummaryPage(
+              onAssistant: widget.onAnalyzeSummary,
               list: widget.list,
               notes: List.of(widget.notes),
               currency: currency,

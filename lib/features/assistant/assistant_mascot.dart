@@ -2,13 +2,16 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
+import 'package:nocknock/features/assistant/mascot_placement.dart';
 import 'package:nocknock/features/assistant/mascot_tip.dart';
 import 'package:nocknock/features/assistant/nock_face.dart';
 
 export 'mascot_tip.dart';
 export 'nock_face.dart' show NockFace;
 
-/// A chat opening expands from the mascot's actual position, including after a drag.
+/// A lightweight chat transition anchored to the mascot, including after a drag.
 class AssistantChatRoute<T> extends PageRouteBuilder<T> {
   static final _origins = Expando<Offset>();
   static final _returns = Expando<ValueNotifier<int>>();
@@ -49,32 +52,23 @@ class AssistantChatRoute<T> extends PageRouteBuilder<T> {
     : super(
         transitionDuration: reduce
             ? Duration.zero
-            : const Duration(milliseconds: 520),
+            : const Duration(milliseconds: 280),
         reverseTransitionDuration: reduce
             ? Duration.zero
-            : const Duration(milliseconds: 420),
+            : const Duration(milliseconds: 220),
         pageBuilder: (context, _, _) => builder(context),
         transitionsBuilder: (context, animation, _, child) {
           final curved = animation.drive(
-            CurveTween(curve: Curves.easeInOutCubic),
+            CurveTween(curve: Curves.easeOutCubic),
           );
           return FadeTransition(
             opacity: animation.drive(
-              CurveTween(
-                curve: const Interval(0, .85, curve: Curves.easeInOut),
-              ),
+              CurveTween(curve: const Interval(0, .7, curve: Curves.easeOut)),
             ),
             child: ScaleTransition(
               alignment: anchor,
-              scale: curved.drive(Tween(begin: .12, end: 1.0)),
-              child: AnimatedBuilder(
-                animation: curved,
-                child: child,
-                builder: (_, child) => ClipRRect(
-                  borderRadius: BorderRadius.circular(32 * (1 - curved.value)),
-                  child: child,
-                ),
-              ),
+              scale: curved.drive(Tween(begin: .94, end: 1.0)),
+              child: RepaintBoundary(child: child),
             ),
           );
         },
@@ -88,19 +82,26 @@ class MascotPosition extends InheritedWidget {
     required this.dismissedTips,
     required this.onDismiss,
     this.onPlaced,
+    this.placements,
+    this.onSurfacePlaced,
     required super.child,
   });
   final ValueNotifier<Alignment?> position;
   final Set<String> dismissedTips;
   final ValueChanged<MascotTip> onDismiss;
   final ValueChanged<Alignment>? onPlaced;
+  final Map<String, Alignment>? placements;
+  final void Function(String surface, Alignment position)? onSurfacePlaced;
+  static final _localPlacements = Expando<Map<String, Alignment>>();
+  Map<String, Alignment> get surfacePlacements =>
+      placements ?? (_localPlacements[position] ??= {});
   @override
   bool updateShouldNotify(MascotPosition oldWidget) =>
       position != oldWidget.position;
 }
 
 /// Keep the assistant with its route and use the actual create button as its
-/// default dock. A user placement always wins over scrolling or moving the FAB.
+/// default dock. Manual placements belong to a surface and avoid its controls.
 class AssistantSurface extends StatefulWidget {
   const AssistantSurface({
     super.key,
@@ -124,14 +125,16 @@ class AssistantSurface extends StatefulWidget {
 
 class _AssistantSurfaceState extends State<AssistantSurface> {
   final _overlay = GlobalKey();
+  final _content = GlobalKey();
+  final _obstacles = ValueNotifier<List<Rect>>([]);
   final _dock = ValueNotifier<Rect?>(null);
   bool _scheduled = false;
   void _measureDock(MascotPosition host) {
-    if (_scheduled || widget.dock == null) return;
+    if (_scheduled) return;
     _scheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduled = false;
-      if (!mounted || host.position.value != null) return;
+      if (!mounted) return;
       final overlay = _overlay.currentContext?.findRenderObject();
       final target = widget.dock?.currentContext?.findRenderObject();
       Rect? location;
@@ -150,6 +153,56 @@ class _AssistantSurfaceState extends State<AssistantSurface> {
         }
       }
       _dock.value = location;
+      final obstacles = <Rect>[];
+      if (overlay is RenderBox && overlay.hasSize && overlay.attached) {
+        final viewport = Offset.zero & overlay.size;
+        void visit(Element element) {
+          final control = element.widget;
+          if (control is Offstage && control.offstage) return;
+          // Inspect only the content, never the mascot or its own gesture area.
+          final interactive =
+              control is IconButton ||
+              control is ButtonStyleButton ||
+              control is FloatingActionButton ||
+              control is PopupMenuButton ||
+              control is InkResponse ||
+              control is GestureDetector &&
+                  (control.onTap != null ||
+                      control.onLongPress != null ||
+                      control.onDoubleTap != null) ||
+              control is EditableText ||
+              control is NavigationBar ||
+              control is BottomNavigationBar ||
+              control is Slider ||
+              control is Switch ||
+              control is Checkbox;
+          if (interactive) {
+            final box = element.findRenderObject();
+            if (box is RenderBox && box.hasSize && box.attached) {
+              final rect = MatrixUtils.transformRect(
+                box.getTransformTo(overlay),
+                Offset.zero & box.size,
+              );
+              // Large canvas/card gestures are content, not floating controls.
+              if (rect.isFinite &&
+                  !rect.isEmpty &&
+                  viewport.overlaps(rect) &&
+                  (!(control is GestureDetector || control is InkResponse) ||
+                      rect.height <= 96 ||
+                      rect.width <= 96)) {
+                obstacles.add(rect);
+                return;
+              }
+            }
+          }
+          element.visitChildren(visit);
+        }
+
+        _content.currentContext?.visitChildElements(visit);
+      }
+      if (!listEquals(_obstacles.value, obstacles)) {
+        _obstacles.value = obstacles;
+      }
       // Follow layout, scrolling, entrance animations and snack bars only on
       // frames Flutter was already going to draw. This never requests a frame.
       if (overlay != null) _measureDock(host);
@@ -159,6 +212,7 @@ class _AssistantSurfaceState extends State<AssistantSurface> {
   @override
   void dispose() {
     _dock.dispose();
+    _obstacles.dispose();
     super.dispose();
   }
 
@@ -173,7 +227,7 @@ class _AssistantSurfaceState extends State<AssistantSurface> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        widget.child,
+        KeyedSubtree(key: _content, child: widget.child),
         if (visible)
           Positioned.fill(
             child: SafeArea(
@@ -182,13 +236,15 @@ class _AssistantSurfaceState extends State<AssistantSurface> {
                 child: LayoutBuilder(
                   key: _overlay,
                   builder: (context, bounds) {
-                    if (host.position.value == null) _measureDock(host);
+                    _measureDock(host);
                     return _FloatingNock(
                       key: ValueKey((
                         widget.topic,
                         widget.scope ?? widget.label,
                       )),
                       host: host,
+                      surface: widget.scope ?? widget.label,
+                      obstacles: _obstacles,
                       dock: _dock,
                       hasDock: widget.dock != null,
                       topic: widget.topic,
@@ -210,6 +266,8 @@ class _FloatingNock extends StatefulWidget {
   const _FloatingNock({
     super.key,
     required this.host,
+    required this.surface,
+    required this.obstacles,
     required this.dock,
     required this.hasDock,
     required this.topic,
@@ -218,6 +276,8 @@ class _FloatingNock extends StatefulWidget {
     required this.onOpen,
   });
   final MascotPosition host;
+  final String surface;
+  final ValueNotifier<List<Rect>> obstacles;
   final ValueNotifier<Rect?> dock;
   final bool hasDock;
   final MascotTopic topic;
@@ -249,6 +309,7 @@ class _FloatingNockState extends State<_FloatingNock>
       _reduceMotion = false,
       _accessible = false;
   Offset? _dragOrigin;
+  Alignment? _placement;
   late final ValueNotifier<int> _returnSignal;
 
   void _bounceOnReturn() {
@@ -261,6 +322,7 @@ class _FloatingNockState extends State<_FloatingNock>
   @override
   void initState() {
     super.initState();
+    _placement = widget.host.surfacePlacements[widget.surface];
     WidgetsBinding.instance.addObserver(this);
     _returnSignal = AssistantChatRoute._returnSignal(widget.host);
     _returnSignal.addListener(_bounceOnReturn);
@@ -351,7 +413,7 @@ class _FloatingNockState extends State<_FloatingNock>
   void _hideTip({bool dismiss = false}) {
     if (dismiss && _tip != null) widget.host.onDismiss(_tip!);
     setState(() => _tip = null);
-    _scheduleTip(const Duration(seconds: 35));
+    _scheduleTip(const Duration(seconds: 18));
   }
 
   @override
@@ -373,23 +435,35 @@ class _FloatingNockState extends State<_FloatingNock>
         final dx = math.max(0.0, width - _size),
             dy = math.max(0.0, height - _size);
         return ListenableBuilder(
-          listenable: Listenable.merge([widget.host.position, widget.dock]),
+          listenable: Listenable.merge([widget.obstacles, widget.dock]),
           builder: (context, _) {
-            final saved = widget.host.position.value;
+            final saved = _placement;
             final target = widget.hasDock ? widget.dock.value : null;
             final dock = target != null && target.top >= _size + 8
                 ? target
                 : null;
             final defaultX = dock == null ? dx - 6 : dock.center.dx - _size / 2;
             final defaultY = dock == null ? dy - 70 : dock.top - _size - 8;
-            final x = (saved == null ? defaultX : (saved.x + 1) / 2 * dx).clamp(
-              0.0,
-              dx,
-            );
-            final y = (saved == null ? defaultY : (saved.y + 1) / 2 * dy).clamp(
-              0.0,
-              dy,
-            );
+            final preferredX =
+                (saved == null ? defaultX : (saved.x + 1) / 2 * dx).clamp(
+                  0.0,
+                  dx,
+                );
+            final preferredY =
+                (saved == null ? defaultY : (saved.y + 1) / 2 * dy).clamp(
+                  0.0,
+                  dy,
+                );
+            final position = _dragging
+                ? Offset(preferredX, preferredY)
+                : mascotPlacement(
+                    Size(width, height),
+                    const Size(_size, _size),
+                    Offset(preferredX, preferredY),
+                    widget.obstacles.value,
+                  );
+            if (position == null) return const SizedBox.shrink();
+            final x = position.dx, y = position.dy;
             Future<void> openChat([MascotTip? tip]) async {
               if (_opening || _dragging) return;
               _opening = true;
@@ -397,11 +471,7 @@ class _FloatingNockState extends State<_FloatingNock>
               _faceTimer?.cancel();
               _motion.reset();
               _expression = NockExpression.delighted;
-              try {
-                if (!_reduceMotion) await _tapBounce.forward(from: 0).orCancel;
-              } on TickerCanceled {
-                return;
-              }
+              // Navigation begins on this tap, without waiting for a bounce.
               if (!mounted || !context.mounted) return;
               _opening = false;
               if (!_active || ModalRoute.isCurrentOf(context) == false) {
@@ -421,18 +491,23 @@ class _FloatingNockState extends State<_FloatingNock>
 
             return Stack(
               children: [
-                Positioned(
+                AnimatedPositioned(
+                  duration: _dragging || _reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 240),
+                  curve: Curves.easeOutCubic,
                   left: x,
                   top: y,
                   width: _size,
                   height: _size,
                   child: Semantics(
                     button: true,
-                    label: 'Abrir chat de Nock. ${widget.label}',
+                    label: 'Abrir chat de Nocky. ${widget.label}',
                     child: Tooltip(
                       message:
-                          widget.hint ?? 'Hablar con Nock · ${widget.label}',
+                          widget.hint ?? 'Hablar con Nocky · ${widget.label}',
                       child: GestureDetector(
+                        dragStartBehavior: DragStartBehavior.down,
                         onPanStart: (_) {
                           if (_opening) return;
                           _dragOrigin = Offset(x, y);
@@ -450,9 +525,11 @@ class _FloatingNockState extends State<_FloatingNock>
                             p.dx.clamp(0.0, dx),
                             p.dy.clamp(0.0, dy),
                           );
-                          widget.host.position.value = Alignment(
-                            dx == 0 ? 0 : _dragOrigin!.dx / dx * 2 - 1,
-                            dy == 0 ? 0 : _dragOrigin!.dy / dy * 2 - 1,
+                          setState(
+                            () => _placement = Alignment(
+                              dx == 0 ? 0 : _dragOrigin!.dx / dx * 2 - 1,
+                              dy == 0 ? 0 : _dragOrigin!.dy / dy * 2 - 1,
+                            ),
                           );
                         },
                         onPanEnd: (_) => _finishDrag(),
@@ -474,15 +551,35 @@ class _FloatingNockState extends State<_FloatingNock>
                                   final amount = bouncing
                                       ? bounce
                                       : math.sin(math.pi * _motion.value);
+                                  final wave = math.sin(
+                                    2 * math.pi * _motion.value,
+                                  );
+                                  final wiggle =
+                                      math.sin(6 * math.pi * _motion.value) *
+                                      amount;
+                                  final playful =
+                                      _expression == NockExpression.playful;
+                                  final laughing =
+                                      _expression == NockExpression.laughing;
+                                  final sleepy =
+                                      _expression == NockExpression.sleepy;
                                   return Transform.translate(
                                     offset: Offset(
-                                      0,
-                                      bouncing ? -9 * bounce : -6 * amount,
+                                      playful ? 4 * wave : 0,
+                                      bouncing
+                                          ? -9 * bounce
+                                          : sleepy
+                                          ? -2 * amount
+                                          : laughing
+                                          ? -7 * wiggle.abs()
+                                          : -6 * amount,
                                     ),
                                     child: Transform.rotate(
-                                      angle:
-                                          .12 *
-                                          math.sin(2 * math.pi * _motion.value),
+                                      angle: playful
+                                          ? .2 * wiggle
+                                          : sleepy
+                                          ? -.14 * amount
+                                          : .12 * wave,
                                       child: Transform.scale(
                                         scaleX: bouncing
                                             ? 1 - .06 * bounce
@@ -554,15 +651,18 @@ class _FloatingNockState extends State<_FloatingNock>
                     },
                     child: _tip == null
                         ? const SizedBox.shrink()
-                        : _TipBubble(
+                        : TapRegion(
                             key: ValueKey(_tip),
-                            tip: _tip!,
-                            tail: _BubblePosition(
-                              Offset(x + _size / 2, y + _size / 2),
-                              _size,
-                            ).tailFor(Size(width, height)),
-                            onChoose: () => openChat(_tip),
-                            onClose: () => _hideTip(dismiss: true),
+                            onTapOutside: (_) => _hideTip(),
+                            child: _TipBubble(
+                              tip: _tip!,
+                              tail: _BubblePosition(
+                                Offset(x + _size / 2, y + _size / 2),
+                                _size,
+                              ).tailFor(Size(width, height)),
+                              onChoose: () => openChat(_tip),
+                              onClose: () => _hideTip(dismiss: true),
+                            ),
                           ),
                   ),
                 ),
@@ -578,8 +678,13 @@ class _FloatingNockState extends State<_FloatingNock>
     if (!_dragging) return;
     _dragOrigin = null;
     setState(() => _dragging = false);
-    final point = widget.host.position.value;
-    if (point != null) widget.host.onPlaced?.call(point);
+    final point = _placement;
+    if (point != null) {
+      widget.host.surfacePlacements[widget.surface] = point;
+      widget.host.onSurfacePlaced?.call(widget.surface, point);
+      widget.host.onPlaced?.call(point);
+    }
+    _play(NockExpression.playful);
     _scheduleTip(const Duration(seconds: 12));
   }
 }
@@ -611,8 +716,7 @@ class _BubblePosition extends SingleChildLayoutDelegate {
         ? (left ? center.dx - gap - childSize.width : center.dx + gap)
         : center.dx - childSize.width / 2;
     final y = beside
-        // Center the balloon itself; the close control reserves 36 px above it.
-        ? center.dy - (childSize.height + 36) / 2
+        ? center.dy - childSize.height / 2
         : center.dy > size.height / 2
         ? center.dy - gap - childSize.height
         : center.dy + gap;
@@ -629,7 +733,6 @@ class _BubblePosition extends SingleChildLayoutDelegate {
 
 class _TipBubble extends StatelessWidget {
   const _TipBubble({
-    super.key,
     required this.tip,
     required this.tail,
     required this.onChoose,
@@ -648,31 +751,26 @@ class _TipBubble extends StatelessWidget {
       tail == AxisDirection.right ? 10 : 0,
       tail == AxisDirection.down ? 10 : 0,
     );
-    return Stack(
-      children: [
-        Padding(
-          // Reserve room for the floating close control outside the speech balloon.
-          padding: const EdgeInsets.only(top: 36),
-          child: CustomPaint(
-            painter: _SpeechBalloonPainter(
-              tail: tail,
-              fill: colors.surfaceContainerHigh.withValues(alpha: .84),
-              border: colors.primary.withValues(alpha: .35),
-            ),
-            child: Padding(
-              padding: inset,
-              child: Material(
-                type: MaterialType.transparency,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: onChoose,
-                  child: SizedBox(
-                    width: double.infinity,
+    return CustomPaint(
+      painter: _SpeechBalloonPainter(
+        tail: tail,
+        fill: colors.surfaceContainerHigh.withValues(alpha: .84),
+        border: colors.primary.withValues(alpha: .35),
+      ),
+      child: Padding(
+        padding: inset,
+        child: Material(
+          type: MaterialType.transparency,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: onChoose,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 14,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(16, 14, 4, 14),
                       child: Text(
                         tip.label,
                         textAlign: TextAlign.center,
@@ -682,36 +780,22 @@ class _TipBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          top: 0,
-          right: 0,
-          child: IconButton(
-            tooltip: 'Cerrar sugerencia',
-            onPressed: onClose,
-            style: IconButton.styleFrom(
-              minimumSize: const Size(32, 32),
-              maximumSize: const Size(32, 32),
-              padding: EdgeInsets.zero,
-              backgroundColor: Colors.transparent,
-              foregroundColor: colors.onSurface.withValues(alpha: .8),
-            ),
-            icon: Icon(
-              Icons.close_rounded,
-              size: 18,
-              shadows: [
-                Shadow(
-                  color: colors.surface.withValues(alpha: .9),
-                  blurRadius: 4,
+                IconButton(
+                  tooltip: 'Cerrar sugerencia',
+                  onPressed: onClose,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(44, 44),
+                    maximumSize: const Size(44, 44),
+                    padding: EdgeInsets.zero,
+                    foregroundColor: colors.onSurface.withValues(alpha: .8),
+                  ),
+                  icon: const Icon(Icons.close_rounded, size: 18),
                 ),
               ],
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }

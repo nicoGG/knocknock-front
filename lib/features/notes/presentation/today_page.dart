@@ -152,6 +152,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
   bool _creating = false;
   bool _confirmingCompletion = false;
   String? _filter;
+  DateTime? _filterChangedAt;
   final Set<String> _busyIds = {};
   final _newNoteDock = GlobalKey();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -482,6 +483,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final visibleGroups = _filter == null
         ? groups.entries.where((entry) => entry.key != 'Completadas hoy')
         : groups.entries.where((entry) => entry.key == _filter);
+    final entranceOrder = <String, int>{};
+    for (final group in visibleGroups) {
+      for (final result in group.value) {
+        entranceOrder[result.note.id] = entranceOrder.length;
+      }
+    }
     final hasVisible = visibleGroups.any((entry) => entry.value.isNotEmpty);
     final today = ScaffoldMessenger(
       key: _messengerKey,
@@ -542,7 +549,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                               .scale(1) <
                                           1.4) ...[
                                         Container(
-                                          padding: const EdgeInsets.all(12),
+                                          padding: const EdgeInsets.all(10),
                                           decoration: BoxDecoration(
                                             color: colors.primary.withValues(
                                               alpha: 0.12,
@@ -554,7 +561,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                           child: Icon(
                                             Icons.wb_sunny_rounded,
                                             color: colors.primary,
-                                            size: 28,
+                                            size: 24,
                                           ),
                                         ),
                                         const SizedBox(width: 14),
@@ -566,7 +573,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                           children: [
                                             Text(
                                               MaterialLocalizations.of(context)
-                                                  .formatFullDate(now),
+                                                  .formatMediumDate(now),
                                               style: theme.textTheme.labelLarge
                                                   ?.copyWith(
                                                     color:
@@ -590,7 +597,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                             ),
                                             const SizedBox(height: 6),
                                             Text(
-                                              'Tus pendientes entre todas las listas',
+                                              'Recordatorios y tareas asignadas',
                                               style: theme.textTheme.bodyMedium
                                                   ?.copyWith(
                                                     color:
@@ -603,7 +610,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                     ],
                                   ),
                                   if (!_failed && total > 0) ...[
-                                    const SizedBox(height: 18),
+                                    const SizedBox(height: 12),
                                     Text(
                                       '$completed de $total pendientes completados hoy',
                                       key: const ValueKey(
@@ -630,6 +637,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                     [
                                       'Atrasadas',
                                       'Para hoy',
+                                      'Asignadas a mí',
+                                      'Próximos recordatorios',
                                       'Completadas hoy',
                                     ].any(
                                       (key) => groups[key]!.isNotEmpty,
@@ -642,19 +651,34 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                   for (final key in [
                                     'Atrasadas',
                                     'Para hoy',
+                                    'Asignadas a mí',
+                                    'Próximos recordatorios',
                                     'Completadas hoy',
                                   ])
                                     if (groups[key]!.isNotEmpty ||
                                         _filter == key)
-                                      ChoiceChip(
+                                      _TodayFilterChip(
                                         key: ValueKey('today-filter-$key'),
-                                        label: Text(
-                                          '$key · ${groups[key]!.length}',
-                                        ),
+                                        label: key == 'Próximos recordatorios'
+                                            ? 'Próximos'
+                                            : key == 'Asignadas a mí'
+                                            ? 'Asignadas'
+                                            : key,
+                                        count: groups[key]!.length,
+                                        icon: switch (key) {
+                                          'Atrasadas' => Icons.history_rounded,
+                                          'Para hoy' => Icons.today_rounded,
+                                          'Asignadas a mí' =>
+                                            Icons.person_outline_rounded,
+                                          'Completadas hoy' =>
+                                            Icons.task_alt_rounded,
+                                          _ => Icons.event_outlined,
+                                        },
                                         selected: _filter == key,
-                                        onSelected: (selected) => setState(
-                                          () => _filter = selected ? key : null,
-                                        ),
+                                        onTap: () => setState(() {
+                                          _filter = _filter == key ? null : key;
+                                          _filterChangedAt = DateTime.now();
+                                        }),
                                       ),
                                 ],
                               ),
@@ -712,7 +736,14 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                             children: [
                                               for (final result
                                                   in upcoming.value)
-                                                _noteCard(context, result),
+                                                _noteCard(
+                                                  context,
+                                                  result,
+                                                  entranceOrder[result
+                                                          .note
+                                                          .id] ??
+                                                      0,
+                                                ),
                                             ],
                                           )
                                         else ...[
@@ -733,7 +764,12 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                             ),
                                           ),
                                           for (final result in upcoming.value)
-                                            _noteCard(context, result),
+                                            _noteCard(
+                                              context,
+                                              result,
+                                              entranceOrder[result.note.id] ??
+                                                  0,
+                                            ),
                                         ],
                                   ] else ...[
                                     _sectionHeading(
@@ -742,7 +778,11 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
                                       entry.value.length,
                                     ),
                                     for (final result in entry.value)
-                                      _noteCard(context, result),
+                                      _noteCard(
+                                        context,
+                                        result,
+                                        entranceOrder[result.note.id] ?? 0,
+                                      ),
                                   ],
                             if (widget.cubit.state.lists.any(
                               (list) => !widget.protection.canAccess(list.id),
@@ -769,7 +809,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
       label: 'Hoy',
       dock: _newNoteDock,
       topic: MascotTopic.today,
-      hint: 'Planificar mi día con Nock',
+      hint: 'Planificar mi día con Nocky',
       onOpen: widget.onAssistant == null || _loading || _failed
           ? null
           : ([tip]) async {
@@ -787,7 +827,7 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 12, 4, 12),
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
       child: Row(
         children: [
           Icon(
@@ -816,15 +856,19 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _noteCard(BuildContext context, NoteSearchResult result) {
+  Widget _noteCard(
+    BuildContext context,
+    NoteSearchResult result,
+    int entranceIndex,
+  ) {
     final note = result.note;
     final busy = _busyIds.contains(note.id);
     final scale = MediaQuery.textScalerOf(context).scale(1);
-    return Padding(
+    final card = Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: SizedBox(
         key: ValueKey('today-note-${note.id}'),
-        height: 88 + 100 * (scale - 1).clamp(0.0, 1.0),
+        height: 100 + 100 * (scale - 1).clamp(0.0, 1.0),
         child: PostItCard(
           note: note,
           layout: PostItCardLayout.compact,
@@ -886,7 +930,8 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
               : null,
           assignee: resolveNoteAssignee(note, result.list.collaborators),
           assignees: resolveNoteAssignees(note, result.list.collaborators),
-          compactTitleMaxLines: scale >= 1.4 ? 2 : 1,
+          compactTitleMaxLines: 2,
+          compactShowCategory: false,
           compactReadOnly: true,
           compactOpenIndicator: true,
           showPin: false,
@@ -898,13 +943,37 @@ class _TodayPageState extends State<TodayPage> with WidgetsBindingObserver {
         ),
       ),
     );
+    final animateFilterChange =
+        _filterChangedAt != null &&
+        DateTime.now().difference(_filterChangedAt!).inMilliseconds < 500;
+    final reducedMotion =
+        MediaQuery.disableAnimationsOf(context) || !animateFilterChange;
+    final delay = entranceIndex.clamp(0, 5) * 35;
+    final duration = 300 + delay;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('today-card-entrance-${_filter ?? 'all'}-${note.id}'),
+      tween: Tween(begin: reducedMotion ? 1 : 0, end: 1),
+      duration: reducedMotion
+          ? Duration.zero
+          : Duration(milliseconds: duration),
+      curve: Interval(delay / duration, 1, curve: Curves.easeOutCubic),
+      child: RepaintBoundary(child: card),
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, 22 * (1 - value)),
+          child: child,
+        ),
+      ),
+    );
   }
 
   String _subtitle(BuildContext context, NoteSearchResult result) {
     final reminder = result.note.reminderAt?.toLocal();
-    if (reminder == null) return result.list.name;
+    final category = NoteCategoryStyle.label(result.note.category);
+    if (reminder == null) return '${result.list.name} · $category';
     final localizations = MaterialLocalizations.of(context);
-    return '${result.list.name} · ${localizations.formatShortDate(reminder)} · '
+    return '${result.list.name} · $category\n${localizations.formatShortDate(reminder)} · '
         '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(reminder), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context))}';
   }
 }
@@ -940,7 +1009,7 @@ class _TodayGlassSurface extends StatelessWidget {
               ],
             ),
           ),
-          child: Padding(padding: const EdgeInsets.all(20), child: child),
+          child: Padding(padding: const EdgeInsets.all(16), child: child),
         ),
       ),
     );
@@ -1016,6 +1085,139 @@ class _TodayHint extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TodayFilterChip extends StatelessWidget {
+  const _TodayFilterChip({
+    super.key,
+    required this.label,
+    required this.count,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final int count;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final foreground = selected
+        ? colors.onPrimaryContainer
+        : colors.onSurfaceVariant;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label, $count',
+      child: ExcludeSemantics(
+        child: AnimatedContainer(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: selected
+                  ? [
+                      colors.primaryContainer,
+                      colors.primaryContainer.withValues(alpha: .65),
+                    ]
+                  : [
+                      colors.surfaceContainerHigh.withValues(alpha: .7),
+                      colors.surface.withValues(alpha: .4),
+                    ],
+            ),
+            border: Border.all(
+              color: colors.primary.withValues(alpha: selected ? .5 : .18),
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: colors.primary.withValues(alpha: .12),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              child: Stack(
+                children: [
+                  Positioned(
+                    right: 22,
+                    bottom: -9,
+                    child: Transform.rotate(
+                      angle: -.14,
+                      child: Icon(
+                        icon,
+                        size: 52,
+                        color: foreground.withValues(alpha: .07),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: 18, color: foreground),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: foreground,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: foreground.withValues(alpha: .1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$count',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: foreground,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

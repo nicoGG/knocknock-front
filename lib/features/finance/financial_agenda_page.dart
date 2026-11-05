@@ -1,3 +1,5 @@
+import '../personal_expenses/expense_style.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -184,7 +186,7 @@ class _FinancialAgendaPageState extends State<FinancialAgendaPage>
     final dateFormat = DateFormat.yMMMMEEEEd('es');
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Agenda de pagos y cobros'),
+        title: const Text('Pagos y cobros'),
         actions: [
           IconButton(
             tooltip: 'Actualizar agenda',
@@ -193,98 +195,145 @@ class _FinancialAgendaPageState extends State<FinancialAgendaPage>
           ),
         ],
       ),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _load,
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                sliver: SliverList.list(
-                  children: [
-                    const Text(
-                      'Vencimientos de tus listas de gastos y cuentas por cobrar, incluidas las compartidas.',
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final period in AgendaPeriod.values)
-                          ChoiceChip(
-                            label: Text(
-                              period == AgendaPeriod.overdue && overdue > 0
-                                  ? 'Vencidos ($overdue)'
-                                  : period.label,
-                            ),
-                            selected: _period == period,
-                            onSelected: (_) => setState(() => _period = period),
-                          ),
-                      ],
-                    ),
-                    if (widget.cubit.state.syncConflictCount > 0)
-                      const Text(
-                        'Hay cambios en conflicto. Revisa el estado de sincronización antes de repetir un abono.',
-                      )
-                    else if (widget.cubit.state.pendingSyncCount > 0)
-                      const Text(
-                        'Hay cambios guardados en este dispositivo pendientes de sincronizar.',
-                      ),
-                    if (_loading) const LinearProgressIndicator(),
-                    if (_failed)
-                      ListTile(
-                        title: const Text(
-                          'No se pudo cargar la agenda completa.',
-                        ),
-                        trailing: TextButton(
-                          onPressed: _load,
-                          child: const Text('Reintentar'),
-                        ),
-                      ),
-                    if (!_failed && !_loading && visible.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Text(
-                          'No hay vencimientos pendientes en este período. Agrega una fecha de vencimiento a un gasto o cobro para verlo aquí.',
-                        ),
-                      ),
-                    for (final currency in totals.keys.toList()..sort())
-                      Card(
-                        child: ListTile(
-                          title: Text(currency),
-                          subtitle: Text(
-                            'Por pagar: ${FinancialEntry.formatAmount(totals[currency]!.pay, currency)}\nPor cobrar: ${FinancialEntry.formatAmount(totals[currency]!.collect, currency)}',
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                sliver: SliverList.builder(
-                  itemCount: visible.length,
-                  itemBuilder: (context, i) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: ExpenseBackground(
+        child: SafeArea(
+          top: false,
+          child: RefreshIndicator(
+            onRefresh: _load,
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  sliver: SliverList.list(
                     children: [
-                      if (i == 0 ||
-                          !DateUtils.isSameDay(
-                            visible[i - 1].date,
-                            visible[i].date,
-                          ))
-                        Padding(
-                          padding: const EdgeInsets.only(top: 18, bottom: 6),
-                          child: Text(
-                            dateFormat.format(visible[i].date),
-                            style: Theme.of(context).textTheme.titleMedium,
+                      const ExpenseEyebrow(
+                        icon: Icons.calendar_month_outlined,
+                        label: 'TU AGENDA',
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Cada vencimiento, a tiempo',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tus pagos y cobros en un solo lugar, también los de tus listas compartidas.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          for (final period in AgendaPeriod.values)
+                            ChoiceChip(
+                              label: Text(
+                                period == AgendaPeriod.overdue && overdue > 0
+                                    ? 'Vencidos ($overdue)'
+                                    : period.label,
+                              ),
+                              selected: _period == period,
+                              onSelected: (_) =>
+                                  setState(() => _period = period),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      if (widget.cubit.state.syncConflictCount > 0)
+                        const ExpenseNotice(
+                          text: 'Hay cambios en conflicto. Revisa el estado de sincronización antes de repetir un abono.',
+                        )
+                      else if (widget.cubit.state.pendingSyncCount > 0)
+                        const ExpenseNotice(
+                          text: 'Hay cambios guardados en este dispositivo pendientes de sincronizar.',
+                        ),
+                      if (_loading) const LinearProgressIndicator(),
+                      if (_failed)
+                        ExpenseSurface(
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.cloud_off_rounded,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                                size: 36,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No se pudo cargar la agenda completa.',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              TextButton(
+                                onPressed: _load,
+                                child: const Text('Reintentar'),
+                              ),
+                            ],
                           ),
                         ),
-                      _row(visible[i], today),
+                      if (!_failed && !_loading && visible.isEmpty)
+                        _AgendaEmptyState(period: _period),
+                      for (final currency in totals.keys.toList()..sort())
+                        ExpenseSurface(
+                          highlighted: true,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ExpenseEyebrow(
+                                icon: Icons.account_balance_wallet_outlined,
+                                label: currency,
+                              ),
+                              const SizedBox(height: 16),
+                              ExpenseMetricGrid(
+                                values: {
+                                  'Por pagar': FinancialEntry.formatAmount(
+                                    totals[currency]!.pay,
+                                    currency,
+                                  ),
+                                  'Por cobrar': FinancialEntry.formatAmount(
+                                    totals[currency]!.collect,
+                                    currency,
+                                  ),
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              ),
-            ],
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 110),
+                  sliver: SliverList.builder(
+                    itemCount: visible.length,
+                    itemBuilder: (context, i) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (i == 0 ||
+                            !DateUtils.isSameDay(
+                              visible[i - 1].date,
+                              visible[i].date,
+                            ))
+                          Padding(
+                            padding: const EdgeInsets.only(top: 20, bottom: 12),
+                            child: Text(
+                              dateFormat.format(visible[i].date),
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                        _row(visible[i], today),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -294,28 +343,63 @@ class _FinancialAgendaPageState extends State<FinancialAgendaPage>
   Widget _row(AgendaDue due, DateTime today) {
     final note = due.source.note;
     final limit = (note.financialEntry?.payments.length ?? 0) >= 50;
-    return Card(
+    return ExpenseSurface(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            ExpenseEyebrow(
+              icon: due.receivable
+                  ? Icons.south_west_rounded
+                  : Icons.north_east_rounded,
+              label: due.receivable ? 'POR COBRAR' : 'POR PAGAR',
+            ),
+            const SizedBox(height: 12),
             Text(note.title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
             Text(
               [
                 due.source.list.name,
                 if (due.counterparty.isNotEmpty) due.counterparty,
               ].join(' · '),
             ),
+            const SizedBox(height: 16),
             Text(
-              [
-                due.receivable ? 'Por cobrar' : 'Por pagar',
-                FinancialEntry.formatAmount(due.balance, due.currency),
-                if (due.installment != null)
-                  'Cuota ${due.installment} de ${due.count}',
-                if (due.date.isBefore(today)) 'Vencido',
-              ].join(' · '),
+              FinancialEntry.formatAmount(due.balance, due.currency),
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
+            if (due.installment != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Cuota ${due.installment} de ${due.count}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (due.date.isBefore(today)) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Vencido',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 14),
             if (!due.source.list.canEdit)
               const Text('Solo lectura')
             else if (!due.firstUnpaid)
@@ -325,7 +409,13 @@ class _FinancialAgendaPageState extends State<FinancialAgendaPage>
             else if (limit)
               const Text('Este registro alcanzó el límite de 50 abonos.')
             else
-              TextButton.icon(
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
                 onPressed: _payingList == null ? () => _pay(due) : null,
                 icon: const Icon(Icons.payments_outlined),
                 label: const Text('Registrar abono'),
@@ -333,6 +423,137 @@ class _FinancialAgendaPageState extends State<FinancialAgendaPage>
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AgendaEmptyState extends StatelessWidget {
+  const _AgendaEmptyState({required this.period});
+  final AgendaPeriod period;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final title = switch (period) {
+      AgendaPeriod.week => 'Tu semana, sin pendientes',
+      AgendaPeriod.nextWeek => 'La próxima semana está libre',
+      AgendaPeriod.overdue => 'Sin vencimientos atrasados',
+      AgendaPeriod.all => 'Aún no hay vencimientos',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ExpenseSurface(
+          highlighted: true,
+          child: Column(
+            children: [
+              SizedBox(
+                height: 110,
+                child: Center(
+                  child: SizedBox(
+                    width: 120,
+                    height: 104,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: colors.primary.withValues(alpha: .08),
+                          ),
+                        ),
+                        Transform.rotate(
+                          angle: -.1,
+                          child: Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: colors.surfaceContainerHigh,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: colors.primary.withValues(alpha: .25),
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.calendar_month_rounded,
+                              size: 44,
+                              color: colors.primary,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: colors.primaryContainer,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: colors.surface,
+                                width: 3,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.check_rounded,
+                              color: colors.onPrimaryContainer,
+                              size: 22,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'No hay pagos ni cobros pendientes con fecha de vencimiento en este período.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        ExpenseSurface(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ExpenseEyebrow(
+                icon: Icons.event_available_outlined,
+                label: 'ORGANIZA LO QUE VIENE',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Agrega una fecha de vencimiento',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Abre un gasto o cobro en tus listas y asigna su vencimiento. Aparecerá aquí automáticamente.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

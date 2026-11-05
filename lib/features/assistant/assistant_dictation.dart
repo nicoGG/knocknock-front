@@ -55,7 +55,7 @@ class AssistantDictation extends ChangeNotifier {
         return;
       }
 
-      // Nock's interface is in Spanish. Prefer the speaker's regional variant.
+      // Nocky's interface is in Spanish. Prefer the speaker's regional variant.
       final spanish = locale.languageCode == 'es'
           ? locale.toLanguageTag()
           : 'es-CL';
@@ -158,7 +158,7 @@ class AssistantDictation extends ChangeNotifier {
       if (id == _session) {
         // Keep native setup failures distinguishable from a silent microphone.
         // Do not log recognized speech or the draft.
-        debugPrint('Nock dictation setup: ${failure.runtimeType}');
+        debugPrint('Nocky dictation setup: ${failure.runtimeType}');
         cancel(
           message: switch (failure) {
             MissingPluginException() => 'El módulo de voz no está cargado. Cierra la app y vuelve a ejecutarla con una compilación completa.',

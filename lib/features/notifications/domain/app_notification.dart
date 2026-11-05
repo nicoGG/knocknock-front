@@ -18,6 +18,7 @@ class AppNotification extends Equatable {
     required this.data,
     required this.createdAt,
     this.readAt,
+    this.completedAt,
   });
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
@@ -35,6 +36,7 @@ class AppNotification extends Equatable {
       body: json['body'] as String? ?? '',
       data: Map<String, String>.from(json['data'] as Map? ?? const {}),
       readAt: DateTime.tryParse(json['readAt'] as String? ?? ''),
+      completedAt: DateTime.tryParse(json['completedAt'] as String? ?? ''),
       createdAt: DateTime.parse(json['createdAt'] as String),
     );
   }
@@ -45,6 +47,9 @@ class AppNotification extends Equatable {
   final String body;
   final Map<String, String> data;
   final DateTime? readAt;
+  final DateTime? completedAt;
+
+  bool get isCompleted => completedAt != null;
   final DateTime createdAt;
 
   bool get isRead => readAt != null;
@@ -57,6 +62,7 @@ class AppNotification extends Equatable {
     data: data,
     readAt: value,
     createdAt: createdAt,
+    completedAt: completedAt,
   );
 
   AppNotification copyWith({String? title, String? body}) => AppNotification(
@@ -67,8 +73,18 @@ class AppNotification extends Equatable {
     data: data,
     readAt: readAt,
     createdAt: createdAt,
+    completedAt: completedAt,
   );
 
   @override
-  List<Object?> get props => [id, type, title, body, data, readAt, createdAt];
+  List<Object?> get props => [
+    id,
+    type,
+    title,
+    body,
+    data,
+    readAt,
+    completedAt,
+    createdAt,
+  ];
 }

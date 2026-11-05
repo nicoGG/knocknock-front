@@ -85,11 +85,11 @@ Future<bool> completeRecurringReminderOccurrence(
     if (notificationId != null) {
       try {
         await client.patch<void>(
-          '/notifications/${Uri.encodeComponent(notificationId)}/read',
+          '/notifications/${Uri.encodeComponent(notificationId)}/complete',
           options: options,
         );
       } on Object {
-        // Completing the occurrence is authoritative; read state is secondary.
+        // Completing the occurrence is authoritative; personal history is secondary.
       }
     }
     return true;

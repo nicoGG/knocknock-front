@@ -376,8 +376,8 @@ void main() {
         find.byKey(const ValueKey('budget-amount')),
         '30000',
       );
-      await tester.ensureVisible(find.text('Analizar con Nock'));
-      await tester.tap(find.text('Analizar con Nock'));
+      await tester.ensureVisible(find.text('Analizar con Nocky'));
+      await tester.tap(find.text('Analizar con Nocky'));
       expect(suggestion?.usesExcerpt, isTrue);
       expect(proposedLimit, 30000);
       expect(saved, isNull);

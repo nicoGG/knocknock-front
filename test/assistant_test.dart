@@ -40,6 +40,33 @@ class _Auth extends Fake implements AuthRepository {
 }
 
 void main() {
+  test('chat retains twenty messages and drops the oldest exchanges', () {
+    final memory = AssistantChatMemory();
+    memory.enter('account/screen', '');
+    for (var i = 0; i < 12; i++) {
+      memory.remember('question-$i!', AssistantReply('reply-$i!', null));
+    }
+    expect(memory.history, isNot(contains('question-0!')));
+    expect(memory.history, isNot(contains('question-1!')));
+    for (var i = 2; i < 12; i++) {
+      expect(memory.history, contains('Usuario: question-$i!'));
+      expect(memory.history, contains('Nocky: reply-$i!'));
+    }
+    expect(memory.history!.split('Usuario:').length - 1, 10);
+    memory.enter('other-account/screen', '');
+    expect(memory.history, isNull);
+  });
+
+  test('long replies do not discard earlier messages from context', () {
+    final memory = AssistantChatMemory();
+    for (var i = 0; i < 10; i++) {
+      memory.remember('question-$i!', AssistantReply('x' * 10000, null));
+    }
+    expect(memory.history, contains('question-0!'));
+    expect(memory.history, contains('question-9!'));
+    expect(memory.history!.runes.length, lessThanOrEqualTo(80000));
+  });
+
   final now = DateTime(2026, 11, 3);
   final list = NoteList(
     id: 'home',
@@ -274,7 +301,7 @@ void main() {
   });
 
   testWidgets(
-    'Nock docks above the create button, dismisses individual tips and remembers a drag',
+    'Nocky docks above the create button, dismisses individual tips and remembers a drag',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -325,7 +352,7 @@ void main() {
         prefs.getStringList('nock_dismissed_tips_v1'),
         contains('priorities'),
       );
-      await tester.pump(const Duration(seconds: 36));
+      await tester.pump(const Duration(seconds: 19));
       await tester.pumpAndSettle();
       await tester.tap(find.text('¿Preparamos una nota?'));
       await tester.pumpAndSettle();
@@ -409,17 +436,11 @@ void main() {
       await tester.pumpAndSettle();
       final moved = tester.getCenter(mascot);
       expect(moved.dx, lessThan(before.dx - 30));
-      final faceBeforeTap = tester.getTopLeft(find.byType(NockFace));
       await tester.tap(mascot);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.byType(AssistantPage), findsNothing);
-      expect(
-        tester.getTopLeft(find.byType(NockFace)).dy,
-        lessThan(faceBeforeTap.dy),
-      );
-      // Repeated taps during the bounce must still open only one chat.
-      await tester.tap(mascot);
+      // Opening starts immediately, without waiting for the old mascot bounce.
+      expect(find.byType(AssistantPage), findsOneWidget);
       await tester.pumpAndSettle();
       expect(find.byType(AssistantPage), findsOneWidget);
       expect(find.text('Mis notas'), findsOneWidget);
@@ -442,7 +463,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('today-menu-button')));
       await tester.pumpAndSettle();
-      expect(tester.getCenter(mascot).dx, closeTo(moved.dx, 1));
+      // Today has its own placement instead of inheriting the board's drag.
+      expect((tester.getCenter(mascot) - moved).distance, greaterThan(1));
       await tester.pump(const Duration(seconds: 7));
       await tester.pumpAndSettle();
       await tester.tap(find.text('¿Planeamos tu día?'));
@@ -554,8 +576,8 @@ void main() {
         find.byKey(const ValueKey('note-title-field')),
         'Mi viaje',
       );
-      await tester.ensureVisible(find.text('Completar nota con Nock'));
-      await tester.tap(find.text('Completar nota con Nock'));
+      await tester.ensureVisible(find.text('Completar nota con Nocky'));
+      await tester.tap(find.text('Completar nota con Nocky'));
       await tester.pumpAndSettle();
       expect(find.text('Mi viaje'), findsOneWidget);
       await tester.pump();
@@ -939,9 +961,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('appbar-menu-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Asistente'));
+    await tester.tap(find.byTooltip('Asistente'));
     await tester.pumpAndSettle();
-    expect(find.text('Asistente de NockNock'), findsOneWidget);
+    expect(find.text('Nocky · Asistente de NockNock'), findsOneWidget);
     expect(find.text('Tu consulta'), findsOneWidget);
   });
 
@@ -989,7 +1011,10 @@ void main() {
       await tester.pump();
       await tester.tap(find.byTooltip('Enviar'));
       await tester.pumpAndSettle();
-      final transcript = find.byType(ListView);
+      final transcript = find.byWidgetPredicate(
+        (widget) =>
+            widget is ListView && widget.scrollDirection == Axis.vertical,
+      );
       final composer = find.byKey(
         const ValueKey('assistant-floating-composer'),
       );

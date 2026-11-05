@@ -61,33 +61,39 @@ void main() {
     expect(details.android!.color, isNull);
   });
 
-  test('completes the occurrence and marks its notification as read', () async {
-    final requests = <RequestOptions>[];
-    final dio = Dio(BaseOptions(baseUrl: 'https://example.test/api'));
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          requests.add(options);
-          handler.resolve(
-            Response<void>(requestOptions: options, statusCode: 200),
-          );
-        },
-      ),
-    );
+  test(
+    'completes the occurrence and saves its notification in completion history',
+    () async {
+      final requests = <RequestOptions>[];
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test/api'));
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requests.add(options);
+            handler.resolve(
+              Response<void>(requestOptions: options, statusCode: 200),
+            );
+          },
+        ),
+      );
 
-    final completed = await completeRecurringReminderOccurrence(
-      recurringData,
-      accessTokenProvider: () async => 'firebase-token',
-      dio: dio,
-    );
+      final completed = await completeRecurringReminderOccurrence(
+        recurringData,
+        accessTokenProvider: () async => 'firebase-token',
+        dio: dio,
+      );
 
-    expect(completed, isTrue);
-    expect(requests, hasLength(2));
-    expect(requests.first.path, '/notes/note-1/reminder-occurrences/complete');
-    expect(requests.first.data, {'occurrenceAt': '2026-08-14T12:00:00.000Z'});
-    expect(requests.first.headers['Authorization'], 'Bearer firebase-token');
-    expect(requests.last.path, '/notifications/notification-1/read');
-  });
+      expect(completed, isTrue);
+      expect(requests, hasLength(2));
+      expect(
+        requests.first.path,
+        '/notes/note-1/reminder-occurrences/complete',
+      );
+      expect(requests.first.data, {'occurrenceAt': '2026-08-14T12:00:00.000Z'});
+      expect(requests.first.headers['Authorization'], 'Bearer firebase-token');
+      expect(requests.last.path, '/notifications/notification-1/complete');
+    },
+  );
 
   test('rejects payloads that are not an identified recurrence', () async {
     expect(

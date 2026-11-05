@@ -60,6 +60,8 @@ Future<bool> showNotePreviewDialog({
   required NotePreviewDeleteCallback onDelete,
   void Function([MascotTip? tip])? onAnalyze,
   bool showOpenNoteButton = false,
+  Future<void> Function(Note)? onCompleteReminder,
+  bool Function(Note)? isReminderCompleted,
   Future<bool> Function(BuildContext)? onHistory,
   Stream<Object?>? noteChanges,
 }) async {
@@ -88,6 +90,8 @@ Future<bool> showNotePreviewDialog({
           onDelete: onDelete,
           showOpenNoteButton: showOpenNoteButton,
           onHistory: onHistory,
+          onCompleteReminder: onCompleteReminder,
+          isReminderCompleted: isReminderCompleted,
         ),
       ),
     ),
@@ -247,6 +251,8 @@ class _NotePreviewDialog extends StatefulWidget {
     required this.onDelete,
     required this.showOpenNoteButton,
     this.onHistory,
+    this.onCompleteReminder,
+    this.isReminderCompleted,
   });
 
   final Animation<double> transitionAnimation;
@@ -258,6 +264,8 @@ class _NotePreviewDialog extends StatefulWidget {
   final NotePreviewDeleteCallback onDelete;
   final bool showOpenNoteButton;
   final Future<bool> Function(BuildContext)? onHistory;
+  final Future<void> Function(Note)? onCompleteReminder;
+  final bool Function(Note)? isReminderCompleted;
 
   @override
   State<_NotePreviewDialog> createState() => _NotePreviewDialogState();
@@ -623,6 +631,60 @@ class _NotePreviewDialogState extends State<_NotePreviewDialog> {
                                 : () => Navigator.pop(context, true),
                             icon: const Icon(Icons.open_in_new_rounded),
                             label: const Text('Ir a la nota'),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      if (note.reminderAt != null &&
+                          widget.onCompleteReminder != null) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            key: const ValueKey('preview-complete-reminder'),
+                            icon: Icon(
+                              widget.isReminderCompleted?.call(note) == true
+                                  ? Icons.task_alt
+                                  : Icons.check_circle_outline,
+                            ),
+                            label: Text(
+                              widget.isReminderCompleted?.call(note) == true
+                                  ? 'Recordatorio completado'
+                                  : 'Completar recordatorio',
+                            ),
+                            onPressed:
+                                _isSaving ||
+                                    widget.isReminderCompleted?.call(note) ==
+                                        true
+                                ? null
+                                : () async {
+                                    setState(() => _isSaving = true);
+                                    try {
+                                      await widget.onCompleteReminder!(note);
+                                      if (!mounted || !context.mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Recordatorio completado. Guardado en tu historial.',
+                                              ),
+                                            ),
+                                          );
+                                    } catch (_) {
+                                      if (!mounted || !context.mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'No pudimos completar el recordatorio. Intenta nuevamente.',
+                                              ),
+                                            ),
+                                          );
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _isSaving = false);
+                                      }
+                                    }
+                                  },
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -1078,7 +1140,7 @@ class _QuickNoteEditorState extends State<_QuickNoteEditor> {
                                         Icons.smart_toy_outlined,
                                       ),
                                       label: const Text(
-                                        'Completar nota con Nock',
+                                        'Completar nota con Nocky',
                                       ),
                                     ),
                                   ),

@@ -1,3 +1,4 @@
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -8,6 +9,64 @@ import 'financial_improvements_test.dart' as f;
 
 void main() {
   setUpAll(() => initializeDateFormatting('es'));
+  testWidgets('summary mascot uses its own period and currency selection', (
+    tester,
+  ) async {
+    final position = ValueNotifier<Alignment?>(null);
+    String? selectedMonth;
+    Set<String>? selectedIds;
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MascotPosition(
+          position: position,
+          dismissedTips: const {},
+          onDismiss: (_) {},
+          child: child!,
+        ),
+        home: FinancialSummaryPage(
+          list: f.list(),
+          currency: 'CLP',
+          month: null,
+          onEdit: (_) {},
+          onAssistant: (month, ids, tip) {
+            selectedMonth = month;
+            selectedIds = ids;
+          },
+          notes: [
+            f.note(
+              f.entry(amount: 1000, date: DateTime(2026, 9, 1)),
+              id: 'sep',
+            ),
+            f.note(
+              f.entry(amount: 2000, date: DateTime(2026, 10, 1)),
+              id: 'oct',
+            ),
+            f.note(
+              f.entry(
+                amount: 90000,
+                currency: 'USD',
+                date: DateTime(2026, 9, 1),
+              ),
+              id: 'usd',
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final mascot = find.byKey(const ValueKey('nock-mascot'));
+    expect(mascot, findsOneWidget);
+    await tester.tap(find.text('Todos los meses').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('septiembre 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(mascot);
+    await tester.pumpAndSettle();
+    expect(selectedMonth, '2026-09');
+    expect(selectedIds, {'sep'});
+    await tester.pumpWidget(const SizedBox.shrink());
+    position.dispose();
+  });
   test('grouping retains every unit and ignores zero values', () {
     final groups = {
       for (var i = 1; i <= 12; i++) 'Comercio $i': i * 100,

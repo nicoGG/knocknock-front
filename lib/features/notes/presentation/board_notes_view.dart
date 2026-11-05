@@ -303,6 +303,7 @@ class _NotesGrid extends StatefulWidget {
     required this.buildCard,
     required this.onReorder,
     required this.onCompletedSectionExpansionChanged,
+    this.includeBottomPadding = true,
     super.key,
   });
 
@@ -314,6 +315,7 @@ class _NotesGrid extends StatefulWidget {
   final NoteCardBuilder buildCard;
   final NoteReorderCallback onReorder;
   final ValueChanged<bool> onCompletedSectionExpansionChanged;
+  final bool includeBottomPadding;
 
   @override
   State<_NotesGrid> createState() => _NotesGridState();
@@ -567,7 +569,11 @@ class _NotesGridState extends State<_NotesGrid> {
               ],
             ],
             SliverToBoxAdapter(
-              child: SizedBox(height: _boardBottomScrollPadding(context)),
+              child: SizedBox(
+                height: widget.includeBottomPadding
+                    ? _boardBottomScrollPadding(context)
+                    : 0,
+              ),
             ),
           ],
         );
@@ -825,6 +831,7 @@ class _NotesGridState extends State<_NotesGrid> {
         note.assignedUserIds.isNotEmpty ||
         (note.customAssigneeName?.trim().isNotEmpty ?? false);
     final hasColorIndicator =
+        note.color != NoteColor.none &&
         NoteCategoryStyle.assetPath(note.category) != null;
     final footerHeight = hasAssignee || hasColorIndicator
         ? 28.0
@@ -983,6 +990,7 @@ class _NotesList extends StatefulWidget {
     required this.buildCard,
     required this.onReorder,
     required this.onCompletedSectionExpansionChanged,
+    this.includeBottomPadding = true,
     super.key,
   });
 
@@ -996,6 +1004,7 @@ class _NotesList extends StatefulWidget {
   final NoteCardBuilder buildCard;
   final NoteReorderCallback onReorder;
   final ValueChanged<bool> onCompletedSectionExpansionChanged;
+  final bool includeBottomPadding;
 
   @override
   State<_NotesList> createState() => _NotesListState();
@@ -1055,7 +1064,11 @@ class _NotesListState extends State<_NotesList> {
           ],
         ],
         SliverToBoxAdapter(
-          child: SizedBox(height: _boardBottomScrollPadding(context)),
+          child: SizedBox(
+            height: widget.includeBottomPadding
+                ? _boardBottomScrollPadding(context)
+                : 0,
+          ),
         ),
       ],
     );

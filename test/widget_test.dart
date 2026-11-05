@@ -5800,7 +5800,7 @@ void main() {
     expect(find.textContaining('Versión'), findsOneWidget);
     final listViewport = find.descendant(
       of: find.byType(Drawer),
-      matching: find.byType(ListView),
+      matching: find.byType(CustomScrollView),
     );
     final drawerScrollbar = tester.widget<Scrollbar>(
       find.descendant(

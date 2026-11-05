@@ -158,7 +158,10 @@ class NotificationsController extends ChangeNotifier
     }
   }
 
-  Future<void> load() async {
+  bool _includeCompleted = false;
+
+  Future<void> load({bool? includeCompleted}) async {
+    _includeCompleted = includeCompleted ?? _includeCompleted;
     if (authRepository.currentUser == null) {
       _notifications = const [];
       _message = null;
@@ -170,8 +173,17 @@ class NotificationsController extends ChangeNotifier
     notifyListeners();
     try {
       final response = await _authorizedGet<List<dynamic>>('/notifications');
+      final history = _includeCompleted
+          ? await _authorizedGet<List<dynamic>>(
+              '/notifications/completed-reminders',
+            )
+          : null;
+      final records = <String, dynamic>{
+        for (final item in [...?response.data, ...?history?.data])
+          (item as Map)['id'] as String: item,
+      };
       _notifications = await Future.wait(
-        (response.data ?? const []).map((item) async {
+        records.values.map((item) async {
           final notification = AppNotification.fromJson(
             Map<String, dynamic>.from(item as Map),
           );
@@ -190,6 +202,71 @@ class NotificationsController extends ChangeNotifier
       _message = 'No pudimos actualizar tus notificaciones.';
     } finally {
       _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  bool isReminderCompleted(String noteId, DateTime occurrenceAt) =>
+      _notifications.any(
+        (item) =>
+            item.isCompleted &&
+            item.data['noteId'] == noteId &&
+            DateTime.tryParse(item.data['occurrenceAt'] ?? '')
+                    ?.isAtSameMomentAs(occurrenceAt) ==
+                true,
+      );
+
+  Future<void> completeScheduledReminder(
+    String noteId,
+    DateTime occurrenceAt,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/notes/${Uri.encodeComponent(noteId)}/reminder/complete',
+      data: {'occurrenceAt': occurrenceAt.toUtc().toIso8601String()},
+      options: await _authOptions(),
+    );
+    final saved = AppNotification.fromJson(response.data!);
+    _notifications = [
+      saved,
+      ..._notifications.where(
+        (item) =>
+            item.id != saved.id &&
+            !(item.data['noteId'] == noteId &&
+                DateTime.tryParse(item.data['occurrenceAt'] ?? '')
+                        ?.isAtSameMomentAs(occurrenceAt) ==
+                    true),
+      ),
+    ];
+    notifyListeners();
+  }
+
+  final Set<String> _completingIds = {};
+
+  bool isCompleting(String id) => _completingIds.contains(id);
+
+  Future<bool> completeReminder(AppNotification notification) async {
+    if (notification.type != AppNotificationType.reminder ||
+        notification.isCompleted ||
+        !_completingIds.add(notification.id)) {
+      return false;
+    }
+    notifyListeners();
+    try {
+      final response = await _authorizedPatch<Map<String, dynamic>>(
+        '/notifications/${Uri.encodeComponent(notification.id)}/complete',
+      );
+      final saved = AppNotification.fromJson(response.data!)
+          .copyWith(title: notification.title, body: notification.body);
+      _notifications = [
+        for (final item in _notifications)
+          if (item.id == saved.id) saved else item,
+      ];
+      return true;
+    } catch (_) {
+      _message = 'No pudimos completar el recordatorio. Intenta nuevamente.';
+      return false;
+    } finally {
+      _completingIds.remove(notification.id);
       notifyListeners();
     }
   }

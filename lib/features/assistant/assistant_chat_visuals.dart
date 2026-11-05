@@ -118,7 +118,7 @@ class ChatMessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    mine ? 'Tú' : 'Nock',
+                    mine ? 'Tú' : 'Nocky',
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: colors.primary,
                       fontWeight: FontWeight.w800,
@@ -196,7 +196,7 @@ class _ChatActivityState extends State<ChatActivity>
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final label = widget.voice ? 'Escuchando…' : 'Nock está escribiendo…';
+    final label = widget.voice ? 'Escuchando…' : 'Nocky está escribiendo…';
     return Semantics(
       liveRegion: true,
       child: Row(

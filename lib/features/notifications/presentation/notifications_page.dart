@@ -27,6 +27,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   final Set<String> _swipeDeletingIds = {};
   final ValueNotifier<double> _appBarScrollProgress = ValueNotifier(0);
   bool _isSelecting = false;
+  bool _showCompleted = false;
   late final AnimationController _ambientController = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 16),
@@ -105,7 +106,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   }
 
   Future<void> _refresh() async {
-    await widget.controller.load();
+    await widget.controller.load(includeCompleted: _showCompleted);
     if (!mounted) return;
     final availableIds = widget.controller.notifications
         .map((notification) => notification.id)
@@ -263,11 +264,18 @@ class _NotificationsPageState extends State<NotificationsPage>
       listenable: widget.controller,
       builder: (context, _) {
         final notifications = widget.controller.notifications;
-        final visibleNotifications = notifications
-            .where(
-              (notification) => !_swipeDeletingIds.contains(notification.id),
-            )
-            .toList(growable: false);
+        final visibleNotifications =
+            notifications
+                .where(
+                  (notification) =>
+                      !_swipeDeletingIds.contains(notification.id) &&
+                      notification.isCompleted == _showCompleted,
+                )
+                .toList(growable: false)
+              ..sort(
+                (a, b) => (_showCompleted ? b.completedAt! : b.createdAt)
+                    .compareTo(_showCompleted ? a.completedAt! : a.createdAt),
+              );
         final unreadCount = widget.controller.unreadCount;
         final allSelected =
             visibleNotifications.isNotEmpty &&
@@ -350,8 +358,39 @@ class _NotificationsPageState extends State<NotificationsPage>
                       )
                     : null,
                 title: Text(
-                  _isSelecting ? selectionTitle : 'Notificaciones',
+                  _isSelecting
+                      ? selectionTitle
+                      : _showCompleted
+                      ? 'Historial de completados'
+                      : 'Notificaciones',
                   style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(48),
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: false, label: Text('Bandeja')),
+                        ButtonSegment(
+                          value: true,
+                          label: Text('Completados'),
+                          icon: Icon(Icons.task_alt),
+                        ),
+                      ],
+                      selected: {_showCompleted},
+                      onSelectionChanged: (values) => setState(() {
+                        _showCompleted = values.single;
+                        unawaited(
+                          widget.controller.load(
+                            includeCompleted: _showCompleted,
+                          ),
+                        );
+                        _selectedIds.clear();
+                        _isSelecting = false;
+                      }),
+                    ),
+                  ),
                 ),
                 actions: _isSelecting
                     ? [
@@ -441,6 +480,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                               key: const ValueKey('notifications-empty'),
                               onRefresh: _refresh,
                               child: _EmptyNotificationsState(
+                                completed: _showCompleted,
                                 animation: _ambientController,
                               ),
                             )
@@ -450,7 +490,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                               child: ListView.separated(
                                 padding: const EdgeInsets.fromLTRB(
                                   16,
-                                  kToolbarHeight + 10,
+                                  kToolbarHeight + 58,
                                   16,
                                   32,
                                 ),
@@ -460,6 +500,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                                 itemBuilder: (context, index) {
                                   if (index == 0) {
                                     return _NotificationsOverview(
+                                      completed: _showCompleted,
                                       animation: _ambientController,
                                       unreadCount: unreadCount,
                                       totalCount: visibleNotifications.length,
@@ -483,6 +524,33 @@ class _NotificationsPageState extends State<NotificationsPage>
                                         _dismissBySwipe(notification),
                                     child: _NotificationTile(
                                       notification: notification,
+                                      onComplete:
+                                          widget.controller.isCompleting(
+                                            notification.id,
+                                          )
+                                          ? null
+                                          : () async {
+                                              final success = await widget
+                                                  .controller
+                                                  .completeReminder(
+                                                    notification,
+                                                  );
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    success
+                                                        ? 'Recordatorio completado. Puedes verlo en Completados.'
+                                                        : widget
+                                                                  .controller
+                                                                  .message ??
+                                                              'No pudimos completar el recordatorio.',
+                                                  ),
+                                                ),
+                                              );
+                                            },
                                       entranceIndex: index - 1,
                                       isSelected: _selectedIds.contains(
                                         notification.id,
@@ -684,22 +752,28 @@ class _NotificationsOverview extends StatelessWidget {
     required this.animation,
     required this.unreadCount,
     required this.totalCount,
+    this.completed = false,
   });
 
   final Animation<double> animation;
   final int unreadCount;
   final int totalCount;
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final headline = unreadCount == 0
+    final headline = completed
+        ? '$totalCount recordatorios completados'
+        : unreadCount == 0
         ? 'Todo bajo control'
         : unreadCount == 1
         ? '1 notificación pendiente'
         : '$unreadCount notificaciones pendientes';
-    final supporting = unreadCount == 0
+    final supporting = completed
+        ? 'Tu historial personal, del más reciente al más antiguo.'
+        : unreadCount == 0
         ? 'Ya revisaste toda tu actividad reciente.'
         : 'Tienes novedades esperando por ti.';
     return Container(
@@ -833,7 +907,7 @@ class _NotificationsLoadingState extends StatelessWidget {
         );
         return ListView.separated(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, kToolbarHeight + 10, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, kToolbarHeight + 58, 16, 32),
           itemCount: 4,
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, index) => Container(
@@ -853,7 +927,12 @@ class _NotificationsLoadingState extends StatelessWidget {
 }
 
 class _EmptyNotificationsState extends StatelessWidget {
-  const _EmptyNotificationsState({required this.animation});
+  const _EmptyNotificationsState({
+    required this.animation,
+    this.completed = false,
+  });
+
+  final bool completed;
 
   final Animation<double> animation;
 
@@ -862,7 +941,7 @@ class _EmptyNotificationsState extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(24, kToolbarHeight + 72, 24, 32),
+      padding: const EdgeInsets.fromLTRB(24, kToolbarHeight + 120, 24, 32),
       children: [
         AnimatedBuilder(
           animation: animation,
@@ -918,14 +997,16 @@ class _EmptyNotificationsState extends StatelessWidget {
         ),
         const SizedBox(height: 18),
         Text(
-          'Todo al día',
+          completed ? 'Aún no hay completados' : 'Todo al día',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.headlineSmall
               ?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 8),
         Text(
-          'Aquí aparecerán tus recordatorios, tareas y novedades compartidas.',
+          completed
+              ? 'Aquí aparecerán los recordatorios que marques como completados.'
+              : 'Aquí aparecerán tus recordatorios, tareas y novedades compartidas.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
@@ -1167,6 +1248,7 @@ class _NotificationTile extends StatelessWidget {
   const _NotificationTile({
     required this.notification,
     required this.entranceIndex,
+    this.onComplete,
     required this.isSelected,
     required this.isSelectionMode,
     required this.onTap,
@@ -1175,6 +1257,7 @@ class _NotificationTile extends StatelessWidget {
 
   final AppNotification notification;
   final int entranceIndex;
+  final VoidCallback? onComplete;
   final bool isSelected;
   final bool isSelectionMode;
   final VoidCallback onTap;
@@ -1342,6 +1425,25 @@ class _NotificationTile extends StatelessWidget {
                                   ),
                                 ),
                           ),
+                          if (notification.type ==
+                                  AppNotificationType.reminder &&
+                              !isSelectionMode)
+                            if (notification.isCompleted)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(
+                                  'Completado el ${DateFormat('dd/MM/yyyy HH:mm').format(notification.completedAt!.toLocal())}',
+                                ),
+                              )
+                            else
+                              TextButton.icon(
+                                key: ValueKey(
+                                  'complete-reminder-${notification.id}',
+                                ),
+                                onPressed: onComplete,
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text('Completar'),
+                              ),
                           const SizedBox(height: 12),
                           Wrap(
                             alignment: WrapAlignment.spaceBetween,

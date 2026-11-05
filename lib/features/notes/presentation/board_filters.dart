@@ -5,6 +5,8 @@ part of 'board_page.dart';
 class _BoardHeader extends StatelessWidget {
   const _BoardHeader({
     required this.newNoteDock,
+    this.reminderFilter,
+    this.onReminderFilterChanged,
     required this.title,
     required this.isEditingTitle,
     required this.onEditingTitleChanged,
@@ -34,6 +36,8 @@ class _BoardHeader extends StatelessWidget {
     required this.isCompact,
   });
 
+  final ReminderDateFilter? reminderFilter;
+  final ValueChanged<ReminderDateFilter>? onReminderFilterChanged;
   final GlobalKey newNoteDock;
   final bool isEditingTitle;
   final ValueChanged<bool> onEditingTitleChanged;
@@ -66,6 +70,32 @@ class _BoardHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final reminderControls = reminderFilter == null
+        ? null
+        : _CompactIconSelector<ReminderDateFilter>(
+            key: const ValueKey('reminder-date-filter-selector'),
+            keyPrefix: 'reminder-date-filter',
+            selected: reminderFilter!,
+            selectedColor: colorScheme.primary,
+            onChanged: onReminderFilterChanged!,
+            options: const [
+              _BoardControlOption(
+                value: ReminderDateFilter.all,
+                label: 'Todos',
+                icon: Icons.notifications_none_rounded,
+              ),
+              _BoardControlOption(
+                value: ReminderDateFilter.today,
+                label: 'Hoy',
+                icon: Icons.today_rounded,
+              ),
+              _BoardControlOption(
+                value: ReminderDateFilter.upcoming,
+                label: 'Próximos',
+                icon: Icons.event_outlined,
+              ),
+            ],
+          );
     final hasInvitedCollaborators =
         list?.collaborators.any(
           (person) => person.role != ListMemberRole.owner,
@@ -195,6 +225,7 @@ class _BoardHeader extends StatelessWidget {
           SizedBox(height: isCompact ? 16 : 24),
           if (isCompact)
             _CompactBoardControls(
+              filterControl: reminderControls,
               filter: filter,
               viewMode: viewMode,
               onFilterChanged: onFilterChanged,
@@ -207,31 +238,33 @@ class _BoardHeader extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 480,
-                  child: _BoardControlGroup<NoteFilter>(
-                    key: const ValueKey('note-filter-selector'),
-                    keyPrefix: 'desktop-filter-mode',
-                    selected: filter,
-                    selectedColor: colorScheme.primary,
-                    onChanged: onFilterChanged,
-                    options: const [
-                      _BoardControlOption(
-                        value: NoteFilter.all,
-                        label: 'Todas',
-                        icon: Icons.dashboard_outlined,
+                  child:
+                      reminderControls ??
+                      _BoardControlGroup<NoteFilter>(
+                        key: const ValueKey('note-filter-selector'),
+                        keyPrefix: 'desktop-filter-mode',
+                        selected: filter,
+                        selectedColor: colorScheme.primary,
+                        onChanged: onFilterChanged,
+                        options: const [
+                          _BoardControlOption(
+                            value: NoteFilter.all,
+                            label: 'Todas',
+                            icon: Icons.dashboard_outlined,
+                          ),
+                          _BoardControlOption(
+                            value: NoteFilter.pending,
+                            label: 'Pendientes',
+                            icon: Icons.schedule_rounded,
+                          ),
+                          _BoardControlOption(
+                            value: NoteFilter.completed,
+                            label: 'Completadas',
+                            icon: Icons.check_circle_outline_rounded,
+                          ),
+                        ],
+                        showIcons: true,
                       ),
-                      _BoardControlOption(
-                        value: NoteFilter.pending,
-                        label: 'Pendientes',
-                        icon: Icons.schedule_rounded,
-                      ),
-                      _BoardControlOption(
-                        value: NoteFilter.completed,
-                        label: 'Completadas',
-                        icon: Icons.check_circle_outline_rounded,
-                      ),
-                    ],
-                    showIcons: true,
-                  ),
                 ),
                 SizedBox(
                   width: 430,
@@ -1584,11 +1617,13 @@ class _SlidingSelectorHighlight extends StatelessWidget {
 class _CompactBoardControls extends StatelessWidget {
   const _CompactBoardControls({
     required this.filter,
+    this.filterControl,
     required this.viewMode,
     required this.onFilterChanged,
     required this.onViewModeChanged,
   });
 
+  final Widget? filterControl;
   final NoteFilter filter;
   final BoardViewMode viewMode;
   final ValueChanged<NoteFilter> onFilterChanged;
@@ -1601,34 +1636,36 @@ class _CompactBoardControls extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: _CompactIconSelector<NoteFilter>(
-            key: const ValueKey('compact-filter-selector'),
-            keyPrefix: 'filter-mode',
-            selected: filter,
-            selectedColor: colorScheme.primary,
-            onChanged: onFilterChanged,
-            options: const [
-              _BoardControlOption(
-                value: NoteFilter.all,
-                label: 'Todas',
-                icon: Icons.dashboard_outlined,
-                selectedIcon: Icons.dashboard_rounded,
+          child:
+              filterControl ??
+              _CompactIconSelector<NoteFilter>(
+                key: const ValueKey('compact-filter-selector'),
+                keyPrefix: 'filter-mode',
+                selected: filter,
+                selectedColor: colorScheme.primary,
+                onChanged: onFilterChanged,
+                options: const [
+                  _BoardControlOption(
+                    value: NoteFilter.all,
+                    label: 'Todas',
+                    icon: Icons.dashboard_outlined,
+                    selectedIcon: Icons.dashboard_rounded,
+                  ),
+                  _BoardControlOption(
+                    value: NoteFilter.pending,
+                    label: 'Pendientes',
+                    tooltip: 'Pendientes',
+                    icon: Icons.schedule_rounded,
+                  ),
+                  _BoardControlOption(
+                    value: NoteFilter.completed,
+                    label: 'Listas',
+                    tooltip: 'Completadas',
+                    icon: Icons.check_circle_outline_rounded,
+                    selectedIcon: Icons.check_circle_rounded,
+                  ),
+                ],
               ),
-              _BoardControlOption(
-                value: NoteFilter.pending,
-                label: 'Pendientes',
-                tooltip: 'Pendientes',
-                icon: Icons.schedule_rounded,
-              ),
-              _BoardControlOption(
-                value: NoteFilter.completed,
-                label: 'Listas',
-                tooltip: 'Completadas',
-                icon: Icons.check_circle_outline_rounded,
-                selectedIcon: Icons.check_circle_rounded,
-              ),
-            ],
-          ),
         ),
         const SizedBox(width: 10),
         SizedBox(
@@ -1753,7 +1790,8 @@ class _CompactIconSelector<T extends Enum> extends StatelessWidget {
                                     fit: StackFit.expand,
                                     alignment: Alignment.center,
                                     children: [
-                                      if (T == NoteFilter)
+                                      if (T == NoteFilter ||
+                                          T == ReminderDateFilter)
                                         Positioned(
                                           right: -3,
                                           bottom: -5,

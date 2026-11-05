@@ -1,3 +1,6 @@
+import 'package:nocknock/features/personal_expenses/personal_expenses_page.dart';
+import 'package:nocknock/features/personal_expenses/personal_expenses_client.dart';
+import 'package:nocknock/features/notes/presentation/widgets/reminders_board.dart';
 import 'package:nocknock/features/assistant/assistant_client.dart';
 import 'package:nocknock/features/assistant/assistant_mascot.dart';
 import 'package:nocknock/features/assistant/assistant_view.dart';
@@ -141,6 +144,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
   bool _captureOpen = false;
   final Set<String> _offeredCaptures = {};
   NoteFilter _filter = NoteFilter.all;
+  ReminderDateFilter _reminderDateFilter = ReminderDateFilter.all;
   NoteCategory? _categoryFilter;
   String? _assigneeFilterUid;
   _BoardScope _scope = _BoardScope.list;
@@ -653,7 +657,9 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             ? _assignedToCurrentUser(scopedNotes)
             : scopedNotes;
         final statusFilteredNotes = _filtered(scopeNotes);
-        final facetNotes = _filter == NoteFilter.completed
+        final facetNotes =
+            _scope == _BoardScope.withReminder ||
+                _filter == NoteFilter.completed
             ? statusFilteredNotes
             : statusFilteredNotes.where((note) => !note.isCompleted).toList();
         final categoryCounts = _categoryCounts(facetNotes);
@@ -793,6 +799,11 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
             onOpenTrash: _openTrash,
             onOpenToday: _openToday,
             onOpenAgenda: _openFinancialAgenda,
+            onOpenPersonalExpenses: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(builder: (_) => PersonalExpensesPage(
+                client: PersonalExpensesClient(tokenProvider: () => context.read<AuthRepository>().getIdToken()),
+              )),
+            ),
             onOpenAssistant: openBoardChat,
             favoriteListIds: _listShortcutsController.favorites,
             recentListIds: _listShortcutsController.recents,
@@ -946,6 +957,16 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
                                               list: isListScope
                                                   ? state.selectedList
                                                   : null,
+                                              reminderFilter:
+                                                  isWithReminderScope
+                                                  ? _reminderDateFilter
+                                                  : null,
+                                              onReminderFilterChanged:
+                                                  (value) => _update(() {
+                                                    _reminderDateFilter = value;
+                                                    _categoryFilter = null;
+                                                    _assigneeFilterUid = null;
+                                                  }),
                                               filter: _filter,
                                               categoryCounts: categoryCounts,
                                               selectedCategory:
@@ -1106,7 +1127,7 @@ class _BoardPageState extends State<BoardPage> with TickerProviderStateMixin {
               ? MascotTopic.emptyList
               : MascotTopic.list,
           hint: protected
-              ? 'Hablar con Nock'
+              ? 'Hablar con Nocky'
               : '$title · ${selectedList?.isFinancial == true && isListScope ? "Analizar movimientos" : "Organizar pendientes"}',
           onOpen:
               _drawerOpen ||

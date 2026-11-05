@@ -22,6 +22,7 @@ class _AppDrawer extends StatelessWidget {
     required this.onOpenTrash,
     required this.onOpenToday,
     required this.onOpenAgenda,
+    required this.onOpenPersonalExpenses,
     required this.onOpenAssistant,
     required this.favoriteListIds,
     required this.recentListIds,
@@ -50,6 +51,7 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onOpenTrash;
   final VoidCallback onOpenToday;
   final VoidCallback onOpenAgenda;
+  final VoidCallback onOpenPersonalExpenses;
   final VoidCallback onOpenAssistant;
   final Set<String> favoriteListIds;
   final List<String> recentListIds;
@@ -113,204 +115,297 @@ class _AppDrawer extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 14, 14, 16),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Colors.white.withValues(
-                                alpha: isDark ? 0.14 : 0.48,
+                Expanded(
+                  child: ScrollEdgeFade(
+                    child: _DrawerListScrollbar(
+                      child: CustomScrollView(
+                        primary: true,
+                        slivers: [
+                          SliverList.list(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  14,
+                                  14,
+                                  16,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(3),
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Colors.white.withValues(
+                                              alpha: isDark ? 0.14 : 0.48,
+                                            ),
+                                            colorScheme.primary.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: isDark ? 0.16 : 0.42,
+                                          ),
+                                        ),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(13),
+                                        child: Image.asset(
+                                          'assets/branding/nocknock-logo.png',
+                                          width: 32,
+                                          height: 32,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Expanded(
+                                      child: Text(
+                                        'NockNock',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.7,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Asistente',
+                                      icon: const Icon(
+                                        Icons.auto_awesome_outlined,
+                                        size: 18,
+                                      ),
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onOpenAssistant();
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
-                              colorScheme.primary.withValues(alpha: 0.18),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                child: _DrawerProfileSummary(
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    onOpenProfile();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                child: _DrawerTodayShortcut(
+                                  key: const ValueKey('today-menu-button'),
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    onOpenToday();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                child: Theme(
+                                  data: Theme.of(
+                                    context,
+                                  ).copyWith(dividerColor: Colors.transparent),
+                                  child: ExpansionTile(
+                                    key: const ValueKey(
+                                      'drawer-finances-section',
+                                    ),
+                                    tilePadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    childrenPadding: const EdgeInsets.only(
+                                      bottom: 8,
+                                    ),
+                                    leading: const Icon(
+                                      Icons.account_balance_wallet_outlined,
+                                      size: 22,
+                                    ),
+                                    title: const Text(
+                                      'Finanzas',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    children: [
+                                      ListTile(
+                                        key: const ValueKey(
+                                          'personal-expenses-menu-button',
+                                        ),
+                                        contentPadding: const EdgeInsets.only(
+                                          left: 48,
+                                          right: 12,
+                                        ),
+                                        title: const Text(
+                                          'Gastos personales',
+                                          style: TextStyle(fontSize: 14),
+                                        ),
+                                        onTap: () {
+                                          Navigator.pop(context);
+                                          onOpenPersonalExpenses();
+                                        },
+                                      ),
+                                      ListTile(
+                                        key: const ValueKey(
+                                          'financial-agenda-menu-button',
+                                        ),
+                                        contentPadding: const EdgeInsets.only(
+                                          left: 48,
+                                          right: 12,
+                                        ),
+                                        title: const Text(
+                                          'Pagos y cobros',
+                                          style: TextStyle(fontSize: 14),
+                                        ),
+                                        onTap: () {
+                                          Navigator.pop(context);
+                                          onOpenAgenda();
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _DrawerScopeShortcutButton(
+                                        key: const ValueKey(
+                                          'assigned-to-me-menu-button',
+                                        ),
+                                        selected: assignedToMeSelected,
+                                        icon: assignedToMeSelected
+                                            ? Icons.assignment_ind_rounded
+                                            : Icons.assignment_ind_outlined,
+                                        label: 'Asignado a mí',
+                                        count: assignedCount,
+                                        onTap: () {
+                                          Navigator.pop(context);
+                                          onShowAssignedToMe();
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _DrawerScopeShortcutButton(
+                                        key: const ValueKey(
+                                          'pinned-menu-button',
+                                        ),
+                                        selected: pinnedSelected,
+                                        icon: pinnedSelected
+                                            ? Icons.push_pin_rounded
+                                            : Icons.push_pin_outlined,
+                                        label: 'Ancladas',
+                                        count: pinnedCount,
+                                        onTap: () {
+                                          Navigator.pop(context);
+                                          onShowPinned();
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _DrawerScopeShortcutButton(
+                                        key: const ValueKey(
+                                          'with-reminder-menu-button',
+                                        ),
+                                        selected: withReminderSelected,
+                                        icon: withReminderSelected
+                                            ? Icons.alarm_rounded
+                                            : Icons.alarm_outlined,
+                                        label: 'Con recordatorio',
+                                        count: reminderCount,
+                                        onTap: () {
+                                          Navigator.pop(context);
+                                          onShowWithReminder();
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              _DrawerListShortcuts(
+                                lists: lists,
+                                favoriteIds: favoriteListIds,
+                                recentIds: recentListIds,
+                                onSelect: (id) {
+                                  Navigator.pop(context);
+                                  onSelectList(id);
+                                },
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  12,
+                                  4,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      'LISTAS',
+                                      style: TextStyle(
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 1.35,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    _DrawerReorderListsButton(
+                                      enabled:
+                                          !isSavingList && lists.length > 1,
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onReorderLists();
+                                      },
+                                    ),
+                                    const SizedBox(width: 4),
+                                    _DrawerAddListButton(
+                                      isSaving: isSavingList,
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onCreateList();
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white.withValues(
-                              alpha: isDark ? 0.16 : 0.42,
-                            ),
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(13),
-                          child: Image.asset(
-                            'assets/branding/nocknock-logo.png',
-                            width: 42,
-                            height: 42,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'NockNock',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.7,
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                        ),
-                        label: const Text('Asistente'),
-                        icon: const Icon(Icons.auto_awesome_outlined, size: 18),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onOpenAssistant();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: _DrawerProfileSummary(
-                    onTap: () {
-                      Navigator.pop(context);
-                      onOpenProfile();
-                    },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: _DrawerTodayShortcut(
-                    key: const ValueKey('today-menu-button'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      onOpenToday();
-                    },
-                  ),
-                ),
-                ListTile(
-                  key: const ValueKey('financial-agenda-menu-button'),
-                  leading: const Icon(Icons.calendar_month_outlined),
-                  title: const Text('Agenda de pagos y cobros'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    onOpenAgenda();
-                  },
-                ),
-                const SizedBox(height: 10),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _DrawerScopeShortcutButton(
-                          key: const ValueKey('assigned-to-me-menu-button'),
-                          selected: assignedToMeSelected,
-                          icon: assignedToMeSelected
-                              ? Icons.assignment_ind_rounded
-                              : Icons.assignment_ind_outlined,
-                          label: 'Asignado a mí',
-                          count: assignedCount,
-                          onTap: () {
-                            Navigator.pop(context);
-                            onShowAssignedToMe();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _DrawerScopeShortcutButton(
-                          key: const ValueKey('pinned-menu-button'),
-                          selected: pinnedSelected,
-                          icon: pinnedSelected
-                              ? Icons.push_pin_rounded
-                              : Icons.push_pin_outlined,
-                          label: 'Ancladas',
-                          count: pinnedCount,
-                          onTap: () {
-                            Navigator.pop(context);
-                            onShowPinned();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _DrawerScopeShortcutButton(
-                          key: const ValueKey('with-reminder-menu-button'),
-                          selected: withReminderSelected,
-                          icon: withReminderSelected
-                              ? Icons.alarm_rounded
-                              : Icons.alarm_outlined,
-                          label: 'Con recordatorio',
-                          count: reminderCount,
-                          onTap: () {
-                            Navigator.pop(context);
-                            onShowWithReminder();
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _DrawerListShortcuts(
-                  lists: lists,
-                  favoriteIds: favoriteListIds,
-                  recentIds: recentListIds,
-                  onSelect: (id) {
-                    Navigator.pop(context);
-                    onSelectList(id);
-                  },
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 12, 4),
-                  child: Row(
-                    children: [
-                      Text(
-                        'LISTAS',
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.5),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.35,
-                        ),
-                      ),
-                      const Spacer(),
-                      _DrawerReorderListsButton(
-                        enabled: !isSavingList && lists.length > 1,
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onReorderLists();
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      _DrawerAddListButton(
-                        isSaving: isSavingList,
-                        onPressed: () {
-                          Navigator.pop(context);
-                          onCreateList();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: ScrollEdgeFade(
-                          child: _DrawerListScrollbar(
-                            child: ListView.builder(
-                              primary: true,
-                              padding: const EdgeInsets.fromLTRB(10, 2, 10, 24),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(14, 2, 14, 24),
+                            sliver: SliverFixedExtentList(
                               itemExtent: 60,
-                              itemCount: lists.length,
-                              itemBuilder: (context, index) {
+                              delegate: SliverChildBuilderDelegate((
+                                context,
+                                index,
+                              ) {
                                 final list = lists[index];
                                 final selected =
                                     !assignedToMeSelected &&
@@ -378,24 +473,24 @@ class _AppDrawer extends StatelessWidget {
                                     },
                                   ),
                                 );
-                              },
+                              }, childCount: lists.length),
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                      _DrawerFloatingSettingsButton(
-                        trashCount: trashCount,
-                        onOpenTrash: () {
-                          Navigator.pop(context);
-                          onOpenTrash();
-                        },
-                        onOpenSettings: () {
-                          Navigator.pop(context);
-                          onOpenSettings();
-                        },
-                      ),
-                    ],
+                    ),
                   ),
+                ),
+                _DrawerFloatingSettingsButton(
+                  trashCount: trashCount,
+                  onOpenTrash: () {
+                    Navigator.pop(context);
+                    onOpenTrash();
+                  },
+                  onOpenSettings: () {
+                    Navigator.pop(context);
+                    onOpenSettings();
+                  },
                 ),
               ],
             ),
@@ -562,7 +657,7 @@ class _DrawerListShortcutsState extends State<_DrawerListShortcuts> {
         .toList();
     if (favorites.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1077,10 +1172,10 @@ class _DrawerProfileSummary extends StatelessWidget {
                     borderRadius: borderRadius,
                     onTap: onTap,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                       child: Row(
                         children: [
-                          AuthAvatar(user: user, size: 46),
+                          AuthAvatar(user: user, size: 36),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -1517,7 +1612,7 @@ class _DrawerTodayShortcut extends StatelessWidget {
           onTap: onTap,
           borderRadius: radius,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
                 ExcludeSemantics(
@@ -1561,24 +1656,11 @@ class _DrawerTodayShortcut extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Hoy',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Tu día, en un vistazo',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    'Hoy',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

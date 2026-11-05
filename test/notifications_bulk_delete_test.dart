@@ -12,6 +12,81 @@ void main() {
     await initializeDateFormatting('es');
   });
 
+  testWidgets('completes a reminder and keeps it in history after reload', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var record = _notificationJson('reminder-1', 'Mi recordatorio');
+    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:4000/api'));
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.path == '/notifications/reminder-1/complete') {
+            record = {
+              ...record,
+              'completedAt': '2026-11-05T12:00:00Z',
+              'readAt': '2026-11-05T12:00:00Z',
+            };
+            handler.resolve(
+              Response(requestOptions: options, data: record, statusCode: 200),
+            );
+          } else if (options.path == '/notifications/completed-reminders') {
+            handler.resolve(
+              Response<List<dynamic>>(
+                requestOptions: options,
+                data: [record],
+                statusCode: 200,
+              ),
+            );
+          } else {
+            handler.resolve(
+              Response<List<dynamic>>(
+                requestOptions: options,
+                data: record['completedAt'] == null ? [record] : [],
+                statusCode: 200,
+              ),
+            );
+          }
+        },
+      ),
+    );
+    final controller = NotificationsController(
+      authRepository: const _SignedInAuthRepository(),
+      apiBaseUrl: 'http://localhost:4000/api',
+      dio: dio,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: NotificationsPage(controller: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('complete-reminder-reminder-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notification-reminder-1')), findsNothing);
+    await tester.tap(find.text('Completados'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('notification-reminder-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Completado el'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('complete-reminder-reminder-1')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'selects multiple notifications and deletes them through the API',
     (tester) async {

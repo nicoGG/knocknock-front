@@ -26,6 +26,21 @@ class ChatIdea {
       Icons.edit_note_rounded,
       'Ayúdame a crear una nota. Pregúntame qué quiero anotar antes de preparar el borrador.',
     );
+    const weeklyPlan = ChatIdea(
+      'Plan semanal',
+      Icons.calendar_view_week_outlined,
+      'Ayúdame a organizar la semana. Pregúntame mis compromisos, prioridades y el tiempo disponible antes de proponer un plan.',
+    );
+    const shopping = ChatIdea(
+      'Compras pendientes',
+      Icons.shopping_basket_outlined,
+      'Ayúdame a preparar una nota de compras con subtareas. Pregúntame qué necesito comprar y para cuántas personas.',
+    );
+    const reminder = ChatIdea(
+      'Un recordatorio',
+      Icons.notifications_active_outlined,
+      'Quiero preparar una nota con un recordatorio. Pregúntame qué debo recordar, la fecha y la hora; muéstrame el borrador antes de guardarlo.',
+    );
     if (screen == 'createList') {
       return const [
         ChatIdea(
@@ -47,6 +62,26 @@ class ChatIdea {
           'Proyecto en equipo',
           Icons.group_work_outlined,
           'Crea una lista para coordinar las tareas de un proyecto en equipo.',
+        ),
+        ChatIdea(
+          'Rutinas del hogar',
+          Icons.home_outlined,
+          'Diseña una lista para organizar las tareas del hogar. Pregúntame qué tareas hay y quiénes participan.',
+        ),
+        ChatIdea(
+          'Plan de estudio',
+          Icons.school_outlined,
+          'Ayúdame a diseñar una lista para estudiar. Pregúntame la materia, mi objetivo y la fecha límite.',
+        ),
+        ChatIdea(
+          'Organizar evento',
+          Icons.celebration_outlined,
+          'Propón una lista para organizar un evento. Pregúntame el tipo de evento, la fecha y cuántas personas asistirán.',
+        ),
+        ChatIdea(
+          'Metas personales',
+          Icons.flag_outlined,
+          'Ayúdame a organizar mis metas en una lista con pasos concretos. Pregúntame cuáles son y qué plazo tengo.',
         ),
       ];
     }
@@ -71,6 +106,18 @@ class ChatIdea {
           'Anotar una idea',
           Icons.lightbulb_outline_rounded,
           'Ayúdame a escribir una nota a partir de una idea. Pregúntame de qué se trata.',
+        ),
+        shopping,
+        reminder,
+        ChatIdea(
+          'Preparar viaje',
+          Icons.luggage_outlined,
+          'Prepara un borrador de nota con los pendientes para un viaje. Pregúntame el destino, la duración y la fecha.',
+        ),
+        ChatIdea(
+          'Guardar acuerdos',
+          Icons.handshake_outlined,
+          'Ayúdame a convertir los acuerdos de una conversación en una nota con responsables y próximos pasos. Pregúntame cuáles fueron los acuerdos.',
         ),
       ];
     }
@@ -155,6 +202,20 @@ class ChatIdea {
           usesExcerpt: true,
         ),
       ],
+      if (hasData) ...[
+        const ChatIdea(
+          'Detectar faltantes',
+          Icons.fact_check_outlined,
+          'Revisa el extracto e identifica información que falta para poder avanzar. Distingue lo confirmado de lo que debes preguntarme.',
+          usesExcerpt: true,
+        ),
+        const ChatIdea(
+          'Preguntas clave',
+          Icons.help_outline_rounded,
+          'A partir del extracto, sugiere tres preguntas concretas que ayuden a aclarar los próximos pasos, sin inventar datos.',
+          usesExcerpt: true,
+        ),
+      ],
       if (hasData)
         const ChatIdea(
           'Resumir',
@@ -179,11 +240,22 @@ class ChatIdea {
         ),
       if (finance)
         const ChatIdea(
+          'Preparar preguntas',
+          Icons.question_answer_outlined,
+          'Ayúdame a preparar preguntas para aclarar un gasto, una cotización o un cobro. Pregúntame qué registro quiero revisar y no supongas información que no te he dado.',
+        ),
+      if (finance)
+        const ChatIdea(
           'Organizar registros',
           Icons.folder_open_rounded,
           '¿Cómo puedo organizar los registros de una lista financiera para que después sea más fácil revisarlos?',
         ),
-      if (!finance && screen != 'budget') planNote,
+      if (!finance && screen != 'budget') ...[
+        planNote,
+        reminder,
+        shopping,
+        weeklyPlan,
+      ],
       if (!hasData || screen == 'today') designList,
       if (!hasData)
         const ChatIdea(
@@ -195,70 +267,96 @@ class ChatIdea {
   }
 }
 
-class ChatIdeas extends StatelessWidget {
+class ChatIdeas extends StatefulWidget {
   const ChatIdeas({
     super.key,
     required this.view,
     required this.onSelect,
-    this.collapsible = false,
+    this.collapsible = true,
+    this.compact = false,
   });
   final AssistantView view;
   final ValueChanged<ChatIdea>? onSelect;
   final bool collapsible;
+  final bool compact;
+
+  @override
+  State<ChatIdeas> createState() => _ChatIdeasState();
+}
+
+class _ChatIdeasState extends State<ChatIdeas> {
+  bool? _expanded;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
-    final ideas = ChatIdea.forView(view);
+    final ideas = ChatIdea.forView(widget.view);
     final accents = [colors.primary, colors.tertiary, colors.secondary];
-    final chips = LayoutBuilder(
-      builder: (context, bounds) {
-        final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final columns = (bounds.maxWidth / (148 * scale.clamp(1.0, 2.5)))
-            .floor()
-            .clamp(1, 3);
-        final width = (bounds.maxWidth - 8 * (columns - 1)) / columns;
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final (i, idea) in ideas.indexed)
-              SizedBox(
-                width: width,
-                child: _IdeaChip(
-                  idea: idea,
-                  color: accents[i % accents.length],
-                  primary: i == 0,
-                  onTap: onSelect == null ? null : () => onSelect!(idea),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-    final label = Text(
-      'Ideas para esta vista',
-      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-    );
-    return Padding(
-      padding: const EdgeInsets.only(top: 14),
-      child: collapsible
-          ? ExpansionTile(
-              tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-              childrenPadding: const EdgeInsets.only(bottom: 6),
-              title: label,
-              children: [chips],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final expanded = _expanded ?? !widget.compact;
+    final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.5);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          key: const ValueKey('assistant-ideas-toggle'),
+          borderRadius: BorderRadius.circular(16),
+          onTap: widget.collapsible
+              ? () => setState(() => _expanded = !expanded)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 0, 8),
-                  child: label,
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 14,
+                  color: colors.primary,
                 ),
-                chips,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ideas para esta vista',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (widget.collapsible)
+                  Icon(
+                    expanded
+                        ? Icons.expand_more_rounded
+                        : Icons.expand_less_rounded,
+                    size: 20,
+                    color: colors.primary,
+                  ),
               ],
             ),
+          ),
+        ),
+        if (expanded)
+          SizedBox(
+            height: 52 * scale,
+            child: ListView.separated(
+              key: const ValueKey('assistant-ideas-carousel'),
+              primary: false,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+              itemCount: ideas.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, i) => SizedBox(
+                width: 168 * scale,
+                child: _IdeaChip(
+                  idea: ideas[i],
+                  color: accents[i % accents.length],
+                  primary: i == 0,
+                  onTap: widget.onSelect == null
+                      ? null
+                      : () => widget.onSelect!(ideas[i]),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -278,7 +376,7 @@ class _IdeaChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
-    final radius = BorderRadius.circular(19);
+    final radius = BorderRadius.circular(14);
     final dark = theme.brightness == Brightness.dark;
     return Semantics(
       button: true,
@@ -309,26 +407,20 @@ class _IdeaChip extends StatelessWidget {
             borderRadius: radius,
             onTap: onTap,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 52),
+              constraints: const BoxConstraints(minHeight: 44),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 child: Row(
                   children: [
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: dark ? .17 : .11),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(7),
-                        child: Icon(idea.icon, color: color, size: 17),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
+                    Icon(idea.icon, color: color, size: 16),
+                    const SizedBox(width: 7),
                     Expanded(
                       child: Text(
                         idea.label,
-                        style: theme.textTheme.labelLarge?.copyWith(
+                        style: theme.textTheme.labelMedium?.copyWith(
                           fontWeight: primary
                               ? FontWeight.w800
                               : FontWeight.w600,

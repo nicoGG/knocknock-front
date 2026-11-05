@@ -717,7 +717,7 @@ class _CreateListDialogState extends State<_CreateListDialog> {
                               alignment: Alignment.centerLeft,
                               child: TextButton.icon(
                                 icon: const Icon(Icons.smart_toy_outlined),
-                                label: const Text('Diseñar lista con Nock'),
+                                label: const Text('Diseñar lista con Nocky'),
                                 onPressed: () async {
                                   final proposal = await widget.suggest!(
                                     _controller.text,

@@ -1,3 +1,11 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:nocknock/core/theme/app_theme.dart';
+import 'package:nocknock/features/personal_expenses/expense_style.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -131,7 +139,7 @@ void main() {
       Future<void> pay(String amount) async {
         final row = find.ancestor(
           of: find.text('Servicio'),
-          matching: find.byType(Card),
+          matching: find.byType(ExpenseSurface),
         );
         final button = find.descendant(
           of: row,
@@ -190,4 +198,68 @@ void main() {
       await tester.runAsync(cubit.close);
     },
   );
+  for (final dark in [true, false]) {
+    testWidgets('empty agenda adapts to theme, filters and large text: $dark', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final font = FontLoader('Avenir')
+        ..addFont(rootBundle.load('assets/fonts/Lato-Regular.ttf'));
+      await font.load();
+      final icons = FontLoader('MaterialIcons')
+        ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+      await icons.load();
+      final repo = LocalNotesRepository();
+      final cubit = NotesCubit(repo);
+      await tester.runAsync(cubit.load);
+      final protection = ListProtectionController(
+        preferences: await SharedPreferences.getInstance(),
+      );
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: dark ? AppTheme.dark : AppTheme.light,
+          home: RepaintBoundary(
+            key: key,
+            child: FinancialAgendaPage(cubit: cubit, protection: protection),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Tu semana, sin pendientes'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      if (Platform.environment['AGENDA_SCREENSHOT'] case final path?) {
+        await tester.runAsync(() async {
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = await boundary.toImage(pixelRatio: 2);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File('$path-${dark ? 'dark' : 'light'}.png')
+              .writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+      tester.view.physicalSize = const Size(320, 640);
+      tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Vencidos'));
+      await tester.tap(find.text('Vencidos'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Sin vencimientos atrasados'),
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Sin vencimientos atrasados'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      protection.dispose();
+      await tester.runAsync(cubit.close);
+    });
+  }
 }

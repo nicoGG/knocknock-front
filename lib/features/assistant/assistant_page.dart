@@ -53,19 +53,28 @@ class AssistantChatMemory {
     _scope = scope;
   }
 
+  static const maxMessages = 20;
+
+  void remember(String question, AssistantReply reply) {
+    _turns.add((question: question, reply: reply));
+    while (_turns.length * 2 > maxMessages) {
+      final removed = _turns.removeAt(0);
+      _saved.remove(removed.reply);
+    }
+  }
+
   String? get history {
     if (_turns.isEmpty) return null;
-    final blocks = <String>[];
-    var remaining = 6000;
-    for (final turn in _turns.reversed.take(5)) {
-      final block = 'Usuario: ${turn.question}\nNock: ${turn.reply.plainText}';
-      if (block.runes.length > remaining && blocks.isNotEmpty) break;
-      final text = String.fromCharCodes(block.runes.take(remaining));
-      blocks.insert(0, text);
-      remaining -= text.runes.length + 2;
-      if (remaining <= 0) break;
-    }
-    return blocks.isEmpty ? null : blocks.join('\n\n');
+    // Keep every retained message in context; bound unusually long responses
+    // individually so they cannot crowd older messages out of the window.
+    String bounded(String text, int limit) =>
+        String.fromCharCodes(text.runes.take(limit));
+    return _turns
+        .map(
+          (turn) =>
+              'Usuario: ${bounded(turn.question, 2000)}\nNocky: ${bounded(turn.reply.plainText, 5000)}',
+        )
+        .join('\n\n');
   }
 }
 
@@ -461,7 +470,7 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
         : typed;
     if (_busy || !widget.current()) return;
     if (q.isEmpty) {
-      setState(() => _error = 'Escribe una pregunta para Nock.');
+      setState(() => _error = 'Escribe una pregunta para Nocky.');
       return;
     }
     final excerpt = _attachedExcerpt;
@@ -478,7 +487,7 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
       final token = await widget.getToken();
       if (!mounted || !widget.current()) return;
       if (token == null || token.isEmpty) {
-        throw const AssistantFailure('Inicia sesión para hablar con Nock.');
+        throw const AssistantFailure('Inicia sesión para hablar con Nocky.');
       }
       if (!sourceIsCurrent() || _attachedExcerpt != excerpt) {
         throw const AssistantFailure(
@@ -499,8 +508,7 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
       }
       setState(() {
         if (excerpt != null) _memory._historyExcerpt = excerpt;
-        _memory._turns.add((question: q, reply: reply));
-        if (_memory._turns.length > 20) _memory._turns.removeAt(0);
+        _memory.remember(q, reply);
         _question.clear();
         if (reply.expenses.isNotEmpty ||
             reply.listDraft != null ||
@@ -720,7 +728,17 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
                   maxWidth: 660,
                   maxHeight: available * .65,
                 ),
-                child: _composer(context, compact: compact),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ChatIdeas(
+                      view: widget.view,
+                      compact: compact,
+                      onSelect: _busy ? null : _pickIdea,
+                    ),
+                    Flexible(child: _composer(context, compact: compact)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -786,7 +804,6 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
                       : '¿Qué quieres anotar? Puedo darte un título, una descripción y subtareas.')
                 : v.greeting,
           ),
-          ChatIdeas(view: v, onSelect: _busy ? null : _pickIdea),
         ],
         for (final turn in turns) ...[
           ChatMessageBubble(
@@ -800,12 +817,6 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
             key: ObjectKey(turn.reply),
           ),
         ],
-        if (turns.isNotEmpty && _sending == null)
-          ChatIdeas(
-            view: v,
-            collapsible: true,
-            onSelect: _busy ? null : _pickIdea,
-          ),
         if (_sending case final q?) ...[
           ChatMessageBubble(q, mine: true),
           const Padding(
@@ -833,7 +844,7 @@ class _ChatState extends State<_Chat> with WidgetsBindingObserver {
               children: [
                 if (!compact)
                   Text(
-                    'Asistente de NockNock',
+                    'Nocky · Asistente de NockNock',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelMedium?.copyWith(

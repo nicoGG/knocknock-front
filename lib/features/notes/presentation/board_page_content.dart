@@ -72,6 +72,15 @@ extension _BoardPageContent on _BoardPageState {
           onAdd: state.selectedList!.canEdit
               ? () => _openFinancialEditor()
               : null,
+          onAnalyzeSummary: (month, ids, tip) => _openAssistant(
+            sourceListId: state.selectedListId,
+            financialSelection: (
+              listId: state.selectedListId,
+              month: month,
+              ids: ids,
+            ),
+            tip: tip,
+          ),
           onOpenAgenda: _openFinancialAgenda,
           onAnalyzeBudget: (selection, [tip]) =>
               _analyzeBudget(state.selectedListId, selection, tip),
@@ -115,7 +124,9 @@ extension _BoardPageContent on _BoardPageState {
     final Widget content;
     if (notes.isEmpty) {
       final isUnfiltered =
-          _filter == NoteFilter.all &&
+          (_scope == _BoardScope.withReminder
+              ? _reminderDateFilter == ReminderDateFilter.all
+              : _filter == NoteFilter.all) &&
           selectedCategory == null &&
           selectedAssigneeUid == null;
       final isFirstListEmpty = _scope == _BoardScope.list && isUnfiltered;
@@ -174,6 +185,39 @@ extension _BoardPageContent on _BoardPageState {
               ? 'Inicia sesión para respaldar, sincronizar y colaborar en tus notas.'
               : null,
         ),
+      );
+    } else if (_scope == _BoardScope.withReminder) {
+      content = RemindersBoard(
+        notes: notes,
+        sectionBuilder: (sectionNotes) => switch (_viewMode) {
+          BoardViewMode.grid => _NotesGrid(
+            notes: sectionNotes,
+            includeBottomPadding: false,
+            groupCompleted: false,
+            completedSectionExpanded: true,
+            animateEntrances: _animateNoteEntrances,
+            showOriginList: true,
+            buildCard: _buildCard,
+            onReorder: _reorderNotes,
+            onCompletedSectionExpansionChanged:
+                _changeCompletedSectionExpansion,
+          ),
+          BoardViewMode.list => _NotesList(
+            notes: sectionNotes,
+            includeBottomPadding: false,
+            groupCompleted: false,
+            completedSectionExpanded: true,
+            animateEntrances: _animateNoteEntrances,
+            layout: PostItCardLayout.compact,
+            itemHeight:
+                100 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.5),
+            maxWidth: 980,
+            buildCard: _buildCard,
+            onReorder: _reorderNotes,
+            onCompletedSectionExpansionChanged:
+                _changeCompletedSectionExpansion,
+          ),
+        },
       );
     } else {
       content = KeyedSubtree(
@@ -285,6 +329,35 @@ extension _BoardPageContent on _BoardPageState {
     return false;
   }
 
+  String _reminderListDetails(Note note, String listName) {
+    final reminder = note.reminderAt?.toLocal();
+    if (reminder == null) return listName;
+    final localizations = MaterialLocalizations.of(context);
+    final date = localizations.formatShortDate(reminder);
+    final time = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(reminder),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    final recurrence = note.reminderRecurrence;
+    final frequency = recurrence == null
+        ? 'Una vez'
+        : switch (recurrence.frequency) {
+            ReminderRecurrenceFrequency.daily =>
+              recurrence.interval == 1
+                  ? 'Cada día'
+                  : 'Cada ${recurrence.interval} días',
+            ReminderRecurrenceFrequency.weekly =>
+              recurrence.interval == 1
+                  ? 'Cada semana'
+                  : 'Cada ${recurrence.interval} semanas',
+            ReminderRecurrenceFrequency.monthly =>
+              recurrence.interval == 1
+                  ? 'Cada mes'
+                  : 'Cada ${recurrence.interval} meses',
+          };
+    return '$date · $time\n$frequency · $listName';
+  }
+
   Widget _buildCard(
     Note note,
     PostItCardLayout layout, {
@@ -326,6 +399,12 @@ extension _BoardPageContent on _BoardPageState {
         builder: (context, displayedNote, onToggle) => PostItCard(
           note: displayedNote,
           layout: layout,
+          compactTitleMaxLines: _scope == _BoardScope.withReminder ? 2 : 1,
+          compactSubtitle:
+              _scope == _BoardScope.withReminder &&
+                  layout == PostItCardLayout.compact
+              ? _reminderListDetails(note, noteList?.name ?? 'Lista')
+              : null,
           originListName:
               _scope == _BoardScope.assignedToMe ||
                   _scope == _BoardScope.pinned ||
@@ -365,6 +444,9 @@ extension _BoardPageContent on _BoardPageState {
   }
 
   List<Note> _filtered(List<Note> notes) {
+    if (_scope == _BoardScope.withReminder) {
+      return filterRemindersByDate(notes, _reminderDateFilter, DateTime.now());
+    }
     return switch (_filter) {
       NoteFilter.all => notes,
       NoteFilter.pending => notes.where((note) => !note.isCompleted).toList(),
@@ -461,6 +543,7 @@ extension _BoardPageContent on _BoardPageState {
     Set<String>? visibleIds,
     String? noteId,
     BudgetSelection? budget,
+    FinancialBoardSelection? financialSelection,
     String? sourceListId,
     AssistantMode? compose,
     String initialPrompt = '',
@@ -488,10 +571,11 @@ extension _BoardPageContent on _BoardPageState {
             ? cubit.state.selectedListId
             : null);
     final finance =
-        _financialView?.listId == id &&
-            cubit.state.selectedList?.isFinancial == true
-        ? _financialView
-        : null;
+        financialSelection ??
+        (_financialView?.listId == id &&
+                cubit.state.selectedList?.isFinancial == true
+            ? _financialView
+            : null);
     AssistantView view(NotesState state) {
       if (compose != null) {
         return compose == AssistantMode.list
@@ -992,7 +1076,30 @@ extension _BoardPageContent on _BoardPageState {
         ].where((note) => note.id == initialNote.id).firstOrNull ??
         initialNote;
 
+    final reminderNotifications = widget.notificationsController;
+    if (initialNote.reminderAt != null && reminderNotifications != null) {
+      await reminderNotifications.load(includeCompleted: true);
+      if (!mounted) return false;
+    }
     final shouldOpen = await showNotePreviewDialog(
+      isReminderCompleted: (note) =>
+          note.reminderAt != null &&
+          (reminderNotifications?.isReminderCompleted(
+                note.id,
+                note.reminderAt!,
+              ) ??
+              false),
+      onCompleteReminder: reminderNotifications == null
+          ? null
+          : (note) async {
+              if (!widget.listProtectionController.canAccess(note.boardId)) {
+                throw const NotesPersistenceFailure();
+              }
+              await reminderNotifications.completeScheduledReminder(
+                note.id,
+                note.reminderAt!,
+              );
+            },
       onAnalyze:
           widget.listProtectionController.isProtected(initialNote.boardId)
           ? null

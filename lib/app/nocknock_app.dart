@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:nocknock/features/assistant/assistant_client.dart';
 import 'package:nocknock/features/assistant/assistant_mascot.dart';
 import 'package:nocknock/features/home_widgets/home_widget_controller.dart';
@@ -52,6 +54,33 @@ class _NockNockAppState extends State<NockNockApp> {
   late final _mascotPosition = ValueNotifier<Alignment?>(
     _savedMascotPosition(),
   );
+  late final Map<String, Alignment> _mascotPlacements = _loadMascotPlacements();
+
+  Map<String, Alignment> _loadMascotPlacements() {
+    final raw = widget.preferences?.getString('nock_surface_positions_v1');
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return {
+        for (final entry in decoded.entries)
+          if (entry.value is List &&
+              entry.value.length == 2 &&
+              entry.value[0] is num &&
+              entry.value[1] is num &&
+              (entry.value[0] as num).isFinite &&
+              (entry.value[1] as num).isFinite)
+            entry.key: Alignment(
+              (entry.value[0] as num).toDouble().clamp(-1, 1),
+              (entry.value[1] as num).toDouble().clamp(-1, 1),
+            ),
+      };
+    } on FormatException {
+      return {};
+    } on TypeError {
+      return {};
+    }
+  }
+
   late final _dismissedTips =
       (widget.preferences?.getStringList('nock_dismissed_tips_v1') ??
               <String>[])
@@ -148,6 +177,18 @@ class _NockNockAppState extends State<NockNockApp> {
             controller: _listProtectionController,
             child: MascotPosition(
               position: _mascotPosition,
+              placements: _mascotPlacements,
+              onSurfacePlaced: (surface, point) {
+                _mascotPlacements[surface] = point;
+                widget.preferences?.setString(
+                  'nock_surface_positions_v1',
+                  jsonEncode(
+                    _mascotPlacements.map(
+                      (key, value) => MapEntry(key, [value.x, value.y]),
+                    ),
+                  ),
+                );
+              },
               dismissedTips: _dismissedTips,
               onDismiss: (tip) {
                 _dismissedTips.add(tip.name);

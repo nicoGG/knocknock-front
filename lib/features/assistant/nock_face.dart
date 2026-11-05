@@ -1,6 +1,15 @@
 import 'package:flutter/material.dart';
 
-enum NockExpression { wink, curious, delighted, surprised }
+enum NockExpression {
+  wink,
+  curious,
+  delighted,
+  surprised,
+  sleepy,
+  love,
+  playful,
+  laughing,
+}
 
 /// A little paper companion with the coral pin from the NockNock app icon.
 class NockFace extends StatelessWidget {
@@ -32,7 +41,7 @@ class _NockPainter extends CustomPainter {
     canvas.save();
     canvas.scale(size.width / 64, size.height / 64);
 
-    // A slightly bowed sheet and a turned-up corner give Nock a silhouette
+    // A slightly bowed sheet and a turned-up corner give Nocky a silhouette
     // that remains recognizable even on a busy board.
     final paper = Path()
       ..moveTo(12, 14)
@@ -87,7 +96,9 @@ class _NockPainter extends CustomPainter {
     for (final x in [-8.0, 8.0]) {
       final blink = switch (expression) {
         NockExpression.wink when x < 0 => amount,
-        NockExpression.delighted => amount,
+        NockExpression.delighted || NockExpression.laughing => amount,
+        NockExpression.sleepy => .9 * amount,
+        NockExpression.playful when x > 0 => amount,
         _ => 0.0,
       };
       final look = expression == NockExpression.curious ? amount : 0.0;
@@ -100,6 +111,20 @@ class _NockPainter extends CustomPainter {
         ),
         brush,
       );
+      if (expression == NockExpression.love && amount > 0) {
+        canvas.save();
+        canvas.translate(center.dx, center.dy);
+        canvas.scale(amount);
+        canvas.drawPath(
+          Path()
+            ..moveTo(0, 4)
+            ..cubicTo(-9, -1, -4, -8, 0, -3)
+            ..cubicTo(4, -8, 9, -1, 0, 4)
+            ..close(),
+          Paint()..color = const Color(0xFFF06B87),
+        );
+        canvas.restore();
+      }
       if (blink > 0) {
         canvas.drawPath(
           Path()
@@ -119,13 +144,18 @@ class _NockPainter extends CustomPainter {
       }
     }
     canvas.save();
-    if (expression == NockExpression.surprised) {
+    if (expression == NockExpression.surprised ||
+        expression == NockExpression.sleepy) {
       // Morph the smile into an open "o" using the same outline.
       canvas.translate(0, 8);
       canvas.scale(1 - .45 * amount, 1 + .48 * amount);
       canvas.translate(0, -8);
     }
-    final grin = expression == NockExpression.delighted ? amount * 2 : 0.0;
+    final grin = switch (expression) {
+      NockExpression.delighted => amount * 2,
+      NockExpression.laughing => amount * 3.5,
+      _ => 0.0,
+    };
     canvas.drawPath(
       Path()
         ..moveTo(-4.5 - grin, 5)
@@ -136,6 +166,17 @@ class _NockPainter extends CustomPainter {
         ..close(),
       brush,
     );
+    if (expression == NockExpression.playful ||
+        expression == NockExpression.laughing) {
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: const Offset(1, 10),
+          width: 5 * amount,
+          height: 4 * amount,
+        ),
+        Paint()..color = const Color(0xFFF58FA7),
+      );
+    }
     canvas.restore();
     brush.color = const Color(0xFFFFB7A6);
     for (final x in [-12.5, 12.5]) {

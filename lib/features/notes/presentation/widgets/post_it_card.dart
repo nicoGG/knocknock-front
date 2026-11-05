@@ -247,6 +247,7 @@ class PostItCard extends StatelessWidget {
     this.compactTrailing,
     this.compactTitleMaxLines = 1,
     this.compactReadOnly = false,
+    this.compactShowCategory = true,
     this.compactOpenIndicator = false,
     this.showPin = true,
     this.enableHero = true,
@@ -281,6 +282,7 @@ class PostItCard extends StatelessWidget {
   final Widget? compactTrailing;
   final int compactTitleMaxLines;
   final bool compactReadOnly;
+  final bool compactShowCategory;
   final bool compactOpenIndicator;
   final bool showPin;
   final bool enableHero;
@@ -352,6 +354,7 @@ class PostItCard extends StatelessWidget {
         trailing: compactTrailing,
         titleMaxLines: compactTitleMaxLines,
         readOnly: compactReadOnly,
+        showCategory: compactShowCategory,
         showOpenIndicator: compactOpenIndicator,
         foregroundColor: foregroundColor,
       ),
@@ -3570,6 +3573,7 @@ class _CompactNoteBody extends StatelessWidget {
     required this.authorPhotoUrl,
     required this.originListName,
     required this.subtitle,
+    required this.showCategory,
     required this.leading,
     required this.trailing,
     required this.titleMaxLines,
@@ -3585,6 +3589,7 @@ class _CompactNoteBody extends StatelessWidget {
   final String? authorPhotoUrl;
   final String? originListName;
   final String? subtitle;
+  final bool showCategory;
   final Widget? leading;
   final Widget? trailing;
   final int titleMaxLines;
@@ -3688,6 +3693,7 @@ class _CompactNoteBody extends StatelessWidget {
                           ),
                         ),
                         if (readOnly &&
+                            showCategory &&
                             MediaQuery.textScalerOf(context).scale(1) <
                                 1.4) ...[
                           const SizedBox(width: 8),

@@ -1,3 +1,4 @@
+import 'package:nocknock/features/assistant/assistant_mascot.dart';
 import 'package:nocknock/features/finance/financial_charts.dart';
 import 'package:nocknock/core/widgets/liquid_dropdown.dart';
 import 'package:nocknock/features/notes/presentation/widgets/scroll_edge_fade.dart';
@@ -9,6 +10,12 @@ import 'package:nocknock/features/finance/financial_style.dart';
 import 'package:nocknock/features/notes/domain/note.dart';
 import 'package:nocknock/features/notes/domain/note_list.dart';
 
+typedef SummaryAssistant = void Function(
+  String? month,
+  Set<String> ids,
+  MascotTip? tip,
+);
+
 /// Read-only breakdown of the period selected on the board, by currency.
 class FinancialSummaryPage extends StatefulWidget {
   const FinancialSummaryPage({
@@ -17,6 +24,7 @@ class FinancialSummaryPage extends StatefulWidget {
     required this.currency,
     required this.month,
     required this.onEdit,
+    this.onAssistant,
     super.key,
   });
   final NoteList list;
@@ -24,6 +32,7 @@ class FinancialSummaryPage extends StatefulWidget {
   final String currency;
   final String? month;
   final ValueChanged<Note> onEdit;
+  final SummaryAssistant? onAssistant;
 
   @override
   State<FinancialSummaryPage> createState() => _FinancialSummaryPageState();
@@ -113,6 +122,42 @@ class _FinancialSummaryPageState extends State<FinancialSummaryPage> {
         ? {'Pagado': paid, 'Por pagar': pending}
         : dated;
     final colors = Theme.of(context).colorScheme;
+    return AssistantSurface(
+      label: 'Detalle de gastos',
+      scope: 'expense-summary/${list.id}',
+      topic: MascotTopic.finance,
+      onOpen: widget.onAssistant == null
+          ? null
+          : ([tip]) => widget.onAssistant!(
+              month,
+              records.map((note) => note.id).toSet(),
+              tip,
+            ),
+      child: _buildScaffold(
+        context,
+        records,
+        months,
+        currencies,
+        total,
+        paid,
+        pending,
+        chartGroups,
+        colors,
+      ),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext context,
+    List<Note> records,
+    List<String> months,
+    List<String> currencies,
+    int total,
+    int paid,
+    int pending,
+    Map<String, int> chartGroups,
+    ColorScheme colors,
+  ) {
     return Scaffold(
       appBar: AppBar(title: const Text('Detalle de gastos')),
       body: SafeArea(

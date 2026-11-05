@@ -135,7 +135,7 @@ class _BudgetDialogState extends State<_BudgetDialog> {
   Widget build(BuildContext context) => AssistantSurface(
     label: 'Presupuesto',
     topic: MascotTopic.budget,
-    hint: 'Revisar gasto y saldo en $_currency con Nock',
+    hint: 'Revisar gasto y saldo en $_currency con Nocky',
     onOpen: _saving || widget.onAnalyze == null ? null : _analyze,
     child: PopScope(
       canPop: !_saving,
@@ -228,7 +228,7 @@ class _BudgetDialogState extends State<_BudgetDialog> {
               if (widget.onAnalyze != null)
                 TextButton.icon(
                   icon: const Icon(Icons.smart_toy_outlined),
-                  label: const Text('Analizar con Nock'),
+                  label: const Text('Analizar con Nocky'),
                   onPressed: _saving ? null : () => _analyze(MascotTip.balance),
                 ),
               if (_error != null) Text(_error!),
